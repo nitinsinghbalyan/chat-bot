@@ -1,0 +1,34 @@
+{
+  "name": "seller-enquiry-chatbot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Embeddable chatbot that answers buyer enquiries on behalf of a seller, grounded in the seller's KB and guardrails.",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/src/server.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "crawl": "tsx src/crawler.ts",
+    "eval": "tsx scripts/eval.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.132.1",
+    "cheerio": "^1.2.0",
+    "dotenv": "^18.0.6",
+    "express": "^5.2.1",
+    "minisearch": "^7.2.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}

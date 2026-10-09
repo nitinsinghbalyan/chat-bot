@@ -1,0 +1,2308 @@
+[
+  {
+    "product_id": "hydraulic_press",
+    "canonical_name": "Hydraulic Press",
+    "flow": {
+      "template_version": "product-card-template-v2",
+      "product_id": "hydraulic_press",
+      "name": "Hydraulic Press",
+      "categories": [
+        "C Frame Hydraulic Press",
+        "H Frame Hydraulic Press",
+        "Hydraulic Machines",
+        "Hydraulic Press",
+        "Industrial Hydraulic Press"
+      ],
+      "brands_observed": [
+        "Kishan"
+      ],
+      "handle_if_raised": [
+        {
+          "attribute": "compatible_component",
+          "options": [
+            "Linear Incremental Scale"
+          ],
+          "option_evidence": {
+            "Linear Incremental Scale": [
+              "1948757"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "1948757"
+            ]
+          },
+          "role": "RARE"
+        }
+      ],
+      "quantity_profile": {
+        "evidence_count": 0,
+        "excluded_rates": 0
+      },
+      "aliases": [
+        "Hydraulic Press Machine",
+        "Hydraulic Press",
+        "Hydraulic Press machine (Press machine)",
+        "Machine (Hydraulic Press)",
+        "C Type Hydraulic Power Press (50 Ton)",
+        "C Type Hydraulic Power Press (20 Ton)",
+        "C Type Hydraulic Power Press (30 Ton)",
+        "C Frame Hydraulic Press"
+      ],
+      "attribute_roles": {
+        "RARE": [
+          "compatible_component"
+        ]
+      },
+      "evidence_status": "evidenced",
+      "markdown": "## **Hydraulic Press**\n\n**Categories:**\n\nC Frame Hydraulic Press, H Frame Hydraulic Press, Hydraulic Machines, Hydraulic Press, Industrial Hydraulic Press\n\n**Brands observed (recognition only, no stock confirmation):**\n\nKishan\n\n**Handle if raised (RARE):**\n\nDo not ask proactively; answer only if the buyer raises it.\n\n- compatible_component: Linear Incremental Scale\n\n**Attribute roles:**\n\n- RARE: compatible_component\n"
+    },
+    "aliases": [
+      "C Frame Hydraulic Press",
+      "C Frame Hydraulic Press Machine",
+      "C Type Hydraulic Power Press (20 Ton)",
+      "C Type Hydraulic Power Press (30 Ton)",
+      "C Type Hydraulic Power Press (50 Ton)",
+      "H Frame Hydraulic Press",
+      "HYDRAULIC PRESS FOR AUTOMOTIVE INDUSTRIES",
+      "Heavy Duty Hydraulic Press",
+      "Hydraulic Press",
+      "Hydraulic Press Machine",
+      "Hydraulic Press machine (Press machine)",
+      "Machine (Hydraulic Press)"
+    ],
+    "category": "C Frame Hydraulic Press",
+    "attributes": [
+      {
+        "key": "compatible_component",
+        "role": "RARE",
+        "required_for_lead": false,
+        "evidence_ids": [
+          "1948757"
+        ],
+        "values": [
+          {
+            "value": "Linear Incremental Scale",
+            "evidence_ids": [
+              "1948757"
+            ]
+          }
+        ]
+      }
+    ],
+    "brand_policy": "defer",
+    "disambiguate": true,
+    "provenance": {
+      "evidence_ids": [
+        "1948757",
+        "q:3596967:2",
+        "q:4288108:2"
+      ],
+      "from_listing": false,
+      "substantive_call_ids": [
+        "1948757",
+        "2147846",
+        "3225844",
+        "3596967"
+      ]
+    }
+  },
+  {
+    "product_id": "laser_cutting_machine",
+    "canonical_name": "Laser Cutting Machine",
+    "flow": {
+      "template_version": "product-card-template-v2",
+      "product_id": "laser_cutting_machine",
+      "name": "Laser Cutting Machine",
+      "categories": [
+        "CNC Laser Cutting Machine",
+        "Fiber Laser Cutting Machine",
+        "Laser Cutting Machines"
+      ],
+      "variant_options": [
+        {
+          "attribute": "power",
+          "options": [
+            "1.5 kW",
+            "3 kW"
+          ],
+          "option_evidence": {
+            "1.5 kW": [
+              "3048168"
+            ],
+            "3 kW": [
+              "3048168"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "3048168",
+              "q:3132409:2"
+            ]
+          }
+        },
+        {
+          "attribute": "working_length",
+          "options": [
+            "10 ft"
+          ],
+          "option_evidence": {
+            "10 ft": [
+              "3132409"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "3132409",
+              "q:3485665:2"
+            ]
+          }
+        },
+        {
+          "attribute": "bed_size",
+          "options": [
+            "5 feet by 10 feet",
+            "10x5 feet"
+          ],
+          "option_evidence": {
+            "5 feet by 10 feet": [
+              "2796593"
+            ],
+            "10x5 feet": [
+              "3846622"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "2796593",
+              "3048168",
+              "3846622",
+              "q:3048168:3",
+              "q:3132409:3"
+            ]
+          }
+        },
+        {
+          "attribute": "ms_thickness_capacity",
+          "options": [
+            "10 mm",
+            "16 mm"
+          ],
+          "option_evidence": {
+            "10 mm": [
+              "3048168",
+              "3846622"
+            ],
+            "16 mm": [
+              "2796593",
+              "3048168"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "2796593",
+              "3048168",
+              "3485665",
+              "3846622"
+            ]
+          }
+        },
+        {
+          "attribute": "ss_thickness_capacity",
+          "options": [
+            "8 mm",
+            "5 mm"
+          ],
+          "option_evidence": {
+            "8 mm": [
+              "2796593",
+              "3048168"
+            ],
+            "5 mm": [
+              "3048168",
+              "3846622"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "2796593",
+              "3048168",
+              "3485665",
+              "3846622"
+            ]
+          }
+        }
+      ],
+      "handle_if_raised": [
+        {
+          "attribute": "working_width",
+          "options": [
+            "5 ft"
+          ],
+          "option_evidence": {
+            "5 ft": [
+              "3132409"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "3132409"
+            ]
+          },
+          "role": "RARE"
+        },
+        {
+          "attribute": "machine_structure",
+          "options": [
+            "Closed Body"
+          ],
+          "option_evidence": {
+            "Closed Body": [
+              "4345142"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "4345142"
+            ]
+          },
+          "role": "RARE"
+        }
+      ],
+      "quantity_profile": {
+        "canonical_unit": "piece",
+        "observed_units": {
+          "pieces": 2
+        },
+        "assume_unit_without_asking": false,
+        "evidence_count": 2,
+        "evidence_ids": [
+          "2506337",
+          "4345142"
+        ],
+        "excluded_rates": 0
+      },
+      "qualification_questions": [
+        {
+          "attribute": "max_sheet_thickness",
+          "question": "What will be the thickness of the material?",
+          "sequence": 2,
+          "evidence_ids": [
+            "q:4345142:2"
+          ]
+        },
+        {
+          "attribute": "power",
+          "question": "What kilowatt capacity do you need?",
+          "sequence": 2,
+          "evidence_ids": [
+            "q:3132409:2"
+          ]
+        },
+        {
+          "attribute": "working_length",
+          "question": "What is the length of the sheets you'll be using?",
+          "sequence": 2,
+          "evidence_ids": [
+            "q:3485665:2"
+          ]
+        },
+        {
+          "attribute": "bed_size",
+          "question": "What is the working area?",
+          "sequence": 3,
+          "evidence_ids": [
+            "q:3048168:3",
+            "q:3132409:3"
+          ]
+        }
+      ],
+      "aliases": [
+        "Laser Cutting Machine",
+        "Laser Cutting Machine (3kW)",
+        "Laser Machines [Fiber Laser Cutting Machine]",
+        "Laser Machines [Fiber Laser Cutting Machine 1.5kW]",
+        "CNC Laser Machine",
+        "Fiber Laser Cutting Machine",
+        "CNC Laser Cutting Machine"
+      ],
+      "attribute_roles": {
+        "ASK": [
+          "power",
+          "working_length",
+          "bed_size",
+          "ms_thickness_capacity",
+          "ss_thickness_capacity",
+          "max_sheet_thickness"
+        ],
+        "RARE": [
+          "working_width",
+          "machine_structure"
+        ]
+      },
+      "evidence_status": "evidenced",
+      "markdown": "## **Laser Cutting Machine**\n\n**Categories:**\n\nCNC Laser Cutting Machine, Fiber Laser Cutting Machine, Laser Cutting Machines\n\n**Variant options observed (ASK):**\n\n- power: 1.5 kW, 3 kW\n- working_length: 10 ft\n- bed_size: 5 feet by 10 feet, 10x5 feet\n- ms_thickness_capacity: 10 mm, 16 mm\n- ss_thickness_capacity: 8 mm, 5 mm\n\n**Handle if raised (RARE):**\n\nDo not ask proactively; answer only if the buyer raises it.\n\n- working_width: 5 ft\n- machine_structure: Closed Body\n\n**Quantity profile:**\n\n- Canonical unit: `piece`.\n- Assume unit without asking: False\n\n**Qualification questions:**\n\n- max_sheet_thickness: What will be the thickness of the material?\n- power: What kilowatt capacity do you need?\n- working_length: What is the length of the sheets you'll be using?\n- bed_size: What is the working area?\n\n**Attribute roles:**\n\n- ASK: power, working_length, bed_size, ms_thickness_capacity, ss_thickness_capacity, max_sheet_thickness\n- RARE: working_width, machine_structure\n"
+    },
+    "questions": [
+      {
+        "attribute": "max_sheet_thickness",
+        "question": "What will be the thickness of the material?",
+        "sequence": 2,
+        "evidence_ids": [
+          "q:4345142:2"
+        ]
+      },
+      {
+        "attribute": "power",
+        "question": "What kilowatt capacity do you need?",
+        "sequence": 2,
+        "evidence_ids": [
+          "q:3132409:2"
+        ]
+      },
+      {
+        "attribute": "working_length",
+        "question": "What is the length of the sheets you'll be using?",
+        "sequence": 2,
+        "evidence_ids": [
+          "q:3485665:2"
+        ]
+      },
+      {
+        "attribute": "bed_size",
+        "question": "What is the working area?",
+        "sequence": 3,
+        "evidence_ids": [
+          "q:3048168:3",
+          "q:3132409:3"
+        ]
+      }
+    ],
+    "aliases": [
+      "3kW Fiber Laser Cutting Machine",
+      "Automatic Fiber Laser Cutting Machine",
+      "CNC Fiber Laser Cutting Machine",
+      "CNC Laser Cutting Machine",
+      "CNC Laser Machine",
+      "Fiber Laser Cutting Machine",
+      "Fiber Laser Metal Cutting Machine",
+      "High Speed Fiber Laser Cutter",
+      "Laser Cutting Machine",
+      "Laser Cutting Machine (3kW)",
+      "Laser Machines [Fiber Laser Cutting Machine 1.5kW]",
+      "Laser Machines [Fiber Laser Cutting Machine]",
+      "Sheet Metal Laser Cutting Machine"
+    ],
+    "category": "CNC Laser Cutting Machine",
+    "attributes": [
+      {
+        "key": "power",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "3048168",
+          "q:3132409:2"
+        ],
+        "values": [
+          {
+            "value": "1.5 kW",
+            "evidence_ids": [
+              "3048168"
+            ]
+          },
+          {
+            "value": "3 kW",
+            "evidence_ids": [
+              "3048168"
+            ]
+          }
+        ],
+        "ask_order": 2,
+        "ask_examples": [
+          "What kilowatt capacity do you need?"
+        ]
+      },
+      {
+        "key": "working_length",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "3132409",
+          "q:3485665:2"
+        ],
+        "values": [
+          {
+            "value": "10 ft",
+            "evidence_ids": [
+              "3132409"
+            ]
+          }
+        ],
+        "ask_order": 3,
+        "ask_examples": [
+          "What is the length of the sheets you'll be using?"
+        ]
+      },
+      {
+        "key": "bed_size",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "2796593",
+          "3048168",
+          "3846622",
+          "q:3048168:3",
+          "q:3132409:3"
+        ],
+        "values": [
+          {
+            "value": "5 feet by 10 feet",
+            "evidence_ids": [
+              "2796593"
+            ]
+          },
+          {
+            "value": "10x5 feet",
+            "evidence_ids": [
+              "3846622"
+            ]
+          }
+        ],
+        "ask_order": 4,
+        "ask_examples": [
+          "What is the working area?"
+        ]
+      },
+      {
+        "key": "ms_thickness_capacity",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "2796593",
+          "3048168",
+          "3485665",
+          "3846622"
+        ],
+        "values": [
+          {
+            "value": "10 mm",
+            "evidence_ids": [
+              "3048168",
+              "3846622"
+            ]
+          },
+          {
+            "value": "16 mm",
+            "evidence_ids": [
+              "2796593",
+              "3048168"
+            ]
+          }
+        ],
+        "ask_order": 5
+      },
+      {
+        "key": "ss_thickness_capacity",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "2796593",
+          "3048168",
+          "3485665",
+          "3846622"
+        ],
+        "values": [
+          {
+            "value": "8 mm",
+            "evidence_ids": [
+              "2796593",
+              "3048168"
+            ]
+          },
+          {
+            "value": "5 mm",
+            "evidence_ids": [
+              "3048168",
+              "3846622"
+            ]
+          }
+        ],
+        "ask_order": 6
+      },
+      {
+        "key": "max_sheet_thickness",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "q:4345142:2",
+          "2506337"
+        ],
+        "ask_order": 1,
+        "ask_examples": [
+          "What will be the thickness of the material?"
+        ]
+      },
+      {
+        "key": "working_width",
+        "role": "RARE",
+        "required_for_lead": false,
+        "evidence_ids": [
+          "3132409"
+        ],
+        "values": [
+          {
+            "value": "5 ft",
+            "evidence_ids": [
+              "3132409"
+            ]
+          }
+        ]
+      },
+      {
+        "key": "machine_structure",
+        "role": "RARE",
+        "required_for_lead": false,
+        "evidence_ids": [
+          "4345142"
+        ],
+        "values": [
+          {
+            "value": "Closed Body",
+            "evidence_ids": [
+              "4345142"
+            ]
+          }
+        ]
+      }
+    ],
+    "selling_unit": {
+      "unit": "piece"
+    },
+    "quantity_semantics": {
+      "do_not_conflate": false,
+      "instruction": "Use the evidenced selling unit for quantity."
+    },
+    "brand_policy": "defer",
+    "disambiguate": true,
+    "provenance": {
+      "evidence_ids": [
+        "2506337",
+        "2796593",
+        "3048168",
+        "3132409",
+        "3485665",
+        "3846622",
+        "4345142",
+        "q:3048168:3",
+        "q:3132409:2",
+        "q:3132409:3",
+        "q:3485665:2",
+        "q:4345142:1",
+        "q:4345142:2"
+      ],
+      "from_listing": false,
+      "substantive_call_ids": [
+        "2506337",
+        "2796593",
+        "3048168",
+        "3132409",
+        "3485665",
+        "3846622",
+        "4345142"
+      ]
+    }
+  },
+  {
+    "product_id": "press_brake_machine",
+    "canonical_name": "Press Brake Machine",
+    "flow": {
+      "template_version": "product-card-template-v2",
+      "product_id": "press_brake_machine",
+      "name": "Press Brake Machine",
+      "categories": [
+        "Bending Machine",
+        "CNC Press Brakes",
+        "Hydraulic Press",
+        "Hydraulic Press Brake Machine",
+        "Hydraulic Press Brakes",
+        "Metal Sheet Bending Machine",
+        "Press Brake Machine",
+        "Press Brakes"
+      ],
+      "variant_options": [
+        {
+          "attribute": "control_type",
+          "options": [
+            "NC",
+            "CNC Controller"
+          ],
+          "option_evidence": {
+            "NC": [
+              "3471473",
+              "3807279"
+            ],
+            "CNC Controller": [
+              "3215687"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "1416420",
+              "3215687",
+              "3471473",
+              "3807279",
+              "q:2788915:1",
+              "q:3471473:2",
+              "q:3807279:3",
+              "q:2875120:4",
+              "q:4211363:4"
+            ]
+          }
+        },
+        {
+          "attribute": "model_size",
+          "options": [
+            "5 feet",
+            "1500 mm"
+          ],
+          "option_evidence": {
+            "5 feet": [
+              "3656429"
+            ],
+            "1500 mm": [
+              "3656429"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "3656429",
+              "q:2875120:1",
+              "q:4345142:1",
+              "q:1494108:2",
+              "q:1923026:2",
+              "q:2207635:4",
+              "q:2847937:6"
+            ]
+          }
+        },
+        {
+          "attribute": "operation_mode",
+          "options": [
+            "Manual",
+            "CNC",
+            "Hydraulic"
+          ],
+          "option_evidence": {
+            "Manual": [
+              "2875120",
+              "4211363"
+            ],
+            "CNC": [
+              "2783491"
+            ],
+            "Hydraulic": [
+              "3215687"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "2783491",
+              "2875120",
+              "3215687",
+              "3601744",
+              "4174470",
+              "4211363",
+              "q:2839828:1",
+              "q:3215687:2"
+            ]
+          }
+        },
+        {
+          "attribute": "pressing_force",
+          "options": [
+            "100 ton",
+            "80 ton"
+          ],
+          "option_evidence": {
+            "100 ton": [
+              "3596414"
+            ],
+            "80 ton": [
+              "2847937"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "2847937",
+              "3596414",
+              "q:3471473:1",
+              "q:4211363:2"
+            ]
+          }
+        },
+        {
+          "attribute": "max_sheet_thickness",
+          "options": [
+            "4 mm",
+            "2 mm",
+            "1.2 mm",
+            "8 mm",
+            "6 mm",
+            "5 mm"
+          ],
+          "option_evidence": {
+            "4 mm": [
+              "3095550",
+              "3596414",
+              "3597023",
+              "3601744"
+            ],
+            "2 mm": [
+              "1645369",
+              "4345142"
+            ],
+            "1.2 mm": [
+              "1494108"
+            ],
+            "8 mm": [
+              "3095550"
+            ],
+            "6 mm": [
+              "3265766"
+            ],
+            "5 mm": [
+              "3095550"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "1416420",
+              "1494108",
+              "1645369",
+              "2683390",
+              "2788915",
+              "3095550",
+              "3215687",
+              "3265766",
+              "3596414",
+              "3597023",
+              "3601744",
+              "4174470",
+              "q:1645369:2",
+              "q:2788915:2",
+              "q:2839828:2",
+              "q:3265766:2",
+              "q:3596414:2",
+              "q:3667278:2",
+              "q:4345142:2",
+              "q:1923026:3",
+              "q:3656429:3",
+              "q:4174470:3",
+              "q:2683390:4",
+              "q:2783491:4",
+              "q:2207635:5"
+            ]
+          }
+        },
+        {
+          "attribute": "working_length",
+          "options": [
+            "3 meter",
+            "2500 mm",
+            "10 feet",
+            "1500 mm",
+            "3125 mm"
+          ],
+          "option_evidence": {
+            "3 meter": [
+              "3095550",
+              "3596414",
+              "3597023"
+            ],
+            "2500 mm": [
+              "2783491"
+            ],
+            "10 feet": [
+              "3601744"
+            ],
+            "1500 mm": [
+              "3095550"
+            ],
+            "3125 mm": [
+              "3095550"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "1416420",
+              "2683390",
+              "2783491",
+              "2788915",
+              "3095550",
+              "3215687",
+              "3265766",
+              "3463805",
+              "3485665",
+              "3596414",
+              "3597023",
+              "3601744",
+              "q:1787447:2",
+              "q:2683390:2",
+              "q:2847937:2",
+              "q:2956622:2",
+              "q:3485665:2",
+              "q:3601744:2",
+              "q:3807279:2",
+              "q:4174470:2",
+              "q:3601744:3",
+              "q:2783491:5",
+              "q:3095550:5"
+            ]
+          }
+        },
+        {
+          "attribute": "compatible_component",
+          "options": [
+            "Linear Incremental Scale"
+          ],
+          "option_evidence": {
+            "Linear Incremental Scale": [
+              "1948757"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "1948757",
+              "q:2207635:6"
+            ]
+          }
+        }
+      ],
+      "handle_if_raised": [
+        {
+          "attribute": "axis_count",
+          "options": [
+            "4",
+            "5"
+          ],
+          "option_evidence": {
+            "4": [
+              "2783491"
+            ],
+            "5": [
+              "2783491"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "2783491",
+              "3601744"
+            ]
+          },
+          "role": "RARE"
+        },
+        {
+          "attribute": "min_sheet_thickness",
+          "options": [
+            "2 mm",
+            "2.5 mm"
+          ],
+          "option_evidence": {
+            "2 mm": [
+              "3667278"
+            ],
+            "2.5 mm": [
+              "3667278"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "3667278"
+            ]
+          },
+          "role": "RARE"
+        }
+      ],
+      "quantity_profile": {
+        "canonical_unit": "piece",
+        "observed_units": {
+          "piece": 2,
+          "pieces": 2
+        },
+        "assume_unit_without_asking": false,
+        "evidence_count": 4,
+        "evidence_ids": [
+          "1494108",
+          "3471473",
+          "3596414",
+          "4345142"
+        ],
+        "excluded_rates": 0
+      },
+      "qualification_questions": [
+        {
+          "attribute": "control_type",
+          "question": "Do you need a full CNC machine or a standard hydraulic one?",
+          "sequence": 1,
+          "evidence_ids": [
+            "q:2788915:1",
+            "q:3471473:2",
+            "q:3807279:3",
+            "q:2875120:4",
+            "q:4211363:4"
+          ]
+        },
+        {
+          "attribute": "model_size",
+          "question": "What size and thickness are you looking for?",
+          "sequence": 1,
+          "evidence_ids": [
+            "q:2875120:1",
+            "q:4345142:1",
+            "q:1494108:2",
+            "q:1923026:2",
+            "q:2207635:4",
+            "q:2847937:6"
+          ]
+        },
+        {
+          "attribute": "operation_mode",
+          "question": "Do you need a mechanical or hydraulic bending machine?",
+          "sequence": 1,
+          "evidence_ids": [
+            "q:2839828:1",
+            "q:3215687:2"
+          ]
+        },
+        {
+          "attribute": "pressing_force",
+          "question": "What capacity do you need?",
+          "sequence": 1,
+          "evidence_ids": [
+            "q:3471473:1",
+            "q:4211363:2"
+          ]
+        },
+        {
+          "attribute": "compatible_material",
+          "question": "Is the material MS or SS?",
+          "sequence": 2,
+          "evidence_ids": [
+            "q:2236522:2"
+          ]
+        },
+        {
+          "attribute": "max_sheet_thickness",
+          "question": "What will be the thickness?",
+          "sequence": 2,
+          "evidence_ids": [
+            "q:1645369:2",
+            "q:2788915:2",
+            "q:2839828:2",
+            "q:3265766:2",
+            "q:3596414:2",
+            "q:3667278:2",
+            "q:4345142:2",
+            "q:1923026:3",
+            "q:3656429:3",
+            "q:4174470:3",
+            "q:2683390:4",
+            "q:2783491:4",
+            "q:2207635:5"
+          ]
+        },
+        {
+          "attribute": "working_length",
+          "question": "What is the length of the sheet?",
+          "sequence": 2,
+          "evidence_ids": [
+            "q:1787447:2",
+            "q:2683390:2",
+            "q:2847937:2",
+            "q:2956622:2",
+            "q:3485665:2",
+            "q:3601744:2",
+            "q:3807279:2",
+            "q:4174470:2",
+            "q:3601744:3",
+            "q:2783491:5",
+            "q:3095550:5"
+          ]
+        },
+        {
+          "attribute": "compatible_component",
+          "question": "What products do you manufacture?",
+          "sequence": 6,
+          "evidence_ids": [
+            "q:2207635:6"
+          ]
+        }
+      ],
+      "aliases": [
+        "CNC Bending Machine",
+        "Sheet Bending Machine",
+        "Standard Sheet Bending Machine",
+        "CNC Press Brake",
+        "Hydraulic Bending Machine",
+        "Bending Machine",
+        "Hydraulic Press Bending Machine (Bending Press Machine)",
+        "NC Press Brake (Sheet Bending Machine)",
+        "Sheet Bending Machine (Hydraulic Press)",
+        "Hydraulic Press Brake Machine (Hydraulic Press)",
+        "Steel Bending Machine",
+        "Hydraulic Press Brake Machine (Bending Machine)",
+        "Hydraulic Press Brake Machine - 2.5 Meter",
+        "Shearing Bending Machine (Hydraulic)",
+        "Semi Automatic Hydraulic Press Brake Machine (NC Type)",
+        "CNC Press Brake Machine (CNC Type)",
+        "Hydraulic Press Brake Machine (Small size)",
+        "Press Brake (Manual Bending Machine)",
+        "Hydraulic Press Machine (NC)",
+        "CNC Bending Machine (Metal Sheet Bending)",
+        "Hydraulic Press Brake",
+        "Bending machine (Hydraulic)",
+        "Press Brake (Bending Machine)",
+        "CNC Bending Machine (4-axis)",
+        "CNC Bending Machine (5-axis)",
+        "Press Brake Machine (Sheet Bending Machine)",
+        "CNC Bending Machine (1250 mm)",
+        "Automatic CNC Bending Machine (2500 mm)",
+        "6mm Bending Machine",
+        "NC Press Break Machine",
+        "Bending Machine (HPBR 825)",
+        "Manual Hydraulic Bending Machine (2-meter)",
+        "3 Meter 4 mm Bending Machine",
+        "Full CNC Sheet Bending Machine (Door Bending Machine)",
+        "CNC Press Brakes",
+        "Hydraulic Press Brake Machine",
+        "Hydraulic Press Brakes",
+        "Metal Sheet Bending Machine",
+        "Press Brake Machine"
+      ],
+      "attribute_roles": {
+        "ASK": [
+          "control_type",
+          "model_size",
+          "operation_mode",
+          "pressing_force",
+          "max_sheet_thickness",
+          "working_length",
+          "compatible_component",
+          "compatible_material"
+        ],
+        "RARE": [
+          "axis_count",
+          "min_sheet_thickness"
+        ]
+      },
+      "evidence_status": "evidenced",
+      "markdown": "## **Press Brake Machine**\n\n**Categories:**\n\nBending Machine, CNC Press Brakes, Hydraulic Press, Hydraulic Press Brake Machine, Hydraulic Press Brakes, Metal Sheet Bending Machine, Press Brake Machine, Press Brakes\n\n**Variant options observed (ASK):**\n\n- control_type: NC, CNC Controller\n- model_size: 5 feet, 1500 mm\n- operation_mode: Manual, CNC, Hydraulic\n- pressing_force: 100 ton, 80 ton\n- max_sheet_thickness: 4 mm, 2 mm, 1.2 mm, 8 mm, 6 mm, 5 mm\n- working_length: 3 meter, 2500 mm, 10 feet, 1500 mm, 3125 mm\n- compatible_component: Linear Incremental Scale\n\n**Handle if raised (RARE):**\n\nDo not ask proactively; answer only if the buyer raises it.\n\n- axis_count: 4, 5\n- min_sheet_thickness: 2 mm, 2.5 mm\n\n**Quantity profile:**\n\n- Canonical unit: `piece`.\n- Assume unit without asking: False\n\n**Qualification questions:**\n\n- control_type: Do you need a full CNC machine or a standard hydraulic one?\n- model_size: What size and thickness are you looking for?\n- operation_mode: Do you need a mechanical or hydraulic bending machine?\n- pressing_force: What capacity do you need?\n- compatible_material: Is the material MS or SS?\n- max_sheet_thickness: What will be the thickness?\n- working_length: What is the length of the sheet?\n- compatible_component: What products do you manufacture?\n\n**Attribute roles:**\n\n- ASK: control_type, model_size, operation_mode, pressing_force, max_sheet_thickness, working_length, compatible_component, compatible_material\n- RARE: axis_count, min_sheet_thickness\n"
+    },
+    "questions": [
+      {
+        "attribute": "control_type",
+        "question": "Do you need a full CNC machine or a standard hydraulic one?",
+        "sequence": 1,
+        "evidence_ids": [
+          "q:2788915:1",
+          "q:3471473:2",
+          "q:3807279:3",
+          "q:2875120:4",
+          "q:4211363:4"
+        ]
+      },
+      {
+        "attribute": "model_size",
+        "question": "What size and thickness are you looking for?",
+        "sequence": 1,
+        "evidence_ids": [
+          "q:2875120:1",
+          "q:4345142:1",
+          "q:1494108:2",
+          "q:1923026:2",
+          "q:2207635:4",
+          "q:2847937:6"
+        ]
+      },
+      {
+        "attribute": "operation_mode",
+        "question": "Do you need a mechanical or hydraulic bending machine?",
+        "sequence": 1,
+        "evidence_ids": [
+          "q:2839828:1",
+          "q:3215687:2"
+        ]
+      },
+      {
+        "attribute": "pressing_force",
+        "question": "What capacity do you need?",
+        "sequence": 1,
+        "evidence_ids": [
+          "q:3471473:1",
+          "q:4211363:2"
+        ]
+      },
+      {
+        "attribute": "compatible_material",
+        "question": "Is the material MS or SS?",
+        "sequence": 2,
+        "evidence_ids": [
+          "q:2236522:2"
+        ]
+      },
+      {
+        "attribute": "max_sheet_thickness",
+        "question": "What will be the thickness?",
+        "sequence": 2,
+        "evidence_ids": [
+          "q:1645369:2",
+          "q:2788915:2",
+          "q:2839828:2",
+          "q:3265766:2",
+          "q:3596414:2",
+          "q:3667278:2",
+          "q:4345142:2",
+          "q:1923026:3",
+          "q:3656429:3",
+          "q:4174470:3",
+          "q:2683390:4",
+          "q:2783491:4",
+          "q:2207635:5"
+        ]
+      },
+      {
+        "attribute": "working_length",
+        "question": "What is the length of the sheet?",
+        "sequence": 2,
+        "evidence_ids": [
+          "q:1787447:2",
+          "q:2683390:2",
+          "q:2847937:2",
+          "q:2956622:2",
+          "q:3485665:2",
+          "q:3601744:2",
+          "q:3807279:2",
+          "q:4174470:2",
+          "q:3601744:3",
+          "q:2783491:5",
+          "q:3095550:5"
+        ]
+      },
+      {
+        "attribute": "compatible_component",
+        "question": "What products do you manufacture?",
+        "sequence": 6,
+        "evidence_ids": [
+          "q:2207635:6"
+        ]
+      }
+    ],
+    "aliases": [
+      "100 Ton Cnc Press Brake Machine",
+      "110 METRIC TON X 10' PRESS BRAKES",
+      "125 METRIC TON X 13' CNC PRESS BRAKES",
+      "176 METRIC TON X 13' CNC PRESS BRAKES",
+      "220 TON 10' CNC PRESS BRAKES",
+      "3 Meter 4 mm Bending Machine",
+      "4 AXIS CNC PRESS BRAKE",
+      "4+1 AXIS CNC PRESS BRAKE MACHINE IN SAUDI ARABIA",
+      "5 Axis CNC Press Brake In Saudi Arabia",
+      "6+1 Axis CNC Press Brake In Saudi Arabia",
+      "6mm Bending Machine",
+      "7 Axis CNC Press Brake In Saudi Arabia",
+      "8 MTR CNC PRESS BRAKE",
+      "8+1 Axis CNC Press Brake In Saudi Arabia",
+      "800 Ton CNC Press Brake Machine",
+      "88 METRIC TON X 10' CNC PRESS BRAKES",
+      "9 AXIS CNC PRESS BRAKE",
+      "9 Axis CNC Press Brake In Saudi Arabia",
+      "Automatic CNC Bending Machine (2500 mm)",
+      "Automatic Cnc Hydraulic Press Brake Machine",
+      "Automatic Cnc Press Brakes",
+      "Automatic Hydraulic Press Brake Machine",
+      "Bending Machine",
+      "Bending Machine (HPBR 825)",
+      "Bending machine (Hydraulic)",
+      "CNC Bending Machine",
+      "CNC Bending Machine (1250 mm)",
+      "CNC Bending Machine (4-axis)",
+      "CNC Bending Machine (5-axis)",
+      "CNC Bending Machine (Metal Sheet Bending)",
+      "CNC PRESS BRAKE",
+      "CNC PRESS BRAKE FOR Octagon Pole 10 Mtr",
+      "CNC PRESS BRAKE MACHINE FOR HIGH MUST POLE",
+      "CNC Press Brake",
+      "CNC Press Brake Machine",
+      "CNC Press Brake Machine (CNC Type)",
+      "CNC Press Brake Machine for Export",
+      "CNC Press Brake Machine for Metal Bending",
+      "CNC Press Brake Machine in Saudi Arabia",
+      "CNC Press Brakes",
+      "CNC Press Brakes 4 Axis",
+      "CNC Press Brakes 7 Axis",
+      "CNC Press Brakes 9 axis",
+      "CNC Press Brakes Machine",
+      "CNC Press Brakes Synchronize",
+      "Cnc 5 Axis Press Brake",
+      "Cnc Brake Press",
+      "Cnc Hydraulic Press Brake Machine",
+      "Cnc Press Brake",
+      "Cnc Press Brake 5 axis",
+      "Cnc Press Brake In Pune",
+      "Cnc Press Brake India",
+      "Cnc Press Brake Machine",
+      "Cnc Press Brakes Sheet Bending Machine",
+      "Cnc Sheet Metal Bending Machine",
+      "Cnc Synchro Hydraulic Press Brake",
+      "Cnc Synchro Press Brake Machine",
+      "Cnc Synchronizer Hydraulic Press Brake",
+      "Cnc Tandem Press Brake",
+      "Double Unit Hydraulic Cnc Press Brakes",
+      "Export Quality CNC Press Brake Machine",
+      "Front Cylinder CNC Press Brake Machine",
+      "Full CNC Sheet Bending Machine (Door Bending Machine)",
+      "HEAVY DUTY CNC PRESS BRAKE",
+      "HEAVY DUTY TANDEM PRESS BRAKE",
+      "Heavy CNC Press Brake Machine",
+      "Heavy Duty Cnc Press Brake Machine",
+      "High Quality CNC Press Brake Machine",
+      "Hydraulic Bending Machine",
+      "Hydraulic Cnc Press Brake Machine",
+      "Hydraulic Press Bending Machine (Bending Press Machine)",
+      "Hydraulic Press Brake",
+      "Hydraulic Press Brake Machine",
+      "Hydraulic Press Brake Machine (Bending Machine)",
+      "Hydraulic Press Brake Machine (Hydraulic Press)",
+      "Hydraulic Press Brake Machine (Small size)",
+      "Hydraulic Press Brake Machine - 2.5 Meter",
+      "Hydraulic Press Brakes",
+      "Hydraulic Press Machine (NC)",
+      "Jayshree Machinetools Private Limited CNC Press Brake Machine",
+      "Kishan Brand CNC Press Brake Machine",
+      "Manual Hydraulic Bending Machine (2-meter)",
+      "Metal Sheet Bending Machine",
+      "Multi Axis CNC Press Brake Machine",
+      "NC Hydraulic Press Brake Machine",
+      "NC Hydraulic Press Brakes",
+      "NC Press Brake (Sheet Bending Machine)",
+      "NC Press Break Machine",
+      "Nc Hydraulic Press Brake Machine",
+      "Nc Press Brake",
+      "Octagonal Pole BENDING MACHINE",
+      "POLE BENDING CNC PRESS BRAKE",
+      "Press Brake (Bending Machine)",
+      "Press Brake (Manual Bending Machine)",
+      "Press Brake Machine",
+      "Press Brake Machine (Sheet Bending Machine)",
+      "SHEET METAL BRAKE PRESS",
+      "Semi Automatic Hydraulic Press Brake Machine (NC Type)",
+      "Servo Electric Press Brake",
+      "Shearing Bending Machine (Hydraulic)",
+      "Sheet Bending Machine",
+      "Sheet Bending Machine (Hydraulic Press)",
+      "Sheet Metal Press Brake",
+      "Sheet Metal Press Brake Machine",
+      "Standard Sheet Bending Machine",
+      "Steel Bending Machine",
+      "Tandem Cnc Hydraulic Press Brake",
+      "Tandem Press Brake"
+    ],
+    "category": "Bending Machine",
+    "attributes": [
+      {
+        "key": "control_type",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "1416420",
+          "3215687",
+          "3471473",
+          "3807279",
+          "q:2788915:1",
+          "q:3471473:2",
+          "q:3807279:3",
+          "q:2875120:4",
+          "q:4211363:4"
+        ],
+        "values": [
+          {
+            "value": "NC",
+            "evidence_ids": [
+              "3471473",
+              "3807279"
+            ]
+          },
+          {
+            "value": "CNC Controller",
+            "evidence_ids": [
+              "3215687"
+            ]
+          }
+        ],
+        "ask_order": 1,
+        "ask_examples": [
+          "Do you need a full CNC machine or a standard hydraulic one?"
+        ]
+      },
+      {
+        "key": "model_size",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "3656429",
+          "q:2875120:1",
+          "q:4345142:1",
+          "q:1494108:2",
+          "q:1923026:2",
+          "q:2207635:4",
+          "q:2847937:6"
+        ],
+        "values": [
+          {
+            "value": "5 feet",
+            "evidence_ids": [
+              "3656429"
+            ]
+          },
+          {
+            "value": "1500 mm",
+            "evidence_ids": [
+              "3656429"
+            ]
+          }
+        ],
+        "ask_order": 2,
+        "ask_examples": [
+          "What size and thickness are you looking for?"
+        ]
+      },
+      {
+        "key": "operation_mode",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "2783491",
+          "2875120",
+          "3215687",
+          "3601744",
+          "4174470",
+          "4211363",
+          "q:2839828:1",
+          "q:3215687:2"
+        ],
+        "values": [
+          {
+            "value": "Manual",
+            "evidence_ids": [
+              "2875120",
+              "4211363"
+            ]
+          },
+          {
+            "value": "CNC",
+            "evidence_ids": [
+              "2783491"
+            ]
+          },
+          {
+            "value": "Hydraulic",
+            "evidence_ids": [
+              "3215687"
+            ]
+          }
+        ],
+        "ask_order": 3,
+        "ask_examples": [
+          "Do you need a mechanical or hydraulic bending machine?"
+        ]
+      },
+      {
+        "key": "pressing_force",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "2847937",
+          "3596414",
+          "q:3471473:1",
+          "q:4211363:2"
+        ],
+        "values": [
+          {
+            "value": "100 ton",
+            "evidence_ids": [
+              "3596414"
+            ]
+          },
+          {
+            "value": "80 ton",
+            "evidence_ids": [
+              "2847937"
+            ]
+          }
+        ],
+        "ask_order": 4,
+        "ask_examples": [
+          "What capacity do you need?"
+        ]
+      },
+      {
+        "key": "max_sheet_thickness",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "1416420",
+          "1494108",
+          "1645369",
+          "2683390",
+          "2788915",
+          "3095550",
+          "3215687",
+          "3265766",
+          "3596414",
+          "3597023",
+          "3601744",
+          "4174470",
+          "q:1645369:2",
+          "q:2788915:2",
+          "q:2839828:2",
+          "q:3265766:2",
+          "q:3596414:2",
+          "q:3667278:2",
+          "q:4345142:2",
+          "q:1923026:3",
+          "q:3656429:3",
+          "q:4174470:3",
+          "q:2683390:4",
+          "q:2783491:4",
+          "q:2207635:5"
+        ],
+        "values": [
+          {
+            "value": "4 mm",
+            "evidence_ids": [
+              "3095550",
+              "3596414",
+              "3597023",
+              "3601744"
+            ]
+          },
+          {
+            "value": "2 mm",
+            "evidence_ids": [
+              "1645369",
+              "4345142"
+            ]
+          },
+          {
+            "value": "1.2 mm",
+            "evidence_ids": [
+              "1494108"
+            ]
+          },
+          {
+            "value": "8 mm",
+            "evidence_ids": [
+              "3095550"
+            ]
+          },
+          {
+            "value": "6 mm",
+            "evidence_ids": [
+              "3265766"
+            ]
+          },
+          {
+            "value": "5 mm",
+            "evidence_ids": [
+              "3095550"
+            ]
+          }
+        ],
+        "ask_order": 6,
+        "ask_examples": [
+          "What will be the thickness?"
+        ]
+      },
+      {
+        "key": "working_length",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "1416420",
+          "2683390",
+          "2783491",
+          "2788915",
+          "3095550",
+          "3215687",
+          "3265766",
+          "3463805",
+          "3485665",
+          "3596414",
+          "3597023",
+          "3601744",
+          "q:1787447:2",
+          "q:2683390:2",
+          "q:2847937:2",
+          "q:2956622:2",
+          "q:3485665:2",
+          "q:3601744:2",
+          "q:3807279:2",
+          "q:4174470:2",
+          "q:3601744:3",
+          "q:2783491:5",
+          "q:3095550:5"
+        ],
+        "values": [
+          {
+            "value": "3 meter",
+            "evidence_ids": [
+              "3095550",
+              "3596414",
+              "3597023"
+            ]
+          },
+          {
+            "value": "2500 mm",
+            "evidence_ids": [
+              "2783491"
+            ]
+          },
+          {
+            "value": "10 feet",
+            "evidence_ids": [
+              "3601744"
+            ]
+          },
+          {
+            "value": "1500 mm",
+            "evidence_ids": [
+              "3095550"
+            ]
+          },
+          {
+            "value": "3125 mm",
+            "evidence_ids": [
+              "3095550"
+            ]
+          }
+        ],
+        "ask_order": 7,
+        "ask_examples": [
+          "What is the length of the sheet?"
+        ]
+      },
+      {
+        "key": "compatible_component",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "1948757",
+          "q:2207635:6"
+        ],
+        "values": [
+          {
+            "value": "Linear Incremental Scale",
+            "evidence_ids": [
+              "1948757"
+            ]
+          }
+        ],
+        "ask_order": 8,
+        "ask_examples": [
+          "What products do you manufacture?"
+        ]
+      },
+      {
+        "key": "compatible_material",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "q:2236522:2",
+          "3601744"
+        ],
+        "ask_order": 5,
+        "ask_examples": [
+          "Is the material MS or SS?"
+        ]
+      },
+      {
+        "key": "axis_count",
+        "role": "RARE",
+        "required_for_lead": false,
+        "evidence_ids": [
+          "2783491",
+          "3601744"
+        ],
+        "values": [
+          {
+            "value": "4",
+            "evidence_ids": [
+              "2783491"
+            ]
+          },
+          {
+            "value": "5",
+            "evidence_ids": [
+              "2783491"
+            ]
+          }
+        ]
+      },
+      {
+        "key": "min_sheet_thickness",
+        "role": "RARE",
+        "required_for_lead": false,
+        "evidence_ids": [
+          "3667278"
+        ],
+        "values": [
+          {
+            "value": "2 mm",
+            "evidence_ids": [
+              "3667278"
+            ]
+          },
+          {
+            "value": "2.5 mm",
+            "evidence_ids": [
+              "3667278"
+            ]
+          }
+        ]
+      }
+    ],
+    "selling_unit": {
+      "unit": "piece"
+    },
+    "quantity_semantics": {
+      "do_not_conflate": false,
+      "instruction": "Use the evidenced selling unit for quantity."
+    },
+    "brand_policy": "defer",
+    "disambiguate": true,
+    "provenance": {
+      "evidence_ids": [
+        "1416420",
+        "1494108",
+        "1645369",
+        "1948757",
+        "2683390",
+        "2783491",
+        "2788915",
+        "2847937",
+        "2875120",
+        "3095550",
+        "3215687",
+        "3265766",
+        "3463805",
+        "3471473",
+        "3485665",
+        "3596414",
+        "3597023",
+        "3601744",
+        "3656429",
+        "3667278",
+        "3807279",
+        "4174470",
+        "4211363",
+        "q:1494108:2",
+        "q:1645369:2",
+        "q:1787447:2",
+        "q:1923026:2",
+        "q:1923026:3",
+        "q:2207635:4",
+        "q:2207635:5",
+        "q:2207635:6",
+        "q:2236522:2",
+        "q:2683390:2",
+        "q:2683390:4",
+        "q:2783491:4",
+        "q:2783491:5",
+        "q:2788915:1",
+        "q:2788915:2",
+        "q:2839828:1",
+        "q:2839828:2",
+        "q:2847937:2",
+        "q:2847937:6",
+        "q:2875120:1",
+        "q:2875120:4",
+        "q:2956622:2",
+        "q:3095550:5",
+        "q:3215687:2",
+        "q:3265766:2",
+        "q:3471473:1",
+        "q:3471473:2",
+        "q:3485665:2",
+        "q:3596414:2",
+        "q:3601744:2",
+        "q:3601744:3",
+        "q:3656429:3",
+        "q:3667278:2",
+        "q:3807279:2",
+        "q:3807279:3",
+        "q:4174470:2",
+        "q:4174470:3",
+        "q:4211363:2",
+        "q:4211363:4",
+        "q:4345142:1",
+        "q:4345142:2"
+      ],
+      "from_listing": false,
+      "substantive_call_ids": [
+        "1416420",
+        "1494108",
+        "1645369",
+        "1787447",
+        "1923026",
+        "1948757",
+        "2207635",
+        "2683390",
+        "2783491",
+        "2788915",
+        "2839828",
+        "2847937",
+        "2875120",
+        "3095550",
+        "3215687",
+        "3265766",
+        "3463805",
+        "3471473",
+        "3485665",
+        "3596414",
+        "3597023",
+        "3601744",
+        "3656429",
+        "3667278",
+        "3807279",
+        "4174470",
+        "4211363",
+        "4345142",
+        "4468227"
+      ]
+    }
+  },
+  {
+    "product_id": "shearing_machine",
+    "canonical_name": "Shearing Machine",
+    "flow": {
+      "template_version": "product-card-template-v2",
+      "product_id": "shearing_machine",
+      "name": "Shearing Machine",
+      "categories": [
+        "Hydraulic Guillotine Shear",
+        "Hydraulic Machines",
+        "Hydraulic Plate Shearing Machine",
+        "Hydraulic Shearing Machine",
+        "Hydraulic Shears",
+        "Hydraulic Sheet Shearing Machine",
+        "Mechanical Under Crank Shearing Machine",
+        "Metal Sheet Shearing Machine",
+        "NC Hydraulic Shearing Machine",
+        "Shearing Machines",
+        "Shearing and Bending Machine",
+        "Sheet Shearing Machine"
+      ],
+      "brands_observed": [
+        "Kishan"
+      ],
+      "variant_options": [
+        {
+          "attribute": "working_length",
+          "options": [
+            "8 ft",
+            "8 foot",
+            "3 meter"
+          ],
+          "option_evidence": {
+            "8 ft": [
+              "1398929"
+            ],
+            "8 foot": [
+              "2847937"
+            ],
+            "3 meter": [
+              "4495395"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "1398929",
+              "2236522",
+              "2847937",
+              "3790092",
+              "4495395",
+              "q:3790092:1",
+              "q:2847937:2",
+              "q:3933138:3",
+              "q:4306915:4",
+              "q:4467916:4",
+              "q:4495395:4"
+            ]
+          }
+        },
+        {
+          "attribute": "compatible_material",
+          "options": [
+            "Mild Steel (MS)"
+          ],
+          "option_evidence": {
+            "Mild Steel (MS)": [
+              "4495395"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "2236522",
+              "3929085",
+              "4495395",
+              "q:2236522:2",
+              "q:4495395:5"
+            ]
+          }
+        },
+        {
+          "attribute": "machine_type",
+          "options": [
+            "Cutting/Shearing"
+          ],
+          "option_evidence": {
+            "Cutting/Shearing": [
+              "4467916"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "4467916",
+              "q:4467916:2",
+              "q:3929085:3"
+            ]
+          }
+        },
+        {
+          "attribute": "max_sheet_thickness",
+          "options": [
+            "4 mm",
+            "2 mm",
+            "8 mm"
+          ],
+          "option_evidence": {
+            "4 mm": [
+              "1398929"
+            ],
+            "2 mm": [
+              "4306915"
+            ],
+            "8 mm": [
+              "4495395"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "1398929",
+              "2236522",
+              "2847937",
+              "3790092",
+              "3929085",
+              "4306915",
+              "4495395",
+              "4543806",
+              "q:4288108:2",
+              "q:4306915:2",
+              "q:3929085:4"
+            ]
+          }
+        }
+      ],
+      "handle_if_raised": [
+        {
+          "attribute": "working_area",
+          "options": [
+            "4x8 feet"
+          ],
+          "option_evidence": {
+            "4x8 feet": [
+              "3933138"
+            ]
+          },
+          "provenance": {
+            "evidence_ids": [
+              "3933138"
+            ]
+          },
+          "role": "RARE"
+        }
+      ],
+      "quantity_profile": {
+        "canonical_unit": "piece",
+        "observed_units": {
+          "piece": 1
+        },
+        "assume_unit_without_asking": false,
+        "evidence_count": 1,
+        "evidence_ids": [
+          "2847937"
+        ],
+        "excluded_rates": 0
+      },
+      "qualification_questions": [
+        {
+          "attribute": "working_length",
+          "question": "What is the length and thickness you need?",
+          "sequence": 1,
+          "evidence_ids": [
+            "q:3790092:1",
+            "q:2847937:2",
+            "q:3933138:3",
+            "q:4306915:4",
+            "q:4467916:4",
+            "q:4495395:4"
+          ]
+        },
+        {
+          "attribute": "compatible_material",
+          "question": "Is the material MS or SS?",
+          "sequence": 2,
+          "evidence_ids": [
+            "q:2236522:2",
+            "q:4495395:5"
+          ]
+        },
+        {
+          "attribute": "machine_type",
+          "question": "Is it a bending machine or a cutting machine?",
+          "sequence": 2,
+          "evidence_ids": [
+            "q:4467916:2",
+            "q:3929085:3"
+          ]
+        },
+        {
+          "attribute": "max_sheet_thickness",
+          "question": "What is the thickness of the sheet?",
+          "sequence": 2,
+          "evidence_ids": [
+            "q:4288108:2",
+            "q:4306915:2",
+            "q:3929085:4"
+          ]
+        }
+      ],
+      "aliases": [
+        "Hydraulic Shearing Machine",
+        "8mm Plate Cutting Shearing Machine",
+        "Kishan Shearing Machine",
+        "Shearing Bending Machine",
+        "Shearing and Bending Machine",
+        "Hydraulic Shearing Machine (Sheet Cutting Machine)",
+        "Shearing Machine (CNC)",
+        "6mm Shearing Machine",
+        "Universal Metal Cutting Machine (Shearing Machine)",
+        "Shearing Machine (KHV 430)",
+        "Shearing Machine",
+        "Shearing Machine (8 Feet)",
+        "Shearing Machines",
+        "Sheet Shearing Machine"
+      ],
+      "attribute_roles": {
+        "ASK": [
+          "working_length",
+          "compatible_material",
+          "machine_type",
+          "max_sheet_thickness"
+        ],
+        "RARE": [
+          "working_area"
+        ]
+      },
+      "evidence_status": "evidenced",
+      "markdown": "## **Shearing Machine**\n\n**Categories:**\n\nHydraulic Guillotine Shear, Hydraulic Machines, Hydraulic Plate Shearing Machine, Hydraulic Shearing Machine, Hydraulic Shears, Hydraulic Sheet Shearing Machine, Mechanical Under Crank Shearing Machine, Metal Sheet Shearing Machine, NC Hydraulic Shearing Machine, Shearing Machines, Shearing and Bending Machine, Sheet Shearing Machine\n\n**Brands observed (recognition only, no stock confirmation):**\n\nKishan\n\n**Variant options observed (ASK):**\n\n- working_length: 8 ft, 8 foot, 3 meter\n- compatible_material: Mild Steel (MS)\n- machine_type: Cutting/Shearing\n- max_sheet_thickness: 4 mm, 2 mm, 8 mm\n\n**Handle if raised (RARE):**\n\nDo not ask proactively; answer only if the buyer raises it.\n\n- working_area: 4x8 feet\n\n**Quantity profile:**\n\n- Canonical unit: `piece`.\n- Assume unit without asking: False\n\n**Qualification questions:**\n\n- working_length: What is the length and thickness you need?\n- compatible_material: Is the material MS or SS?\n- machine_type: Is it a bending machine or a cutting machine?\n- max_sheet_thickness: What is the thickness of the sheet?\n\n**Attribute roles:**\n\n- ASK: working_length, compatible_material, machine_type, max_sheet_thickness\n- RARE: working_area\n"
+    },
+    "questions": [
+      {
+        "attribute": "working_length",
+        "question": "What is the length and thickness you need?",
+        "sequence": 1,
+        "evidence_ids": [
+          "q:3790092:1",
+          "q:2847937:2",
+          "q:3933138:3",
+          "q:4306915:4",
+          "q:4467916:4",
+          "q:4495395:4"
+        ]
+      },
+      {
+        "attribute": "compatible_material",
+        "question": "Is the material MS or SS?",
+        "sequence": 2,
+        "evidence_ids": [
+          "q:2236522:2",
+          "q:4495395:5"
+        ]
+      },
+      {
+        "attribute": "machine_type",
+        "question": "Is it a bending machine or a cutting machine?",
+        "sequence": 2,
+        "evidence_ids": [
+          "q:4467916:2",
+          "q:3929085:3"
+        ]
+      },
+      {
+        "attribute": "max_sheet_thickness",
+        "question": "What is the thickness of the sheet?",
+        "sequence": 2,
+        "evidence_ids": [
+          "q:4288108:2",
+          "q:4306915:2",
+          "q:3929085:4"
+        ]
+      }
+    ],
+    "aliases": [
+      "6mm Shearing Machine",
+      "8mm Plate Cutting Shearing Machine",
+      "AUTOMATIC HYDRAULIC SHEET SHEARING MACHINE",
+      "Automatic Hydraulic Shearing Machine",
+      "HYDRAULIC GUILLOTINE SHEAR",
+      "HYDRAULIC GUILLOTINE SHEARING",
+      "HYDRAULIC GUILLOTINE SHEARING MACHINE",
+      "HYDRAULIC METAL SHEET SHEARING MACHINE",
+      "HYDRAULIC SHEAR 10' X 1/4\"",
+      "HYDRAULIC SHEET SHEARING MACHINE",
+      "Hydraulic Guillotine Shear",
+      "Hydraulic Guillotine Shear Machine",
+      "Hydraulic Plate Shearing Machine",
+      "Hydraulic Shearing Machine",
+      "Hydraulic Shearing Machine (Sheet Cutting Machine)",
+      "Hydraulic Shears 10' X 3/8\"",
+      "Hydraulic Sheet Shearing Machine",
+      "Kishan Shearing Machine",
+      "MS PLATE SHEARING MACHINE",
+      "Mechanical Shearing Machine",
+      "Mechanical Under Crank Shearing Machine",
+      "Metal Sheet Shearing Machine",
+      "Ms Plate Shearing Machine",
+      "NC HYDRAULIC SHEARING MACHINE",
+      "NC Hydraulic Shearing Machine",
+      "NC PLATE SHEARING MACHINE",
+      "Nc Hydraulic Shearing Machine",
+      "Nc Shearing Machine",
+      "PLATE CUTTING SHEARING MACHINE",
+      "Plate Shearing Machine",
+      "SHEET METAL SHEARING MACHINE",
+      "SHEET SHEARING",
+      "STEEL PLATE SHEARING MACHINE",
+      "Shearing Bending Machine",
+      "Shearing Machine",
+      "Shearing Machine (8 Feet)",
+      "Shearing Machine (CNC)",
+      "Shearing Machine (KHV 430)",
+      "Shearing Machines",
+      "Shearing and Bending Machine",
+      "Sheet Shearing Machine",
+      "Universal Metal Cutting Machine (Shearing Machine)"
+    ],
+    "category": "Hydraulic Guillotine Shear",
+    "attributes": [
+      {
+        "key": "working_length",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "1398929",
+          "2236522",
+          "2847937",
+          "3790092",
+          "4495395",
+          "q:3790092:1",
+          "q:2847937:2",
+          "q:3933138:3",
+          "q:4306915:4",
+          "q:4467916:4",
+          "q:4495395:4"
+        ],
+        "values": [
+          {
+            "value": "8 ft",
+            "evidence_ids": [
+              "1398929"
+            ]
+          },
+          {
+            "value": "8 foot",
+            "evidence_ids": [
+              "2847937"
+            ]
+          },
+          {
+            "value": "3 meter",
+            "evidence_ids": [
+              "4495395"
+            ]
+          }
+        ],
+        "ask_order": 1,
+        "ask_examples": [
+          "What is the length and thickness you need?"
+        ]
+      },
+      {
+        "key": "compatible_material",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "2236522",
+          "3929085",
+          "4495395",
+          "q:2236522:2",
+          "q:4495395:5"
+        ],
+        "values": [
+          {
+            "value": "Mild Steel (MS)",
+            "evidence_ids": [
+              "4495395"
+            ]
+          }
+        ],
+        "ask_order": 2,
+        "ask_examples": [
+          "Is the material MS or SS?"
+        ]
+      },
+      {
+        "key": "machine_type",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "4467916",
+          "q:4467916:2",
+          "q:3929085:3"
+        ],
+        "values": [
+          {
+            "value": "Cutting/Shearing",
+            "evidence_ids": [
+              "4467916"
+            ]
+          }
+        ],
+        "ask_order": 3,
+        "ask_examples": [
+          "Is it a bending machine or a cutting machine?"
+        ]
+      },
+      {
+        "key": "max_sheet_thickness",
+        "role": "ASK",
+        "required_for_lead": true,
+        "evidence_ids": [
+          "1398929",
+          "2236522",
+          "2847937",
+          "3790092",
+          "3929085",
+          "4306915",
+          "4495395",
+          "4543806",
+          "q:4288108:2",
+          "q:4306915:2",
+          "q:3929085:4"
+        ],
+        "values": [
+          {
+            "value": "4 mm",
+            "evidence_ids": [
+              "1398929"
+            ]
+          },
+          {
+            "value": "2 mm",
+            "evidence_ids": [
+              "4306915"
+            ]
+          },
+          {
+            "value": "8 mm",
+            "evidence_ids": [
+              "4495395"
+            ]
+          }
+        ],
+        "ask_order": 4,
+        "ask_examples": [
+          "What is the thickness of the sheet?"
+        ]
+      },
+      {
+        "key": "working_area",
+        "role": "RARE",
+        "required_for_lead": false,
+        "evidence_ids": [
+          "3933138"
+        ],
+        "values": [
+          {
+            "value": "4x8 feet",
+            "evidence_ids": [
+              "3933138"
+            ]
+          }
+        ]
+      }
+    ],
+    "selling_unit": {
+      "unit": "piece"
+    },
+    "quantity_semantics": {
+      "do_not_conflate": false,
+      "instruction": "Use the evidenced selling unit for quantity."
+    },
+    "brand_policy": "defer",
+    "disambiguate": true,
+    "provenance": {
+      "evidence_ids": [
+        "1398929",
+        "2236522",
+        "2847937",
+        "3790092",
+        "3929085",
+        "3933138",
+        "4306915",
+        "4467916",
+        "4495395",
+        "4543806",
+        "q:2236522:2",
+        "q:2847937:2",
+        "q:2847937:6",
+        "q:3790092:1",
+        "q:3929085:3",
+        "q:3929085:4",
+        "q:3933138:3",
+        "q:4288108:2",
+        "q:4306915:2",
+        "q:4306915:4",
+        "q:4467916:2",
+        "q:4467916:4",
+        "q:4495395:4",
+        "q:4495395:5"
+      ],
+      "from_listing": false,
+      "substantive_call_ids": [
+        "1398929",
+        "2236522",
+        "2847937",
+        "3790092",
+        "3929085",
+        "3933138",
+        "4288108",
+        "4306915",
+        "4467916",
+        "4495395",
+        "4543806"
+      ]
+    }
+  }
+]
