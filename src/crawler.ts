@@ -5,6 +5,7 @@
  * where the bot is deployed (or anywhere with internet) and commit/ship kb/catalogue.json.
  */
 import fs from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as cheerio from "cheerio";
 import { paths } from "./config.js";
@@ -200,16 +201,23 @@ export async function crawl(opts: CrawlOptions): Promise<CatalogueEntry[]> {
   return results.sort((a, b) => a.url.localeCompare(b.url));
 }
 
-/** Crawl the sitemap and write kb/catalogue.json. Keeps the old catalogue if nothing could be fetched. */
-export async function refreshCatalogue(log: (msg: string) => void = console.log): Promise<CatalogueEntry[] | null> {
+/**
+ * Crawl the sitemap and write the catalogue. Keeps the old catalogue if nothing could be fetched.
+ * `npm run crawl` writes kb/catalogue.json (to commit); the server writes to DATA_DIR.
+ */
+export async function refreshCatalogue(
+  log: (msg: string) => void = console.log,
+  outFile = paths.bundledCatalogue,
+): Promise<CatalogueEntry[] | null> {
   const urls = parseSitemap(fs.readFileSync(paths.sitemap, "utf8"));
   const entries = await crawl({ urls, log });
   if (entries.length === 0) {
     log("crawl produced no pages; keeping existing catalogue");
     return null;
   }
-  fs.writeFileSync(paths.catalogue, JSON.stringify(entries, null, 2) + "\n");
-  log(`wrote ${entries.length} entries to ${paths.catalogue}`);
+  fs.mkdirSync(path.dirname(outFile), { recursive: true });
+  fs.writeFileSync(outFile, JSON.stringify(entries, null, 2) + "\n");
+  log(`wrote ${entries.length} entries to ${outFile}`);
   return entries;
 }
 

@@ -3,7 +3,7 @@ import type { Catalogue } from "./catalogue.js";
 import { formatCatalogueHits } from "./catalogue.js";
 import { config } from "./config.js";
 import type { CatalogueEntry } from "./crawler.js";
-import { logGuardrailEvent, OutputFilter, REPLACEMENTS, type Intervention } from "./guardrails.js";
+import { OutputFilter, REPLACEMENTS, type Intervention } from "./guardrails.js";
 import type { KnowledgeBase } from "./kb.js";
 import { renderUserPrompt } from "./prompts.js";
 import type { Session } from "./session.js";
@@ -16,7 +16,10 @@ export interface ChatDeps {
   kb: KnowledgeBase;
   catalogue: Catalogue;
   systemPrompt: string;
-  saveLead?: LeadSink;
+  /** Where verified leads go (the database in production). */
+  saveLead: LeadSink;
+  /** Records sentences the output guardrails replaced. */
+  logGuardrail?: (sessionId: string, interventions: Intervention[]) => void;
   model?: string;
 }
 
@@ -178,7 +181,7 @@ export async function runTurn(
   session.turns++;
   session.pendingNotes = filter.interventions.length ? [correctionNote(filter.interventions)] : [];
   if (filter.interventions.length) {
-    logGuardrailEvent({ sessionId: session.id, interventions: filter.interventions });
+    (deps.logGuardrail ?? ((id, iv) => console.warn(`[guardrail] ${id}`, iv.map((i) => i.rule).join(","))))(session.id, filter.interventions);
   }
   return { text: shown, askFor: askForAfterTurn(session, shown), interventions: filter.interventions, usage };
 }

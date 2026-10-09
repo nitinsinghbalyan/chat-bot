@@ -25,9 +25,14 @@ export class Catalogue {
     });
   }
 
-  static fromDisk(file = paths.catalogue): Catalogue {
-    if (!fs.existsSync(file)) return new Catalogue();
-    return new Catalogue(JSON.parse(fs.readFileSync(file, "utf8")) as CatalogueEntry[]);
+  /** Loads the runtime-refreshed catalogue if there is one, else the one shipped in kb/. */
+  static fromDisk(files = [paths.catalogue, paths.bundledCatalogue]): Catalogue {
+    for (const file of files) {
+      if (!fs.existsSync(file)) continue;
+      const entries = JSON.parse(fs.readFileSync(file, "utf8")) as CatalogueEntry[];
+      if (entries.length) return new Catalogue(entries);
+    }
+    return new Catalogue();
   }
 
   load(entries: CatalogueEntry[]) {

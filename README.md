@@ -40,15 +40,38 @@ All 9 seller guardrails are in `prompts/system.md`, word for word. The high-risk
 | 8 GST | GST rates and "inclusive/exclusive of tax" are replaced. |
 | 9 Other products | Specs come only from the catalogue entry; the prompt asks the bot to collect the requirement instead. |
 
-A replaced sentence becomes a short hand-off line, e.g. "Our team will confirm the freight details with you." The model is told about the correction on its next turn through an `<operator_note>`. Every intervention is logged to `data/guardrail_events.jsonl`.
+A replaced sentence becomes a short hand-off line, e.g. "Our team will confirm the freight details with you." The model is told about the correction on its next turn through an `<operator_note>`. Every intervention is recorded in the database, and the transcript marks which replies were corrected.
 
 ### Lead capture
 
 - `send_otp` checks the number is a valid Indian mobile (`+91` optional). No SMS is sent: this is demo mode and the OTP is **`12345`** (`DEMO_OTP`). The OTP is checked on the server and never appears in the prompt.
 - `verify_otp` allows 3 attempts per OTP and 3 OTPs per chat.
-- `save_lead` is refused until the number is verified. Leads are appended to `data/leads.jsonl` with mobile, name, product, requirement, quantity, city and page URL.
+- `save_lead` is refused until the number is verified. Each lead is saved to the database with mobile, name, product, requirement, quantity, city and page URL. The seller sees it at `/admin/leads` (see below).
 
 To send real OTPs, replace the demo check in `src/tools.ts` with your SMS provider's send and verify calls.
+
+### Storage
+
+Everything is kept in one SQLite file, `chatbot.db`, inside `DATA_DIR` (default `./data`):
+
+| Table | Holds |
+|---|---|
+| `sessions` | Each chat's conversation state (history, OTP progress, catalogue hits), so chats survive restarts. Idle chats are pruned after 30 days. |
+| `transcript` | What buyers typed (payment and ID details already redacted) and what they were shown |
+| `leads` | Verified leads |
+| `guardrail_events` | Each sentence the output guardrails replaced |
+
+A chat resets after 2 hours of inactivity, the same as in the widget.
+
+### Seller admin
+
+Set `ADMIN_PASSWORD` (at least 8 characters). The seller can then open:
+
+- `/admin/leads`: all leads, newest first, each linking to its chat
+- `/admin/leads.csv`: the same list as a CSV that opens in Excel
+- `/admin/transcript/<session>`: one full chat
+
+The browser asks for a login: any username, with the password. If `ADMIN_PASSWORD` isn't set, these pages return 404.
 
 ## Setup
 
@@ -72,8 +95,39 @@ Without a crawled catalogue, the bot still works from the business card and prod
 | `ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated sites allowed to call the API |
 | `CRAWL_ON_START` / `CRAWL_INTERVAL_HOURS` | `false` / `24` | Keeps the catalogue fresh while running |
 | `DEMO_OTP` | `12345` | Demo OTP |
+| `DATA_DIR` | `./data` | Holds `chatbot.db` and the runtime-refreshed `catalogue.json` (which takes precedence over `kb/catalogue.json`) |
+| `ADMIN_PASSWORD` | (none) | Turns on `/admin/leads` |
+
+## Deploying on Render
+
+`render.yaml` is a Render Blueprint. It sets up:
+
+- a Node 22 web service in Singapore, the closest Render region to India
+- a 1 GB persistent disk at `/var/data` for the database and the refreshed catalogue
+- a health check on `/health`
+- automatic deploys from `main`
+
+Steps:
+
+1. Merge the PR into `main`.
+2. In Render, choose **New → Blueprint**, connect GitHub and pick this repo.
+3. When prompted, enter the two secrets:
+   - `ANTHROPIC_API_KEY`
+   - `ADMIN_PASSWORD` (at least 8 characters)
+4. Apply. The first build takes a few minutes. When it finishes, `https://jayshree-chatbot.onrender.com/health` (or whatever URL Render shows) should return `{"ok":true,...}`.
+5. Open `https://<your-service>.onrender.com/demo.html` to try the bot.
+6. Optional: under the service's **Settings → Custom Domains**, add something like `chat.jayshreemachinetools.in` and create the CNAME record Render shows. Then use that domain in the embed snippet.
+
+Things to know:
+
+- **Cost:** a persistent disk needs a paid instance. The Blueprint uses `starter`, Render's cheapest paid plan, which also doesn't sleep when idle.
+- **Brief downtime on deploy:** with a disk attached, Render stops the old instance before starting the new one, so each deploy causes a few seconds of downtime.
+- **Catalogue refresh:** `CRAWL_ON_START=true`, so the catalogue is re-crawled from the sitemap on every start and every 24 hours after that. The result is saved to the disk.
+- **Backups:** download `/admin/leads.csv` regularly. Render also takes daily snapshots of the disk.
 
 ## Embedding on the seller's website
+
+Add this once, just before `</body>`, on every page of jayshreemachinetools.in (in a site-wide footer or custom-code section):
 
 ```html
 <script src="https://YOUR-BOT-HOST/widget.js" defer
@@ -88,7 +142,7 @@ Optional attributes:
 - `data-chips="Press Brake|Shearing Machine|…"`: replaces the quick replies
 - `data-demo="true"`: shows the demo OTP hint
 
-Add the seller's domain to `ALLOWED_ORIGINS`.
+The site's domains are already in `ALLOWED_ORIGINS` in `render.yaml`. If the site is ever served from a different domain, add it there.
 
 ## Changing the bot's behaviour
 
@@ -112,8 +166,9 @@ npm run eval      # live scenarios against the real model, one or more per guard
 ```
 kb/            business card, product cards, sitemap, crawled catalogue
 prompts/       system.md (dedicated system prompt), user.md (per-turn user prompt)
-src/           server, Claude loop, tools, guardrails, crawler, catalogue search
+src/           app (HTTP + admin), server bootstrap, Claude loop, tools, guardrails, crawler, catalogue search, SQLite store
 public/        widget.js (embeddable), demo.html
 tests/         vitest unit tests + HTML fixtures
 scripts/       eval.ts (live-model guardrail scenarios)
+render.yaml    Render Blueprint (web service + persistent disk)
 ```

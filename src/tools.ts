@@ -1,8 +1,6 @@
-import fs from "node:fs";
-import path from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { config, paths } from "./config.js";
+import { config } from "./config.js";
 import type { LeadState, Session } from "./session.js";
 
 const MAX_OTP_ATTEMPTS = 3;
@@ -98,11 +96,6 @@ export interface Lead {
 
 export type LeadSink = (lead: Lead) => void;
 
-export const fileLeadSink: LeadSink = (lead) => {
-  fs.mkdirSync(path.dirname(paths.leads), { recursive: true });
-  fs.appendFileSync(paths.leads, JSON.stringify(lead) + "\n");
-};
-
 /** Indian mobile: optional +91 / 91 / 0 prefix, then 10 digits starting 6-9. */
 export function normalizeMobile(raw: string): string | null {
   const compact = raw.replace(/[\s\-().]/g, "");
@@ -133,7 +126,7 @@ export function executeTool(
   session: Session,
   name: string,
   rawInput: unknown,
-  opts: { saveLead?: LeadSink; pageUrl?: string } = {},
+  opts: { saveLead: LeadSink; pageUrl?: string },
 ): ToolResult {
   if (!(name in inputSchemas)) return { content: `Unknown tool: ${name}`, isError: true };
   const parsed = inputSchemas[name as ToolName].safeParse(rawInput);
@@ -187,7 +180,7 @@ export function executeTool(
       }
       const name = input.name.trim();
       if (name.length < 2) return { content: "Missing the buyer's name. Ask for it first.", isError: true };
-      (opts.saveLead ?? fileLeadSink)({
+      opts.saveLead({
         createdAt: new Date().toISOString(),
         sessionId: session.id,
         mobile: lead.mobile,

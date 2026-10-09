@@ -5,9 +5,6 @@
  * highest-risk ones (price, freight, contacts, delivery, GST, payment/ID details) cannot reach
  * the buyer even if the model slips.
  */
-import fs from "node:fs";
-import path from "node:path";
-import { paths } from "./config.js";
 
 // ---------------------------------------------------------------------------
 // Input
@@ -258,14 +255,5 @@ export class OutputFilter {
     if (this.usedReplacements.has(rule)) return "";
     this.usedReplacements.add(rule);
     return REPLACEMENTS[rule] + (trailing || " ");
-  }
-}
-
-export function logGuardrailEvent(event: Record<string, unknown>) {
-  try {
-    fs.mkdirSync(path.dirname(paths.guardrailLog), { recursive: true });
-    fs.appendFileSync(paths.guardrailLog, JSON.stringify({ at: new Date().toISOString(), ...event }) + "\n");
-  } catch (err) {
-    console.error("failed to log guardrail event", err);
   }
 }

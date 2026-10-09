@@ -10,6 +10,9 @@ const bool = z
   .optional()
   .transform((v) => v === "true" || v === "1");
 
+/** Treat `KEY=` (empty) in .env the same as an unset variable. */
+const optional = <T extends z.ZodTypeAny>(t: T) => z.preprocess((v) => (v === "" ? undefined : v), t.optional());
+
 const schema = z.object({
   BOT_MODEL: z.string().default("claude-sonnet-5-5"),
   BOT_EFFORT: z.enum(["low", "medium", "high"]).default("low"),
@@ -30,19 +33,27 @@ const schema = z.object({
   CRAWL_ON_START: bool,
   CRAWL_INTERVAL_HOURS: z.coerce.number().min(0).default(24),
   DEMO_OTP: z.string().regex(/^\d{4,8}$/).default("12345"),
+  /** Where the SQLite database and the refreshed catalogue live (a persistent disk in production). */
+  DATA_DIR: optional(z.string()),
+  /** Enables /admin/leads with HTTP Basic auth (any username). Unset = admin pages disabled. */
+  ADMIN_PASSWORD: optional(z.string().min(8, "ADMIN_PASSWORD must be at least 8 characters")),
 });
 
 export const config = schema.parse(process.env);
+
+const dataDir = config.DATA_DIR ? path.resolve(config.DATA_DIR) : path.join(ROOT, "data");
 
 export const paths = {
   kb: path.join(ROOT, "kb"),
   prompts: path.join(ROOT, "prompts"),
   public: path.join(ROOT, "public"),
-  data: path.join(ROOT, "data"),
+  data: dataDir,
+  db: path.join(dataDir, "chatbot.db"),
   businessCard: path.join(ROOT, "kb", "business_card.json"),
   productCards: path.join(ROOT, "kb", "product_cards.json"),
   sitemap: path.join(ROOT, "kb", "sitemap.xml"),
-  catalogue: path.join(ROOT, "kb", "catalogue.json"),
-  leads: path.join(ROOT, "data", "leads.jsonl"),
-  guardrailLog: path.join(ROOT, "data", "guardrail_events.jsonl"),
+  /** Catalogue shipped with the repo (committed after a crawl). */
+  bundledCatalogue: path.join(ROOT, "kb", "catalogue.json"),
+  /** Catalogue refreshed by the crawler at runtime; preferred when present. */
+  catalogue: path.join(dataDir, "catalogue.json"),
 };
