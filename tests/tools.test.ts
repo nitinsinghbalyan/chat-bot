@@ -3,7 +3,7 @@ import { SessionStore } from "../src/session.js";
 import { describeLeadStatus, executeTool, normalizeMobile, type Lead } from "../src/tools.js";
 
 function setup() {
-  const session = new SessionStore().get("test-session-1");
+  const session = new SessionStore().get("jayshree-machinetools", "test-session-1");
   const leads: Lead[] = [];
   const run = (name: string, input: unknown) => executeTool(session, name, input, { saveLead: (l) => leads.push(l), pageUrl: "https://x/p" });
   return { session, leads, run };

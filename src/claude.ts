@@ -42,11 +42,13 @@ export const FALLBACK_REPLY =
 const REFUSAL_REPLY = "Sorry, I can't help with that here. I'm happy to help with any of our machines or pass your enquiry to our team.";
 const LIMIT_REPLY = "This chat has become quite long. Please refresh the page to start a new chat, or leave your mobile number and our team will get back to you.";
 
-function retrieve(session: Session, catalogue: Catalogue, buyerText: string): CatalogueEntry[] {
+function retrieve(session: Session, catalogue: Catalogue, buyerText: string, page?: CatalogueEntry | null): CatalogueEntry[] {
   let hits = catalogue.search(buyerText);
   // Follow-ups like "what is its price?" don't name the machine, so fall back to the last product query.
   if (hits.length === 0 && session.lastQuery) hits = catalogue.search(`${session.lastQuery} ${buyerText}`);
   else if (hits.length) session.lastQuery = buyerText;
+  // The page the buyer is looking at is always relevant ("is this available in 3 m?").
+  if (page) hits = [page, ...hits.filter((h) => h.url !== page.url)].slice(0, 4);
   for (const h of hits) session.seenCatalogue.set(h.url, h);
   return hits;
 }
@@ -81,7 +83,7 @@ export async function runTurn(
   buyerText: string,
   deps: ChatDeps,
   cb: TurnCallbacks = {},
-  opts: { pageUrl?: string } = {},
+  opts: { pageUrl?: string; pageEntry?: CatalogueEntry | null } = {},
 ): Promise<TurnResult> {
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   if (session.turns >= MAX_HISTORY_TURNS) {
@@ -89,8 +91,9 @@ export async function runTurn(
     return { text: LIMIT_REPLY, askFor: "mobile", interventions: [], usage };
   }
 
-  const hits = retrieve(session, deps.catalogue, buyerText);
+  const hits = retrieve(session, deps.catalogue, buyerText, opts.pageEntry);
   const userContent = renderUserPrompt({
+    currentPage: opts.pageEntry ? `${opts.pageEntry.title} (${opts.pageEntry.url})` : undefined,
     leadStatus: describeLeadStatus(session.lead),
     catalogue: formatCatalogueHits(hits),
     buyerMessage: buyerText,

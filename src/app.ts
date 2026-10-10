@@ -1,21 +1,24 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import express, { type NextFunction, type Request, type Response } from "express";
-import type { Catalogue } from "./catalogue.js";
 import { runTurn } from "./claude.js";
 import { config, paths } from "./config.js";
+import type { CatalogueEntry } from "./crawler.js";
 import type { ChatDb } from "./db.js";
 import { checkInput, RateLimiter } from "./guardrails.js";
-import type { KnowledgeBase } from "./kb.js";
+import type { SellerContext, SellerRegistry } from "./sellers.js";
 import type { SessionStore } from "./session.js";
+import { esc } from "./site/html.js";
+import { categoryPage, directoryPage, notFoundPage, productPage, searchPage, sellerHomePage } from "./site/pages.js";
 
 export interface AppDeps {
   client: Anthropic;
-  kb: KnowledgeBase;
-  catalogue: Catalogue;
-  systemPrompt: string;
+  sellers: SellerRegistry;
   sessions: SessionStore;
   db: ChatDb;
+  /** Re-crawls one seller's sitemap into their catalogue (wired to the crawler in server.ts). */
+  recrawl?: (seller: SellerContext) => Promise<void>;
+  /** Fallback origins allowed for every seller, in addition to each seller's own `allowedOrigins`. */
   allowedOrigins?: string[];
   adminPassword?: string;
 }
@@ -23,8 +26,8 @@ export interface AppDeps {
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
 export function createApp(deps: AppDeps) {
-  const { kb, catalogue, db, sessions } = deps;
-  const allowedOrigins = deps.allowedOrigins ?? config.ALLOWED_ORIGINS;
+  const { sellers, db, sessions } = deps;
+  const globalOrigins = deps.allowedOrigins ?? config.ALLOWED_ORIGINS;
   const adminPassword = deps.adminPassword ?? config.ADMIN_PASSWORD;
 
   const perSession = new RateLimiter(15, 60_000);
@@ -36,16 +39,22 @@ export function createApp(deps: AppDeps) {
   app.set("trust proxy", true);
   app.use(express.json({ limit: "16kb" }));
 
-  /** The bot's own pages (e.g. demo.html) are always allowed; other sites must be in ALLOWED_ORIGINS. */
-  function originAllowed(req: Request): boolean {
-    const origin = req.headers.origin;
-    if (!origin) return true;
-    if (allowedOrigins.includes(origin)) return true;
+  const sameHost = (req: Request, url: string | undefined): boolean => {
+    if (!url) return false;
     try {
-      return new URL(origin).host === req.headers.host;
+      return new URL(url).host === req.headers.host;
     } catch {
       return false;
     }
+  };
+
+  /** This platform's own pages may call the API for any seller; other sites only for sellers that list them. */
+  function originAllowed(req: Request, seller?: SellerContext): boolean {
+    const origin = req.headers.origin;
+    if (!origin) return true;
+    if (sameHost(req, origin) || globalOrigins.includes(origin)) return true;
+    if (seller) return seller.config.allowedOrigins.some((o) => o.replace(/\/$/, "") === origin);
+    return sellers.list().some((s) => s.config.allowedOrigins.some((o) => o.replace(/\/$/, "") === origin));
   }
 
   function cors(req: Request, res: Response, next: NextFunction) {
@@ -66,14 +75,51 @@ export function createApp(deps: AppDeps) {
   app.use("/api", cors);
 
   app.get("/health", (_req, res) => {
-    res.json({ ok: true, model: config.BOT_MODEL, catalogueEntries: catalogue.size, productCards: kb.productCards.length });
+    res.json({
+      ok: true,
+      model: config.BOT_MODEL,
+      sellers: sellers.list().map((s) => ({ slug: s.config.slug, catalogueEntries: s.catalogue.size, productCards: s.kb.productCards.length })),
+    });
   });
 
+  // ---- Chat API ----
+
+  app.get("/api/sellers/:seller", (req, res) => {
+    const seller = sellers.get(String(req.params.seller));
+    if (!seller) {
+      res.status(404).json({ error: "Unknown seller" });
+      return;
+    }
+    const c = seller.config;
+    // No SMS gateway is wired yet, so the widget shows the demo OTP hint.
+    res.json({ slug: c.slug, name: c.name, color: c.color, greeting: c.greeting ?? null, chips: c.chips ?? seller.kb.productCards.map((p) => p.canonical_name).slice(0, 4), demo: true });
+  });
+
+  /** Works out which catalogue page the buyer is on: a page of this site or the seller's own page. */
+  function pageEntryFor(seller: SellerContext, pageUrl: string | undefined): CatalogueEntry | null {
+    if (!pageUrl) return null;
+    let u: URL;
+    try {
+      u = new URL(pageUrl);
+    } catch {
+      return null;
+    }
+    const m = u.pathname.match(/^\/s\/([^/]+)\/(p|c)\/([^/]+)\/?$/);
+    if (m && m[1] === seller.config.slug) return seller.catalogue.get(m[2] === "p" ? "product" : "category", decodeURIComponent(m[3]));
+    return seller.catalogue.byPageUrl(u.origin + u.pathname);
+  }
+
   app.post("/api/chat", async (req, res) => {
-    if (!originAllowed(req)) {
+    const seller = typeof req.body?.seller === "string" ? sellers.get(req.body.seller) : undefined;
+    if (!seller) {
+      res.status(404).json({ error: "Unknown seller" });
+      return;
+    }
+    if (!originAllowed(req, seller)) {
       res.status(403).json({ error: "Origin not allowed" });
       return;
     }
+    const slug = seller.config.slug;
     const sessionId = typeof req.body?.sessionId === "string" && SESSION_ID_RE.test(req.body.sessionId) ? req.body.sessionId : randomUUID();
     const pageUrl = typeof req.body?.pageUrl === "string" ? req.body.pageUrl.slice(0, 300) : undefined;
 
@@ -82,16 +128,17 @@ export function createApp(deps: AppDeps) {
       res.status(400).json({ error: input.error, sessionId });
       return;
     }
-    if (!perIp.allow(req.ip ?? "unknown") || !perSession.allow(sessionId)) {
+    const key = `${slug}:${sessionId}`;
+    if (!perIp.allow(req.ip ?? "unknown") || !perSession.allow(key)) {
       res.status(429).json({ error: "You're sending messages too quickly. Please wait a moment.", sessionId });
       return;
     }
-    if (busy.has(sessionId)) {
+    if (busy.has(key)) {
       res.status(409).json({ error: "Please wait for the previous reply to finish.", sessionId });
       return;
     }
 
-    busy.add(sessionId);
+    busy.add(key);
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("X-Accel-Buffering", "no");
@@ -100,25 +147,25 @@ export function createApp(deps: AppDeps) {
 
     send("session", { sessionId });
     try {
-      const session = sessions.get(sessionId);
+      const session = sessions.get(slug, sessionId);
       // Store what the buyer typed after redaction, never the raw payment/ID details.
-      db.appendTranscript({ sessionId, role: "buyer", text: input.text });
+      db.appendTranscript({ seller: slug, sessionId: session.id, role: "buyer", text: input.text });
       const result = await runTurn(
         session,
         input.text,
         {
           client: deps.client,
-          kb,
-          catalogue,
-          systemPrompt: deps.systemPrompt,
+          kb: seller.kb,
+          catalogue: seller.catalogue,
+          systemPrompt: seller.systemPrompt,
           saveLead: (lead) => db.insertLead(lead),
-          logGuardrail: (id, interventions) => db.logGuardrailEvents(id, interventions),
+          logGuardrail: (id, interventions) => db.logGuardrailEvents(slug, id, interventions),
         },
         { onText: (text) => send("text", { text }) },
-        { pageUrl },
+        { pageUrl, pageEntry: pageEntryFor(seller, pageUrl) },
       );
       sessions.save(session);
-      db.appendTranscript({ sessionId, role: "bot", text: result.text, guardrails: result.interventions.map((i) => i.rule) });
+      db.appendTranscript({ seller: slug, sessionId: session.id, role: "bot", text: result.text, guardrails: result.interventions.map((i) => i.rule) });
       send("ui", { askFor: result.askFor, leadStage: session.lead.stage });
       if (process.env.NODE_ENV !== "production") send("debug", { usage: result.usage, interventions: result.interventions.map((i) => i.rule) });
       send("done", {});
@@ -126,12 +173,46 @@ export function createApp(deps: AppDeps) {
       console.error(err);
       send("error", { error: "Something went wrong. Please try again." });
     } finally {
-      busy.delete(sessionId);
+      busy.delete(key);
       res.end();
     }
   });
 
-  // ---- Seller admin: leads and transcripts (HTTP Basic auth, any username) ----
+  // ---- Website: seller directory and each seller's mini-site ----
+
+  const html = (res: Response, body: string, status = 200) => res.status(status).type("html").send(body);
+
+  function withSeller(handler: (seller: SellerContext, req: Request, res: Response) => void) {
+    return (req: Request, res: Response) => {
+      const seller = sellers.get(String(req.params.seller));
+      if (!seller) return html(res, notFoundPage("Seller not found"), 404);
+      handler(seller, req, res);
+    };
+  }
+
+  app.get("/", (_req, res) => html(res, directoryPage(sellers.list())));
+  // Routing isn't strict, so this serves both /s/<seller> and /s/<seller>/.
+  app.get("/s/:seller/", withSeller((seller, _req, res) => html(res, sellerHomePage(seller))));
+  app.get(
+    "/s/:seller/c/:slug",
+    withSeller((seller, req, res) => {
+      const c = seller.catalogue.get("category", String(req.params.slug));
+      return c ? html(res, categoryPage(seller, c)) : html(res, notFoundPage("Category not found"), 404);
+    }),
+  );
+  app.get(
+    "/s/:seller/p/:slug",
+    withSeller((seller, req, res) => {
+      const p = seller.catalogue.get("product", String(req.params.slug));
+      return p ? html(res, productPage(seller, p)) : html(res, notFoundPage("Product not found"), 404);
+    }),
+  );
+  app.get(
+    "/s/:seller/search",
+    withSeller((seller, req, res) => html(res, searchPage(seller, typeof req.query.q === "string" ? req.query.q.slice(0, 100) : ""))),
+  );
+
+  // ---- Admin: sellers, leads and transcripts (HTTP Basic auth, any username) ----
 
   function requireAdmin(req: Request, res: Response, next: NextFunction) {
     if (!adminPassword) {
@@ -152,27 +233,76 @@ export function createApp(deps: AppDeps) {
     next();
   }
 
-  app.get("/admin/leads.csv", requireAdmin, (_req, res) => {
-    const cols = ["createdAt", "name", "mobile", "product", "requirements", "quantity", "city", "pageUrl", "sessionId"] as const;
-    const lines = [cols.join(",")];
-    for (const lead of db.listLeads(10_000)) lines.push(cols.map((c) => csvCell(lead[c] ?? "")).join(","));
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", 'attachment; filename="leads.csv"');
-    res.send("﻿" + lines.join("\r\n") + "\r\n");
-  });
+  /** Browsers resend Basic auth automatically, so admin POSTs must come from this site (CSRF guard). */
+  function sameOriginPost(req: Request, res: Response, next: NextFunction) {
+    if (!sameHost(req, req.headers.origin ?? req.headers.referer)) {
+      res.status(403).send("Cross-site request blocked");
+      return;
+    }
+    next();
+  }
 
-  app.get("/admin/leads", requireAdmin, (_req, res) => {
-    const rows = db
-      .listLeads()
-      .map(
-        (l) =>
-          `<tr><td>${esc(new Date(l.createdAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }))}</td><td>${esc(l.name)}</td><td>${esc(l.mobile)}</td><td>${esc(l.product)}</td><td>${esc(l.requirements)}</td><td>${esc(l.quantity)}</td><td>${esc(l.city)}</td><td><a href="/admin/transcript/${encodeURIComponent(l.sessionId)}">chat</a></td></tr>`,
-      )
+  const sellerFilter = (req: Request): string | undefined => {
+    const s = typeof req.query.seller === "string" ? req.query.seller : undefined;
+    return s && sellers.get(s) ? s : undefined;
+  };
+
+  app.get("/admin", requireAdmin, (_req, res) => {
+    const counts = db.leadCounts();
+    const rows = sellers
+      .list()
+      .map((s) => {
+        const c = s.lastCrawl;
+        return `<tr><td><a href="/s/${esc(s.config.slug)}/">${esc(s.config.name)}</a><br><small>${esc(s.config.slug)}</small></td>
+<td><a href="/admin/leads?seller=${encodeURIComponent(s.config.slug)}">${counts[s.config.slug] ?? 0}</a></td>
+<td>${s.catalogue.size} <small>(${s.catalogue.list("product").length} products, ${s.catalogue.list("category").length} categories)</small><br><small>${s.sitemapPages} in sitemap · updated ${esc(s.catalogue.updatedAt?.toISOString() ?? "never")}</small></td>
+<td>${c ? `${c.ok ? "OK" : "Failed"} <small>${esc(c.at)}</small><br><small>${esc(c.message)}</small>` : "<small>none this run</small>"}</td>
+<td><form method="post" action="/admin/sellers/${esc(s.config.slug)}/recrawl"><button${deps.recrawl ? "" : " disabled"}>Re-crawl now</button></form></td></tr>`;
+      })
       .join("");
     res.send(
       adminPage(
-        "Leads",
-        `<p><a href="/admin/leads.csv">Download CSV</a></p><table><thead><tr><th>When (IST)</th><th>Name</th><th>Mobile</th><th>Machine</th><th>Requirement</th><th>Qty</th><th>City</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="8">No leads yet.</td></tr>'}</tbody></table>`,
+        "Sellers",
+        `<p><a href="/admin/leads">All leads</a> · <a href="/">Public directory</a></p><table><thead><tr><th>Seller</th><th>Leads</th><th>Catalogue</th><th>Last crawl</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5">No sellers.</td></tr>'}</tbody></table>`,
+      ),
+    );
+  });
+
+  app.post("/admin/sellers/:seller/recrawl", requireAdmin, sameOriginPost, (req, res) => {
+    const seller = sellers.get(String(req.params.seller));
+    if (!seller || !deps.recrawl) {
+      res.status(404).send("Not found");
+      return;
+    }
+    // Crawling takes minutes; run it in the background and show the result on /admin.
+    void deps.recrawl(seller);
+    res.redirect(303, "/admin");
+  });
+
+  app.get("/admin/leads.csv", requireAdmin, (req, res) => {
+    const cols = ["createdAt", "seller", "name", "mobile", "product", "requirements", "quantity", "city", "pageUrl", "sessionId"] as const;
+    const lines = [cols.join(",")];
+    for (const lead of db.listLeads(10_000, sellerFilter(req))) lines.push(cols.map((c) => csvCell(lead[c] ?? "")).join(","));
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="leads${sellerFilter(req) ? `-${sellerFilter(req)}` : ""}.csv"`);
+    res.send("﻿" + lines.join("\r\n") + "\r\n");
+  });
+
+  app.get("/admin/leads", requireAdmin, (req, res) => {
+    const filter = sellerFilter(req);
+    const name = (slug: string) => sellers.get(slug)?.config.name ?? slug;
+    const rows = db
+      .listLeads(500, filter)
+      .map(
+        (l) =>
+          `<tr><td>${esc(new Date(l.createdAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }))}</td><td>${esc(name(l.seller))}</td><td>${esc(l.name)}</td><td>${esc(l.mobile)}</td><td>${esc(l.product)}</td><td>${esc(l.requirements)}</td><td>${esc(l.quantity)}</td><td>${esc(l.city)}</td><td><a href="/admin/transcript/${encodeURIComponent(l.sessionId)}">chat</a></td></tr>`,
+      )
+      .join("");
+    const options = [`<option value="">All sellers</option>`, ...sellers.list().map((s) => `<option value="${esc(s.config.slug)}"${s.config.slug === filter ? " selected" : ""}>${esc(s.config.name)}</option>`)].join("");
+    res.send(
+      adminPage(
+        filter ? `Leads: ${esc(name(filter))}` : "Leads",
+        `<p><a href="/admin">← Sellers</a></p><form method="get"><select name="seller" onchange="this.form.submit()">${options}</select> <a href="/admin/leads.csv${filter ? `?seller=${encodeURIComponent(filter)}` : ""}">Download CSV</a></form><br><table><thead><tr><th>When (IST)</th><th>Seller</th><th>Name</th><th>Mobile</th><th>Product</th><th>Requirement</th><th>Qty</th><th>City</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="9">No leads yet.</td></tr>'}</tbody></table>`,
       ),
     );
   });
@@ -197,11 +327,9 @@ export function createApp(deps: AppDeps) {
     }),
   );
 
-  return app;
-}
+  app.use((_req, res) => html(res, notFoundPage(), 404));
 
-function esc(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+  return app;
 }
 
 /** Quotes a CSV cell and defuses spreadsheet formulas (a buyer could type "=HYPERLINK(...)"). */

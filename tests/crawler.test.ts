@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { crawl, extractPage, parseSitemap, shouldCrawl } from "../src/crawler.js";
+import { crawl, extractPage, parseSitemap, shouldCrawl, slugFromUrl, titleFromSlug } from "../src/crawler.js";
 
 const fx = (name: string) => fs.readFileSync(path.join(__dirname, "fixtures", name), "utf8");
 const BASE = "https://www.jayshreemachinetools.in";
@@ -23,7 +23,7 @@ describe("sitemap", () => {
   });
 
   it("keeps the real sitemap's product and category pages", () => {
-    const urls = parseSitemap(fs.readFileSync(path.join(__dirname, "..", "kb", "sitemap.xml"), "utf8"));
+    const urls = parseSitemap(fs.readFileSync(path.join(__dirname, "..", "kb", "sellers", "jayshree-machinetools", "sitemap.xml"), "utf8"));
     expect(urls.length).toBe(179);
     expect(urls.filter(shouldCrawl).length).toBe(174);
   });
@@ -38,6 +38,10 @@ describe("extractPage", () => {
     expect(e.price_text).toBe("₹4,50,000");
     expect(e.specs).toEqual({ "Pressing Force": "100 ton", "Working Length": "3125 mm", "Control Type": "CNC Controller" });
     expect(e.description).toContain("sheet bending");
+    expect(e.slug).toBe("cnc-press-brake-c8tj6re");
+    expect(e.image).toBe("https://cdn.example/cnc-press-brake.jpg");
+    expect(e.breadcrumbs).toEqual([{ title: "CNC Press Brake", url: `${BASE}/cnc-press-brake.html` }]);
+    expect(e.products).toEqual([]);
   });
 
   it("drops spec rows the guardrails forbid (GST, delivery, payment, freight)", () => {
@@ -57,10 +61,31 @@ describe("extractPage", () => {
     const e = extractPage(fx("category.html"), `${BASE}/fiber-laser-cutting-machine.html`);
     expect(e.kind).toBe("category");
     expect(e.price_text).toBeNull();
-    expect(e.related_links).toEqual([
-      `${BASE}/product/fiber-laser-cutting-machine-abc.html`,
-      `${BASE}/product/fiber-laser-3kw-def.html`,
+    expect(e.products).toEqual([
+      // The image alt text titles the first link; the second only says "View", so its title comes from the URL.
+      { url: `${BASE}/product/fiber-laser-cutting-machine-abc.html`, title: "Fiber Laser 1.5 kW" },
+      { url: `${BASE}/product/fiber-laser-3kw-def.html`, title: "Fiber laser 3kw def" },
     ]);
+    expect(e.image).toBe("https://cdn.example/laser-category.jpg");
+    expect(e.slug).toBe("fiber-laser-cutting-machine");
+  });
+});
+
+describe("slugs and titles", () => {
+  it("derives a URL-safe slug from the page path", () => {
+    expect(slugFromUrl(`${BASE}/product/cnc-press-brake-c8tj6re.html`)).toBe("cnc-press-brake-c8tj6re");
+    expect(slugFromUrl(`${BASE}/Hydraulic_Press.HTML`)).toBe("hydraulic-press");
+    expect(slugFromUrl("not a url")).toBe("");
+  });
+
+  it("drops only id-like suffixes when making a title from a slug", () => {
+    expect(titleFromSlug("cnc-press-brake-machine-10f24dqbg")).toBe("Cnc press brake machine");
+    expect(titleFromSlug("hydraulic-shearing-machine")).toBe("Hydraulic shearing machine");
+  });
+
+  it("skips logos when picking an image", () => {
+    const e = extractPage('<html><body><img src="/logo.png"><img src="/p/main.jpg"></body></html>', `${BASE}/product/x.html`);
+    expect(e.image).toBe(`${BASE}/p/main.jpg`);
   });
 });
 

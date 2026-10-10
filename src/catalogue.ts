@@ -1,20 +1,39 @@
 import fs from "node:fs";
 import MiniSearch from "minisearch";
-import { paths } from "./config.js";
-import type { CatalogueEntry } from "./crawler.js";
+import { slugFromUrl, type CatalogueEntry } from "./crawler.js";
 
 interface IndexedEntry extends CatalogueEntry {
   id: number;
   specsText: string;
 }
 
+/** Fills fields added after a catalogue file was written, so older files keep loading. */
+function normalize(e: Partial<CatalogueEntry> & { url: string; related_links?: string[] }): CatalogueEntry {
+  return {
+    url: e.url,
+    kind: e.kind === "category" ? "category" : "product",
+    slug: e.slug || slugFromUrl(e.url),
+    title: e.title ?? "",
+    category: e.category ?? "",
+    price_text: e.price_text ?? null,
+    specs: e.specs ?? {},
+    description: e.description ?? "",
+    image: e.image ?? null,
+    breadcrumbs: e.breadcrumbs ?? [],
+    products: e.products ?? (e.related_links ?? []).map((url) => ({ url, title: "" })),
+  };
+}
+
 export class Catalogue {
   private index: MiniSearch<IndexedEntry>;
   private entries: IndexedEntry[] = [];
+  private byUrl = new Map<string, IndexedEntry>();
+  /** When the catalogue was last loaded from a crawl (or file), for the directory and admin pages. */
+  updatedAt: Date | null = null;
 
-  constructor(entries: CatalogueEntry[] = []) {
+  constructor(entries: CatalogueEntry[] = [], updatedAt: Date | null = null) {
     this.index = Catalogue.createIndex();
-    this.load(entries);
+    this.load(entries, updatedAt);
   }
 
   private static createIndex() {
@@ -25,30 +44,40 @@ export class Catalogue {
     });
   }
 
-  /** Loads the runtime-refreshed catalogue if there is one, else the one shipped in kb/. */
-  static fromDisk(files = [paths.catalogue, paths.bundledCatalogue]): Catalogue {
+  /** Loads the first non-empty catalogue file from `files` (runtime crawl first, then the bundled one). */
+  static fromDisk(files: string[]): Catalogue {
     for (const file of files) {
       if (!fs.existsSync(file)) continue;
       const entries = JSON.parse(fs.readFileSync(file, "utf8")) as CatalogueEntry[];
-      if (entries.length) return new Catalogue(entries);
+      if (entries.length) return new Catalogue(entries, fs.statSync(file).mtime);
     }
     return new Catalogue();
   }
 
-  load(entries: CatalogueEntry[]) {
+  load(entries: CatalogueEntry[], updatedAt: Date | null = new Date()) {
     this.index = Catalogue.createIndex();
-    this.entries = entries.map((e, id) => ({
-      ...e,
-      id,
-      specsText: Object.entries(e.specs)
-        .map(([k, v]) => `${k} ${v}`)
-        .join(" "),
-    }));
+    this.entries = entries.map((raw, id) => {
+      const e = normalize(raw);
+      return {
+        ...e,
+        id,
+        specsText: Object.entries(e.specs)
+          .map(([k, v]) => `${k} ${v}`)
+          .join(" "),
+      };
+    });
+    this.byUrl = new Map(this.entries.map((e) => [e.url, e]));
     this.index.addAll(this.entries);
+    this.updatedAt = entries.length ? updatedAt : null;
   }
 
   get size() {
     return this.entries.length;
+  }
+
+  private strip(e: IndexedEntry): CatalogueEntry {
+    const { id: _id, specsText: _s, ...entry } = e;
+    return entry;
   }
 
   search(query: string, k = 4): CatalogueEntry[] {
@@ -60,15 +89,41 @@ export class Catalogue {
     return hits
       .filter((h) => h.score >= best * 0.35)
       .slice(0, k)
-      .map((h) => {
-        const { id: _id, specsText: _s, ...entry } = this.entries[h.id as number];
-        return entry;
-      });
+      .map((h) => this.strip(this.entries[h.id as number]));
   }
 
   /** All catalogue URLs (Guardrail 3: only these and business card links may be shared). */
   urls(): string[] {
     return this.entries.map((e) => e.url);
+  }
+
+  list(kind?: CatalogueEntry["kind"]): CatalogueEntry[] {
+    return this.entries.filter((e) => !kind || e.kind === kind).map((e) => this.strip(e));
+  }
+
+  get(kind: CatalogueEntry["kind"], slug: string): CatalogueEntry | null {
+    const e = this.entries.find((x) => x.kind === kind && x.slug === slug);
+    return e ? this.strip(e) : null;
+  }
+
+  byPageUrl(url: string): CatalogueEntry | null {
+    const e = this.byUrl.get(url);
+    return e ? this.strip(e) : null;
+  }
+
+  /** Products listed on a category page, resolved to full catalogue entries where crawled. */
+  productsIn(category: CatalogueEntry): Array<CatalogueEntry | { url: string; title: string; slug: string }> {
+    return category.products.map((p) => this.byPageUrl(p.url) ?? { ...p, slug: slugFromUrl(p.url) });
+  }
+
+  /** The category page a product belongs to: via breadcrumbs, else the first category listing it. */
+  categoryOf(product: CatalogueEntry): CatalogueEntry | null {
+    for (const crumb of [...product.breadcrumbs].reverse()) {
+      const c = this.byPageUrl(crumb.url);
+      if (c?.kind === "category") return c;
+    }
+    const c = this.entries.find((e) => e.kind === "category" && e.products.some((p) => p.url === product.url));
+    return c ? this.strip(c) : null;
   }
 }
 
@@ -80,6 +135,7 @@ export function formatCatalogueHits(hits: CatalogueEntry[]): string {
       lines.push(h.price_text ? `Listed starting price: ${h.price_text}` : "Listed price: none");
       const specs = Object.entries(h.specs);
       if (specs.length) lines.push(`Specifications: ${specs.map(([k, v]) => `${k}: ${v}`).join("; ")}`);
+      if (h.kind === "category" && h.products.length) lines.push(`Products on this page: ${h.products.map((p) => p.title).filter(Boolean).slice(0, 12).join("; ")}`);
       if (h.description) lines.push(`Description: ${h.description}`);
       return lines.join("\n");
     })

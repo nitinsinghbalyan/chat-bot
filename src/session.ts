@@ -13,7 +13,9 @@ export interface LeadState {
 }
 
 export interface Session {
+  /** "<seller>:<browser session id>", so one browser chatting with two sellers has two chats. */
   id: string;
+  seller: string;
   messages: Anthropic.Beta.BetaMessageParam[];
   lead: LeadState;
   /** Catalogue entries retrieved over the whole conversation (price/link whitelist for output guardrails). */
@@ -29,9 +31,14 @@ export interface Session {
 const TTL_MS = 2 * 60 * 60 * 1000;
 const MAX_SESSIONS = 5000;
 
-function newSession(id: string): Session {
+export function sessionKey(seller: string, sessionId: string): string {
+  return `${seller}:${sessionId}`;
+}
+
+function newSession(id: string, seller: string): Session {
   return {
     id,
+    seller,
     messages: [],
     lead: { stage: "none", otpAttempts: 0, otpSends: 0 },
     seenCatalogue: new Map(),
@@ -46,6 +53,7 @@ function newSession(id: string): Session {
 function fromStored(s: StoredSession): Session {
   return {
     id: s.id,
+    seller: s.seller,
     messages: s.messages as Session["messages"],
     lead: s.lead as LeadState,
     seenCatalogue: new Map(s.seenCatalogue as Array<[string, CatalogueEntry]>),
@@ -71,13 +79,14 @@ export class SessionStore {
     setInterval(() => this.sweep(), 10 * 60 * 1000).unref();
   }
 
-  get(id: string): Session {
+  get(seller: string, sessionId: string): Session {
+    const id = sessionKey(seller, sessionId);
     let s = this.sessions.get(id);
     if (!s) {
       const stored = this.db?.loadSession(id);
       if (stored) s = fromStored(stored);
     }
-    if (!s || Date.now() - s.lastSeen > this.ttlMs) s = newSession(id);
+    if (!s || Date.now() - s.lastSeen > this.ttlMs) s = newSession(id, seller);
     if (!this.sessions.has(id)) {
       if (this.sessions.size >= MAX_SESSIONS) this.sweep(true);
     }
@@ -89,6 +98,7 @@ export class SessionStore {
   save(s: Session) {
     this.db?.saveSession({
       id: s.id,
+      seller: s.seller,
       messages: s.messages,
       lead: s.lead,
       seenCatalogue: [...s.seenCatalogue.entries()],

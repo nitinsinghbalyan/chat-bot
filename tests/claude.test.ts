@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import { Catalogue } from "../src/catalogue.js";
 import { FALLBACK_REPLY, runTurn, type ChatDeps } from "../src/claude.js";
 import { REPLACEMENTS } from "../src/guardrails.js";
+import path from "node:path";
 import { loadKnowledgeBase } from "../src/kb.js";
+
+const JAYSHREE = path.join(__dirname, "..", "kb", "sellers", "jayshree-machinetools");
 import { SessionStore } from "../src/session.js";
 import type { Lead } from "../src/tools.js";
 
@@ -47,7 +50,7 @@ function fakeClient(script: Array<Scripted | Error>) {
   return { client: client as unknown as Anthropic, requests };
 }
 
-const kb = loadKnowledgeBase();
+const kb = loadKnowledgeBase(JAYSHREE);
 const catalogue = new Catalogue([
   {
     url: "https://www.jayshreemachinetools.in/product/cnc-press-brake.html",
@@ -71,7 +74,7 @@ const text = (t: string): Scripted => ({ content: [{ type: "text", text: t }], s
 
 describe("runTurn", () => {
   it("streams a grounded answer and sends a cache-friendly request", async () => {
-    const session = new SessionStore().get("s-basic-0001");
+    const session = new SessionStore().get("jayshree-machinetools", "s-basic-0001");
     const { d, requests } = deps([text("Yes, we make CNC press brakes. The starting price is ₹4,50,000 per piece. What thickness do you bend?")]);
     let streamed = "";
     const r = await runTurn(session, "do you make press brake? price?", d, { onText: (t) => (streamed += t) });
@@ -94,7 +97,7 @@ describe("runTurn", () => {
   });
 
   it("runs the OTP tool loop and tells the widget to ask for the OTP", async () => {
-    const session = new SessionStore().get("s-tools-0001");
+    const session = new SessionStore().get("jayshree-machinetools", "s-tools-0001");
     const { d, requests } = deps([
       { content: [{ type: "tool_use", id: "tu_1", name: "send_otp", input: { mobile: "9876543210" } }], stop_reason: "tool_use" },
       text("We've sent an OTP to your mobile. Please enter it here."),
@@ -110,7 +113,7 @@ describe("runTurn", () => {
   });
 
   it("completes the whole lead flow across turns", async () => {
-    const session = new SessionStore().get("s-lead-00001");
+    const session = new SessionStore().get("jayshree-machinetools", "s-lead-00001");
     const leads: Lead[] = [];
     const { d } = deps(
       [
@@ -131,7 +134,7 @@ describe("runTurn", () => {
   });
 
   it("replaces guardrail-breaking sentences and tells the model next turn", async () => {
-    const session = new SessionStore().get("s-guard-0001");
+    const session = new SessionStore().get("jayshree-machinetools", "s-guard-0001");
     const { d, requests } = deps([text("Freight is included. GST is 18% extra. Which size do you need?"), text("Sure.")]);
     const r = await runTurn(session, "is freight included?", d);
     expect(r.text).toBe(`${REPLACEMENTS.G2_freight} ${REPLACEMENTS.G8_tax} Which size do you need?`);
@@ -145,7 +148,7 @@ describe("runTurn", () => {
   });
 
   it("drops a price that is not in the catalogue", async () => {
-    const session = new SessionStore().get("s-price-0001");
+    const session = new SessionStore().get("jayshree-machinetools", "s-price-0001");
     const { d } = deps([text("A road roller costs about ₹8,00,000.")]);
     const r = await runTurn(session, "road roller price", d);
     expect(r.text).not.toContain("8,00,000");
@@ -153,7 +156,7 @@ describe("runTurn", () => {
   });
 
   it("does not keep a refused turn or run its tools", async () => {
-    const session = new SessionStore().get("s-refuse-001");
+    const session = new SessionStore().get("jayshree-machinetools", "s-refuse-001");
     const { d } = deps([{ content: [{ type: "tool_use", id: "x", name: "send_otp", input: { mobile: "9876543210" } }], stop_reason: "refusal" }]);
     const r = await runTurn(session, "something odd", d);
     expect(r.text).toMatch(/can't help with that/);
@@ -162,7 +165,7 @@ describe("runTurn", () => {
   });
 
   it("falls back politely on API errors without corrupting history", async () => {
-    const session = new SessionStore().get("s-error-0001");
+    const session = new SessionStore().get("jayshree-machinetools", "s-error-0001");
     const err = new Anthropic.APIConnectionError({ message: "boom" });
     const { d } = deps([err]);
     const r = await runTurn(session, "hello", d);
