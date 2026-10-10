@@ -1,0 +1,39 @@
+# Render Blueprint: New > Blueprint > pick this repo. Render reads this file and creates the service.
+services:
+  - type: web
+    name: jayshree-chatbot
+    runtime: node
+    # A persistent disk (for the SQLite database) needs a paid instance type.
+    plan: starter
+    # Closest Render region to India.
+    region: singapore
+    branch: main
+    # --include=dev: TypeScript is a dev dependency and NODE_ENV=production would otherwise skip it.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    disk:
+      name: chatbot-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+      - key: BOT_MODEL
+        value: claude-sonnet-5-5
+      - key: BOT_EFFORT
+        value: low
+      - key: ALLOWED_ORIGINS
+        value: https://www.jayshreemachinetools.in,https://jayshreemachinetools.in
+      - key: CRAWL_ON_START
+        value: "true"
+      - key: CRAWL_INTERVAL_HOURS
+        value: "24"
+      # Secrets: Render asks for these when the Blueprint is first applied.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false

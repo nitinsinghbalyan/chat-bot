@@ -1,0 +1,172 @@
+import Anthropic from "@anthropic-ai/sdk";
+import { describe, expect, it } from "vitest";
+import { Catalogue } from "../src/catalogue.js";
+import { FALLBACK_REPLY, runTurn, type ChatDeps } from "../src/claude.js";
+import { REPLACEMENTS } from "../src/guardrails.js";
+import { loadKnowledgeBase } from "../src/kb.js";
+import { SessionStore } from "../src/session.js";
+import type { Lead } from "../src/tools.js";
+
+type Block = { type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: unknown };
+interface Scripted {
+  content: Block[];
+  stop_reason: string;
+}
+
+/** A stand-in for client.beta.messages.stream that replays scripted responses. */
+function fakeClient(script: Array<Scripted | Error>) {
+  const requests: any[] = [];
+  const client = {
+    beta: {
+      messages: {
+        stream(params: any) {
+          requests.push(structuredClone(params));
+          const next = script.shift();
+          if (!next) throw new Error("script exhausted");
+          if (next instanceof Error) throw next;
+          const events: any[] = [];
+          next.content.forEach((block, index) => {
+            events.push({ type: "content_block_start", index, content_block: block.type === "text" ? { type: "text", text: "" } : block });
+            if (block.type === "text") for (const piece of block.text.match(/.{1,9}/gs) ?? []) events.push({ type: "content_block_delta", index, delta: { type: "text_delta", text: piece } });
+            events.push({ type: "content_block_stop", index });
+          });
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield* events;
+            },
+            finalMessage: async () => ({
+              content: next.content,
+              stop_reason: next.stop_reason,
+              usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 80, cache_creation_input_tokens: 0 },
+            }),
+          };
+        },
+      },
+    },
+  };
+  return { client: client as unknown as Anthropic, requests };
+}
+
+const kb = loadKnowledgeBase();
+const catalogue = new Catalogue([
+  {
+    url: "https://www.jayshreemachinetools.in/product/cnc-press-brake.html",
+    kind: "product",
+    title: "CNC Press Brake Machine",
+    category: "CNC Press Brakes",
+    price_text: "₹4,50,000",
+    specs: { "Pressing Force": "100 ton" },
+    description: "",
+    related_links: [],
+  },
+]);
+
+function deps(script: Array<Scripted | Error>, leads: Lead[] = []) {
+  const { client, requests } = fakeClient(script);
+  const d: ChatDeps = { client, kb, catalogue, systemPrompt: "SYSTEM", saveLead: (l) => leads.push(l), model: "claude-sonnet-5-5" };
+  return { d, requests };
+}
+
+const text = (t: string): Scripted => ({ content: [{ type: "text", text: t }], stop_reason: "end_turn" });
+
+describe("runTurn", () => {
+  it("streams a grounded answer and sends a cache-friendly request", async () => {
+    const session = new SessionStore().get("s-basic-0001");
+    const { d, requests } = deps([text("Yes, we make CNC press brakes. The starting price is ₹4,50,000 per piece. What thickness do you bend?")]);
+    let streamed = "";
+    const r = await runTurn(session, "do you make press brake? price?", d, { onText: (t) => (streamed += t) });
+
+    expect(streamed).toBe(r.text);
+    expect(r.text).toContain("₹4,50,000");
+    expect(r.interventions).toEqual([]);
+    const req = requests[0];
+    expect(req.system).toEqual([{ type: "text", text: "SYSTEM", cache_control: { type: "ephemeral" } }]);
+    expect(req.tool_choice).toEqual({ type: "auto" });
+    expect(req.tools.map((t: any) => t.name)).toEqual(["send_otp", "verify_otp", "save_lead"]);
+    expect(req.output_config).toEqual({ effort: "low" });
+    expect(req.fallbacks).toBe("default");
+    expect(req.betas).toEqual(["server-side-fallback-2026-07-01"]);
+    const userText = req.messages[0].content[0].text as string;
+    expect(userText).toContain("Listed starting price: ₹4,50,000");
+    expect(userText).toContain("<buyer_message>\ndo you make press brake? price?\n</buyer_message>");
+    expect(session.messages).toHaveLength(2);
+    expect(session.turns).toBe(1);
+  });
+
+  it("runs the OTP tool loop and tells the widget to ask for the OTP", async () => {
+    const session = new SessionStore().get("s-tools-0001");
+    const { d, requests } = deps([
+      { content: [{ type: "tool_use", id: "tu_1", name: "send_otp", input: { mobile: "9876543210" } }], stop_reason: "tool_use" },
+      text("We've sent an OTP to your mobile. Please enter it here."),
+    ]);
+    const r = await runTurn(session, "9876543210", d);
+    expect(r.askFor).toBe("otp");
+    expect(session.lead.stage).toBe("otp_sent");
+    const toolResultMsg = requests[1].messages.at(-1);
+    expect(toolResultMsg.role).toBe("user");
+    expect(toolResultMsg.content[0]).toMatchObject({ type: "tool_result", tool_use_id: "tu_1", is_error: false });
+    // user, assistant(tool_use), user(tool_result), assistant(text)
+    expect(session.messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+  });
+
+  it("completes the whole lead flow across turns", async () => {
+    const session = new SessionStore().get("s-lead-00001");
+    const leads: Lead[] = [];
+    const { d } = deps(
+      [
+        { content: [{ type: "tool_use", id: "a", name: "send_otp", input: { mobile: "9876543210" } }], stop_reason: "tool_use" },
+        text("OTP sent. Please enter it."),
+        { content: [{ type: "tool_use", id: "b", name: "verify_otp", input: { otp: "12345" } }], stop_reason: "tool_use" },
+        text("Verified, thank you. May I have your name?"),
+        { content: [{ type: "tool_use", id: "c", name: "save_lead", input: { name: "Ramesh", product: "CNC Press Brake", requirements: "100 ton", quantity: "1 piece", city: "" } }], stop_reason: "tool_use" },
+        text("Thanks Ramesh, our team will contact you."),
+      ],
+      leads,
+    );
+    expect((await runTurn(session, "9876543210", d)).askFor).toBe("otp");
+    expect((await runTurn(session, "12345", d)).askFor).toBe("name");
+    expect((await runTurn(session, "Ramesh", d)).askFor).toBeNull();
+    expect(leads).toHaveLength(1);
+    expect(leads[0]).toMatchObject({ mobile: "9876543210", name: "Ramesh" });
+  });
+
+  it("replaces guardrail-breaking sentences and tells the model next turn", async () => {
+    const session = new SessionStore().get("s-guard-0001");
+    const { d, requests } = deps([text("Freight is included. GST is 18% extra. Which size do you need?"), text("Sure.")]);
+    const r = await runTurn(session, "is freight included?", d);
+    expect(r.text).toBe(`${REPLACEMENTS.G2_freight} ${REPLACEMENTS.G8_tax} Which size do you need?`);
+    expect(r.interventions.map((i) => i.rule)).toEqual(["G2_freight", "G8_tax"]);
+    // History keeps the model's own words (append-only); the correction goes in the next user turn.
+    expect(JSON.stringify(session.messages[1].content)).toContain("Freight is included.");
+    await runTurn(session, "3 meter", d);
+    const next = requests[1].messages.at(-1).content[0].text as string;
+    expect(next).toMatch(/^<operator_note>[\s\S]*G2_freight, G8_tax/);
+    expect(session.pendingNotes).toEqual([]);
+  });
+
+  it("drops a price that is not in the catalogue", async () => {
+    const session = new SessionStore().get("s-price-0001");
+    const { d } = deps([text("A road roller costs about ₹8,00,000.")]);
+    const r = await runTurn(session, "road roller price", d);
+    expect(r.text).not.toContain("8,00,000");
+    expect(r.text).toContain(REPLACEMENTS.G1_price);
+  });
+
+  it("does not keep a refused turn or run its tools", async () => {
+    const session = new SessionStore().get("s-refuse-001");
+    const { d } = deps([{ content: [{ type: "tool_use", id: "x", name: "send_otp", input: { mobile: "9876543210" } }], stop_reason: "refusal" }]);
+    const r = await runTurn(session, "something odd", d);
+    expect(r.text).toMatch(/can't help with that/);
+    expect(session.lead.stage).toBe("none");
+    expect(session.messages).toHaveLength(0);
+  });
+
+  it("falls back politely on API errors without corrupting history", async () => {
+    const session = new SessionStore().get("s-error-0001");
+    const err = new Anthropic.APIConnectionError({ message: "boom" });
+    const { d } = deps([err]);
+    const r = await runTurn(session, "hello", d);
+    expect(r.text).toBe(FALLBACK_REPLY);
+    expect(session.messages).toHaveLength(0);
+  });
+});
