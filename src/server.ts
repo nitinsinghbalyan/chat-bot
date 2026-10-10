@@ -1,35 +1,45 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createApp } from "./app.js";
-import { Catalogue } from "./catalogue.js";
 import { config, paths } from "./config.js";
 import { refreshCatalogue } from "./crawler.js";
 import { ChatDb } from "./db.js";
-import { loadKnowledgeBase } from "./kb.js";
-import { renderSystemPrompt } from "./prompts.js";
+import { SellerRegistry, type SellerContext } from "./sellers.js";
 import { SessionStore } from "./session.js";
 
-const kb = loadKnowledgeBase();
-const catalogue = Catalogue.fromDisk();
+const sellers = SellerRegistry.load();
 const db = new ChatDb(paths.db);
 const sessions = new SessionStore(db);
+const crawling = new Set<string>();
 
-const app = createApp({
-  client: new Anthropic(),
-  kb,
-  catalogue,
-  systemPrompt: renderSystemPrompt(kb),
-  sessions,
-  db,
-});
-
-async function refresh() {
+/** Crawls one seller's sitemap into DATA_DIR and swaps the new catalogue in. */
+async function recrawl(seller: SellerContext) {
+  const slug = seller.config.slug;
+  if (crawling.has(slug)) return;
+  crawling.add(slug);
+  const log = (m: string) => console.log(`[crawl:${slug}] ${m}`);
   try {
-    const entries = await refreshCatalogue((m) => console.log(`[crawl] ${m}`), paths.catalogue);
-    if (entries) catalogue.load(entries);
+    const entries = await refreshCatalogue({ sitemapFile: seller.sitemapFile, outFile: seller.runtimeCatalogueFile, log });
+    if (entries) seller.catalogue.load(entries);
+    seller.lastCrawl = {
+      at: new Date().toISOString(),
+      ok: !!entries,
+      entries: entries?.length ?? 0,
+      message: entries ? `${entries.length} pages` : "Site unreachable or no pages fetched; kept the previous catalogue",
+    };
   } catch (err) {
-    console.error("[crawl] failed", err);
+    console.error(`[crawl:${slug}] failed`, err);
+    seller.lastCrawl = { at: new Date().toISOString(), ok: false, entries: 0, message: (err as Error).message };
+  } finally {
+    crawling.delete(slug);
   }
 }
+
+/** Crawl sellers one after another so we never hit several sites (or one site) too hard. */
+async function recrawlAll() {
+  for (const seller of sellers.list()) await recrawl(seller);
+}
+
+const app = createApp({ client: new Anthropic(), sellers, sessions, db, recrawl });
 
 function prune() {
   const removed = db.pruneSessions(30);
@@ -37,13 +47,14 @@ function prune() {
 }
 
 const server = app.listen(config.PORT, () => {
-  console.log(
-    `Chatbot for ${kb.businessCard.name} on http://localhost:${config.PORT} (model ${config.BOT_MODEL}, ${catalogue.size} catalogue entries, db ${paths.db})`,
-  );
-  if (catalogue.size === 0) console.warn("Catalogue is empty: run `npm run crawl` (needs access to the seller site) so prices and links can be shared.");
-  if (!config.ADMIN_PASSWORD) console.warn("ADMIN_PASSWORD is not set: /admin/leads is disabled.");
-  if (config.CRAWL_ON_START) void refresh();
-  if (config.CRAWL_INTERVAL_HOURS > 0) setInterval(() => void refresh(), config.CRAWL_INTERVAL_HOURS * 3_600_000).unref();
+  console.log(`Seller assistants on http://localhost:${config.PORT} (model ${config.BOT_MODEL}, db ${paths.db})`);
+  for (const s of sellers.list()) {
+    console.log(`  - ${s.config.slug}: ${s.catalogue.size} catalogue entries, ${s.kb.productCards.length} product cards`);
+  }
+  if (sellers.size === 0) console.warn(`No sellers found in ${paths.sellers}`);
+  if (!config.ADMIN_PASSWORD) console.warn("ADMIN_PASSWORD is not set: /admin is disabled.");
+  if (config.CRAWL_ON_START) void recrawlAll();
+  if (config.CRAWL_INTERVAL_HOURS > 0) setInterval(() => void recrawlAll(), config.CRAWL_INTERVAL_HOURS * 3_600_000).unref();
   prune();
   setInterval(prune, 24 * 3_600_000).unref();
 });

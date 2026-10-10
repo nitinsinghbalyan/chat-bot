@@ -37,6 +37,8 @@ const schema = z.object({
   DATA_DIR: optional(z.string()),
   /** Enables /admin/leads with HTTP Basic auth (any username). Unset = admin pages disabled. */
   ADMIN_PASSWORD: optional(z.string().min(8, "ADMIN_PASSWORD must be at least 8 characters")),
+  /** Folder holding one sub-folder per seller. Default: kb/sellers in the repo. */
+  SELLERS_DIR: optional(z.string()),
 });
 
 export const config = schema.parse(process.env);
@@ -44,16 +46,12 @@ export const config = schema.parse(process.env);
 const dataDir = config.DATA_DIR ? path.resolve(config.DATA_DIR) : path.join(ROOT, "data");
 
 export const paths = {
-  kb: path.join(ROOT, "kb"),
   prompts: path.join(ROOT, "prompts"),
   public: path.join(ROOT, "public"),
+  /** One folder per seller with the KB you supply: seller.json, business_card.json, product_cards.json, sitemap.xml. */
+  sellers: config.SELLERS_DIR ? path.resolve(config.SELLERS_DIR) : path.join(ROOT, "kb", "sellers"),
   data: dataDir,
   db: path.join(dataDir, "chatbot.db"),
-  businessCard: path.join(ROOT, "kb", "business_card.json"),
-  productCards: path.join(ROOT, "kb", "product_cards.json"),
-  sitemap: path.join(ROOT, "kb", "sitemap.xml"),
-  /** Catalogue shipped with the repo (committed after a crawl). */
-  bundledCatalogue: path.join(ROOT, "kb", "catalogue.json"),
-  /** Catalogue refreshed by the crawler at runtime; preferred when present. */
-  catalogue: path.join(dataDir, "catalogue.json"),
+  /** Runtime data per seller (the refreshed catalogue), kept on the persistent disk. */
+  sellerData: path.join(dataDir, "sellers"),
 };

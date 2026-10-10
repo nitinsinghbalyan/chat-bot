@@ -1,0 +1,8 @@
+{
+  "name": "Jayshree Machinetools Private Limited",
+  "slug": "jayshree-machinetools",
+  "siteUrl": "https://www.jayshreemachinetools.in/",
+  "color": "#0b5cad",
+  "allowedOrigins": ["https://www.jayshreemachinetools.in", "https://jayshreemachinetools.in"],
+  "chips": ["Press Brake", "Shearing Machine", "Laser Cutting Machine", "Hydraulic Press"]
+}

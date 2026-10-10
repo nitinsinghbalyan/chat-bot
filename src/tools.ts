@@ -84,6 +84,7 @@ export interface ToolResult {
 
 export interface Lead {
   createdAt: string;
+  seller: string;
   sessionId: string;
   mobile: string;
   name: string;
@@ -182,6 +183,7 @@ export function executeTool(
       if (name.length < 2) return { content: "Missing the buyer's name. Ask for it first.", isError: true };
       opts.saveLead({
         createdAt: new Date().toISOString(),
+        seller: session.seller,
         sessionId: session.id,
         mobile: lead.mobile,
         name,

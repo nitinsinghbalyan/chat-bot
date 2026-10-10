@@ -1,24 +1,51 @@
 /**
- * Builds the SELLER CATALOGUE (RAG) by crawling the pages listed in kb/sitemap.xml.
+ * Builds a seller's SELLER CATALOGUE (RAG) by crawling the pages in their sitemap.xml.
+ * The same entries feed the bot's retrieval and the seller's generated mini-website.
  *
- * Run with `npm run crawl`. Needs outbound HTTPS access to the seller's site, so run it
- * where the bot is deployed (or anywhere with internet) and commit/ship kb/catalogue.json.
+ * Run with `npm run crawl` (all sellers) or `npm run crawl -- <slug>`. Needs outbound HTTPS
+ * access to the sellers' sites, so run it where the bot is deployed or anywhere with internet.
  */
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import * as cheerio from "cheerio";
-import { paths } from "./config.js";
+
+export interface PageLink {
+  url: string;
+  title: string;
+}
 
 export interface CatalogueEntry {
   url: string;
   kind: "product" | "category";
+  /** URL-safe id derived from the page path, used for the generated site's URLs. */
+  slug: string;
   title: string;
   category: string;
   price_text: string | null;
   specs: Record<string, string>;
   description: string;
-  related_links: string[];
+  /** Main product/category image on the seller's site (linked, not copied). */
+  image: string | null;
+  /** Breadcrumb trail from the seller's site, excluding "Home". */
+  breadcrumbs: PageLink[];
+  /** On category pages: the products listed there. */
+  products: PageLink[];
+}
+
+/** Turns "/product/cnc-press-brake-c8tj6re.html" into "cnc-press-brake-c8tj6re". */
+export function slugFromUrl(url: string): string {
+  let pathname = "";
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    return "";
+  }
+  const last = pathname.split("/").filter(Boolean).pop() ?? "";
+  return last
+    .replace(/\.(html?|php|aspx?)$/i, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 /** Pages that describe the business rather than products. Skipped because of Guardrail 7. */
@@ -76,11 +103,55 @@ function priceFromJsonLd(product: Record<string, any> | undefined): string | nul
   return `${currency}${Number(price).toLocaleString("en-IN")}`;
 }
 
+/** "cnc-press-brake-machine-10f24dqbg" -> "Cnc press brake machine" (drops a trailing id that contains a digit). */
+export function titleFromSlug(slug: string): string {
+  const words = slug.replace(/-(?=[a-z0-9]*\d)[a-z0-9]{6,}$/, "").replace(/-/g, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+const GENERIC_LINK_TEXT = /^(view|view details|view more|more|more details|details|read more|get (latest )?price|get (a )?quote|enquire( now)?|send enquiry|contact (us|supplier)|click here|yes,? i am interested)$/i;
+const NOT_A_PRODUCT_IMAGE = /logo|icon|sprite|banner|placeholder|blank|loader|spacer|whatsapp|facebook|twitter|linkedin|youtube|instagram/i;
+
+function absolute(src: string | undefined | null, base: string): string | null {
+  if (!src || src.startsWith("data:")) return null;
+  try {
+    const u = new URL(src, base);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function imageFromJsonLd(product: Record<string, any> | undefined): string | undefined {
+  const img = product?.image;
+  if (!img) return undefined;
+  if (typeof img === "string") return img;
+  if (Array.isArray(img)) return typeof img[0] === "string" ? img[0] : img[0]?.url;
+  return img.url;
+}
+
+function pickImage($: cheerio.CheerioAPI, ld: Record<string, any> | undefined, url: string): string | null {
+  const candidates = [
+    imageFromJsonLd(ld),
+    $('meta[property="og:image"]').attr("content"),
+    $('[itemprop="image"]').attr("src") ?? $('[itemprop="image"]').attr("content"),
+    ...$("main img, #main img, .product img, [class*='product' i] img, img")
+      .map((_, img) => $(img).attr("data-src") || $(img).attr("src"))
+      .get(),
+  ];
+  for (const c of candidates) {
+    const abs = absolute(c, url);
+    if (abs && !NOT_A_PRODUCT_IMAGE.test(abs)) return abs;
+  }
+  return null;
+}
+
 export function extractPage(html: string, url: string): CatalogueEntry {
   const $ = cheerio.load(html);
+  const ld = jsonLdProducts($)[0];
+  const image = pickImage($, ld, url);
   $("script:not([type='application/ld+json']), style, noscript, iframe, header nav, footer").remove();
 
-  const ld = jsonLdProducts($)[0];
   const title = clean(ld?.name) || clean($("h1").first().text()) || clean($("title").text());
   const kind: CatalogueEntry["kind"] = /\/product\//.test(new URL(url).pathname) ? "product" : "category";
 
@@ -114,32 +185,48 @@ export function extractPage(html: string, url: string): CatalogueEntry {
     clean($('meta[name="description"]').attr("content")) ||
     clean($("p").first().text());
 
-  const crumbs = $('[class*="breadcrumb" i] a, nav[aria-label="breadcrumb" i] a')
-    .map((_, a) => clean($(a).text()))
-    .get()
-    .filter((t) => t && !/^home$/i.test(t));
-  const category = clean(ld?.category) || crumbs[crumbs.length - 1] || (kind === "category" ? title : "");
+  const breadcrumbs: PageLink[] = [];
+  $('[class*="breadcrumb" i] a, nav[aria-label="breadcrumb" i] a').each((_, a) => {
+    const t = clean($(a).text());
+    const href = absolute($(a).attr("href"), url);
+    if (t && href && !/^home$/i.test(t) && !breadcrumbs.some((b) => b.url === href)) breadcrumbs.push({ title: t, url: href });
+  });
+  const category = clean(ld?.category) || breadcrumbs[breadcrumbs.length - 1]?.title || (kind === "category" ? title : "");
 
+  // Product links on this page, titled by the best anchor text (or image alt) seen for each URL.
   const host = new URL(url).hostname;
-  const related = new Set<string>();
+  const productTitles = new Map<string, string>();
   $("a[href]").each((_, a) => {
+    let href: URL;
     try {
-      const href = new URL($(a).attr("href")!, url);
-      if (href.hostname === host && /\/product\//.test(href.pathname) && href.href !== url) related.add(href.origin + href.pathname);
+      href = new URL($(a).attr("href")!, url);
     } catch {
-      // ignore bad href
+      return;
     }
+    if (href.hostname !== host || !/\/product\//.test(href.pathname)) return;
+    const key = href.origin + href.pathname;
+    if (key === url) return;
+    const text = clean($(a).attr("title")) || clean($(a).text()) || clean($(a).find("img").attr("alt"));
+    const useful = text && !GENERIC_LINK_TEXT.test(text) && text.length <= 120 ? text : "";
+    const prev = productTitles.get(key);
+    if (prev === undefined || (!prev && useful) || (useful && useful.length > prev.length)) productTitles.set(key, useful);
   });
 
   return {
     url,
     kind,
+    slug: slugFromUrl(url),
     title,
     category,
     price_text: priceText,
     specs,
     description: description.slice(0, 600),
-    related_links: kind === "category" ? [...related].slice(0, 30) : [],
+    image,
+    breadcrumbs,
+    products:
+      kind === "category"
+        ? [...productTitles].slice(0, 60).map(([u, t]) => ({ url: u, title: t || titleFromSlug(slugFromUrl(u)) }))
+        : [],
   };
 }
 
@@ -202,28 +289,24 @@ export async function crawl(opts: CrawlOptions): Promise<CatalogueEntry[]> {
 }
 
 /**
- * Crawl the sitemap and write the catalogue. Keeps the old catalogue if nothing could be fetched.
- * `npm run crawl` writes kb/catalogue.json (to commit); the server writes to DATA_DIR.
+ * Crawl a seller's sitemap and write their catalogue. Keeps the old catalogue (returns null)
+ * if nothing could be fetched, e.g. when the site is unreachable.
  */
-export async function refreshCatalogue(
-  log: (msg: string) => void = console.log,
-  outFile = paths.bundledCatalogue,
-): Promise<CatalogueEntry[] | null> {
-  const urls = parseSitemap(fs.readFileSync(paths.sitemap, "utf8"));
-  const entries = await crawl({ urls, log });
+export async function refreshCatalogue(opts: {
+  sitemapFile: string;
+  outFile: string;
+  log?: (msg: string) => void;
+  fetchImpl?: typeof fetch;
+}): Promise<CatalogueEntry[] | null> {
+  const log = opts.log ?? console.log;
+  const urls = parseSitemap(fs.readFileSync(opts.sitemapFile, "utf8"));
+  const entries = await crawl({ urls, log, fetchImpl: opts.fetchImpl });
   if (entries.length === 0) {
     log("crawl produced no pages; keeping existing catalogue");
     return null;
   }
-  fs.mkdirSync(path.dirname(outFile), { recursive: true });
-  fs.writeFileSync(outFile, JSON.stringify(entries, null, 2) + "\n");
-  log(`wrote ${entries.length} entries to ${outFile}`);
+  fs.mkdirSync(path.dirname(opts.outFile), { recursive: true });
+  fs.writeFileSync(opts.outFile, JSON.stringify(entries, null, 2) + "\n");
+  log(`wrote ${entries.length} entries to ${opts.outFile}`);
   return entries;
-}
-
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  refreshCatalogue().catch((err) => {
-    console.error(err);
-    process.exit(1);
-  });
 }

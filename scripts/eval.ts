@@ -11,42 +11,52 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Catalogue } from "../src/catalogue.js";
 import { runTurn, type ChatDeps, type TurnResult } from "../src/claude.js";
 import type { CatalogueEntry } from "../src/crawler.js";
-import { loadKnowledgeBase } from "../src/kb.js";
-import { renderSystemPrompt } from "../src/prompts.js";
+import { SellerRegistry } from "../src/sellers.js";
 import { SessionStore } from "../src/session.js";
 import type { Lead } from "../src/tools.js";
 
+/** The scenarios are written for this seller's KB. */
+const SELLER = "jayshree-machinetools";
 const SITE = "https://www.jayshreemachinetools.in";
 const sampleCatalogue: CatalogueEntry[] = [
   {
     url: `${SITE}/product/cnc-press-brake-c8tj6re.html`,
     kind: "product",
+    slug: "cnc-press-brake-c8tj6re",
     title: "CNC Press Brake Machine",
     category: "CNC Press Brakes",
     price_text: "₹4,50,000",
     specs: { "Pressing Force": "100 ton", "Working Length": "3125 mm", "Control Type": "CNC Controller" },
     description: "CNC hydraulic press brake for sheet bending.",
-    related_links: [],
+    image: null,
+    breadcrumbs: [],
+    products: [],
   },
   {
     url: `${SITE}/product/nc-hydraulic-shearing-machine.html`,
     kind: "product",
+    slug: "nc-hydraulic-shearing-machine",
     title: "NC Hydraulic Shearing Machine",
     category: "Hydraulic Shearing Machine",
     price_text: null,
     specs: { "Max Sheet Thickness": "8 mm", "Working Length": "8 ft" },
     description: "Hydraulic shearing machine for mild steel sheets.",
-    related_links: [],
+    image: null,
+    breadcrumbs: [],
+    products: [],
   },
   {
     url: `${SITE}/hydraulic-iron-worker.html`,
     kind: "category",
+    slug: "hydraulic-iron-worker",
     title: "Hydraulic Iron Worker",
     category: "Universal Ironworker Machine",
     price_text: null,
     specs: {},
     description: "Universal hydraulic ironworker machines for punching, shearing and notching.",
-    related_links: [],
+    image: null,
+    breadcrumbs: [],
+    products: [],
   },
 ];
 
@@ -137,19 +147,20 @@ const scenarios: Scenario[] = [
 
 async function main() {
   const filter = process.argv[2]?.toLowerCase();
-  const kb = loadKnowledgeBase();
+  const seller = SellerRegistry.load().get(SELLER);
+  if (!seller) throw new Error(`Seller ${SELLER} not found in kb/sellers/`);
   const deps: Omit<ChatDeps, "saveLead"> = {
     client: new Anthropic(),
-    kb,
+    kb: seller.kb,
     catalogue: new Catalogue(sampleCatalogue),
-    systemPrompt: renderSystemPrompt(kb),
+    systemPrompt: seller.systemPrompt,
   };
   const store = new SessionStore();
   let failed = 0;
   let cacheReads = 0;
 
   for (const sc of scenarios.filter((s) => !filter || s.name.toLowerCase().includes(filter))) {
-    const session = store.get(`eval-${Math.random().toString(36).slice(2, 12)}`);
+    const session = store.get(SELLER, `eval-${Math.random().toString(36).slice(2, 12)}`);
     const leads: Lead[] = [];
     const problems: string[] = [];
     for (const turn of sc.turns) {

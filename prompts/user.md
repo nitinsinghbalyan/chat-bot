@@ -1,4 +1,4 @@
-{{OPERATOR_NOTE}}<lead_status>
+{{OPERATOR_NOTE}}{{CURRENT_PAGE}}<lead_status>
 {{LEAD_STATUS}}
 </lead_status>
 

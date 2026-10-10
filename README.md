@@ -1,174 +1,221 @@
-# Seller Enquiry Chatbot: Jayshree Machinetools
+# Seller Assistants
 
-An embeddable chat assistant that sits in the **bottom-left corner** of the seller's website. It answers buyers' discovery and enquiry questions on the seller's behalf, grounded only in the seller's knowledge base and bound by the seller's guardrails. When a buyer wants a quote, a price we don't list, or a callback, it captures a verified lead: **mobile number → OTP → name**.
+A website that hosts an AI chat assistant for many sellers. For each seller it shows:
+
+- **a directory** (`/`) listing every seller, with **Visit site** and **Chat** buttons
+- **a mini-website** (`/s/<seller>/`) built from the seller's crawled web pages: home, categories, products and search
+- **the seller's chatbot** in the **bottom-left corner** on every page of that site. The **Chat** button opens it right on the directory too.
+
+Each bot answers buyers' discovery and enquiry questions on its seller's behalf. It uses only that seller's knowledge base and follows the guardrails. When a buyer wants a quote, a price that isn't listed, or a callback, the bot captures a verified lead: **mobile number → OTP → name**. Sellers can also embed their bot on their own website with one script tag.
 
 ## How it works
 
 ```
-seller site ── <script src=".../widget.js"> ──► bubble (bottom-left) ── POST /api/chat (SSE) ──►
-Express ─► input guardrails ─► catalogue retrieval (BM25) ─► user prompt (prompts/user.md)
-        ─► Claude, streaming, with the cached system prompt (prompts/system.md + business card + product cards)
-        ─► tool loop: send_otp / verify_otp / save_lead (state enforced on the server)
-        ─► output guardrails (each sentence checked before the buyer sees it) ─► widget
+kb/sellers/<seller>/ (KB you supply) ──► SellerRegistry ──► per seller: KB, cached system prompt, catalogue
+sitemap.xml ──► crawler ──► catalogue.json ──► (a) the seller's mini-website  (b) the bot's retrieval
+
+browser ── widget.js (bottom-left) ── POST /api/chat {seller, message, pageUrl} (SSE) ──►
+  input guardrails ─► catalogue retrieval (+ the product page the buyer is on) ─► user prompt
+  ─► Claude, streaming, with that seller's cached system prompt
+  ─► tool loop: send_otp / verify_otp / save_lead (state enforced on the server)
+  ─► output guardrails (each sentence checked before the buyer sees it) ─► widget
 ```
 
-### Knowledge sources (`kb/`)
+The website and the bot use **the same crawled catalogue**, so the bot never contradicts the page the buyer is reading.
 
-| Name in the guardrails | File | Used for |
+## Adding a seller
+
+Create a folder `kb/sellers/<slug>/`, where `<slug>` uses lowercase letters, digits and dashes (e.g. `alpha-presses`). Put these files in it:
+
+| File | Required | What it holds |
 |---|---|---|
-| BUSINESS CARD | `kb/business_card.json` | Company facts and the listed contact number |
-| PRODUCT CARDS | `kb/product_cards.json` | The 4 machines with detailed cards (options, qualification questions, handling rules) |
-| SELLER CATALOGUE (RAG) | `kb/catalogue.json`, built from `kb/sitemap.xml` by `npm run crawl` | Prices, links and specs for everything on the website |
+| `seller.json` | yes | Display settings (format below) |
+| `business_card.json` | yes | **BUSINESS CARD**: company facts, `deals_in`, `listed_contact` |
+| `product_cards.json` | yes | **PRODUCT CARDS**: options, qualification questions, handling rules |
+| `sitemap.xml` | yes | The seller's sitemap, which the crawler builds the catalogue from |
+| `guardrails.md` | no | Replaces the shared `prompts/guardrails.md` for this seller only |
+| `catalogue.json` | no | A committed crawl (`npm run crawl -- <slug>`), used until the server's own crawl finishes |
 
-The business card and product cards go into the **system prompt**. They never change between requests, so the prompt is cached. The catalogue is searched for every buyer message, and the top matches go into the **user prompt** for that turn.
+`seller.json`:
 
-The crawler skips the profile, testimonial and director pages (Guardrail 7). It also drops spec rows about GST, freight, delivery, payment or stock before anything reaches the model.
+```json
+{
+  "name": "Alpha Presses",
+  "slug": "alpha-presses",
+  "siteUrl": "https://www.alphapresses.example/",
+  "color": "#aa3300",
+  "logoUrl": "https://www.alphapresses.example/logo.png",
+  "allowedOrigins": ["https://www.alphapresses.example"],
+  "greeting": "Hi! Looking for a press brake? Ask me anything.",
+  "chips": ["Press Brake", "Shearing Machine"]
+}
+```
 
-### Guardrails
+- `slug` must match the folder name.
+- `allowedOrigins` lists the websites that may embed this seller's bot.
+- `logoUrl`, `greeting` and `chips` are optional. Without `chips`, the quick replies come from the product cards.
 
-All 9 seller guardrails are in `prompts/system.md`, word for word. The high-risk ones are also enforced in code (`src/guardrails.ts`), so they hold even if the model slips:
+Then:
+
+```bash
+npm run kb:check            # validates every seller folder and names the file and field of any problem
+npm run crawl -- <slug>     # optional: crawl now and commit kb/sellers/<slug>/catalogue.json
+git add kb/sellers/<slug> && git commit -m "Add <seller>" && git push
+```
+
+On Render, the push redeploys. The server then crawls every seller's sitemap on start and every 24 hours after that, and the new seller appears in the directory. An invalid folder stops the server from starting, with every problem listed in the log, so run `kb:check` first.
+
+## Knowledge and prompts
+
+| Name in the guardrails | Source | Goes into |
+|---|---|---|
+| BUSINESS CARD | `business_card.json` | System prompt (cached) |
+| PRODUCT CARDS | `product_cards.json` | System prompt (cached) |
+| SELLER CATALOGUE (RAG) | crawled from `sitemap.xml` | Each turn's user prompt: the top matches, plus the page the buyer is viewing |
+
+- `prompts/system.md` is the system prompt template shared by all sellers. `{{GUARDRAILS}}` is filled from `prompts/guardrails.md`, or from the seller's own `guardrails.md`.
+- `prompts/user.md` is the template for each turn. It carries `<current_page>` when the buyer is on a product or category page, so "what's the price of this?" just works.
+- The crawler skips profile, testimonial and director pages (guardrail 7). It also drops spec rows about GST, freight, delivery, payment or stock, so neither the website nor the bot shows them.
+
+## Guardrails
+
+The 9 shared guardrails are in `prompts/guardrails.md`, word for word. The high-risk ones are also enforced in code (`src/guardrails.ts`), for every seller:
 
 | Guardrail | Code enforcement |
 |---|---|
-| 1 Price | Any ₹, lakh or crore amount must match a catalogue price retrieved in this chat; otherwise the sentence is replaced. |
+| 1 Price | Any ₹, lakh or crore amount must match a catalogue price retrieved in this chat; otherwise the sentence is replaced. The website labels prices as "Starting price". |
 | 2 Freight | Freight or transport terms (included, extra, free…) are replaced. |
-| 3 Contact | Phone numbers other than the business card number, and any email or external link, are replaced. Only seller-site links pass. |
+| 3 Contact | Phone numbers other than the seller's listed number, and any email or external link, are replaced. Only links to the seller's own site pass. |
 | 4 Stock / brand | "In stock", "genuine <Brand>" and similar are replaced. |
-| 5 Payment / ID | UPI, card, Aadhaar, PAN, GSTIN, IFSC and bank account numbers typed by the buyer are redacted before the model or logs see them. The bot never asks for them. |
+| 5 Payment / ID | UPI, card, Aadhaar, PAN, GSTIN, IFSC and bank account numbers typed by the buyer are redacted before the model or logs see them. |
 | 6 Delivery | Dispatch dates, lead times and door-delivery promises are replaced. |
 | 7 Disclosure | Business-profile pages are never crawled; the prompt handles the rest. |
 | 8 GST | GST rates and "inclusive/exclusive of tax" are replaced. |
-| 9 Other products | Specs come only from the catalogue entry; the prompt asks the bot to collect the requirement instead. |
+| 9 Other products | Specs come only from the catalogue; the prompt asks the bot to collect the requirement instead. |
 
-A replaced sentence becomes a short hand-off line, e.g. "Our team will confirm the freight details with you." The model is told about the correction on its next turn through an `<operator_note>`. Every intervention is recorded in the database, and the transcript marks which replies were corrected.
+A replaced sentence becomes a short hand-off line. The model is told about the correction on its next turn through an `<operator_note>`, and each intervention is recorded per seller.
 
-### Lead capture
+## Lead capture
 
-- `send_otp` checks the number is a valid Indian mobile (`+91` optional). No SMS is sent: this is demo mode and the OTP is **`12345`** (`DEMO_OTP`). The OTP is checked on the server and never appears in the prompt.
+- `send_otp` checks the number is a valid Indian mobile (`+91` optional). No SMS is sent: this is demo mode, the OTP is **`12345`** (`DEMO_OTP`), and the widget shows that hint. The OTP is checked on the server and never appears in the prompt.
 - `verify_otp` allows 3 attempts per OTP and 3 OTPs per chat.
-- `save_lead` is refused until the number is verified. Each lead is saved to the database with mobile, name, product, requirement, quantity, city and page URL. The seller sees it at `/admin/leads` (see below).
+- `save_lead` is refused until the number is verified. Each lead is stored under its seller.
 
-To send real OTPs, replace the demo check in `src/tools.ts` with your SMS provider's send and verify calls.
+To send real OTPs, replace the demo check in `src/tools.ts` with your SMS provider's calls, and stop returning `demo: true` from `/api/sellers/:slug` in `src/app.ts`.
 
-### Storage
+## Storage
 
-Everything is kept in one SQLite file, `chatbot.db`, inside `DATA_DIR` (default `./data`):
+Everything is kept in one SQLite file, `DATA_DIR/chatbot.db`. Every table has a `seller` column.
 
 | Table | Holds |
 |---|---|
-| `sessions` | Each chat's conversation state (history, OTP progress, catalogue hits), so chats survive restarts. Idle chats are pruned after 30 days. |
+| `sessions` | Chat state (history, OTP progress, catalogue hits), keyed by seller and browser. One browser chatting with two sellers has two chats. Idle chats are pruned after 30 days. |
 | `transcript` | What buyers typed (payment and ID details already redacted) and what they were shown |
 | `leads` | Verified leads |
 | `guardrail_events` | Each sentence the output guardrails replaced |
 
-A chat resets after 2 hours of inactivity, the same as in the widget.
+A database from the earlier single-seller version is migrated automatically on start. Its rows are assigned to `jayshree-machinetools`.
 
-### Seller admin
+## Admin
 
-Set `ADMIN_PASSWORD` (at least 8 characters). The seller can then open:
+Set `ADMIN_PASSWORD` (at least 8 characters). The browser asks for a login: any username, with that password. If `ADMIN_PASSWORD` isn't set, the admin pages return 404.
 
-- `/admin/leads`: all leads, newest first, each linking to its chat
-- `/admin/leads.csv`: the same list as a CSV that opens in Excel
+- `/admin`: every seller with lead count, catalogue size, last crawl result and a **Re-crawl now** button
+- `/admin/leads`, filtered by seller with `?seller=<slug>`: leads, newest first, each linking to its chat
+- `/admin/leads.csv` (also takes `?seller=`): a CSV that opens in Excel
 - `/admin/transcript/<session>`: one full chat
 
-The browser asks for a login: any username, with the password. If `ADMIN_PASSWORD` isn't set, these pages return 404.
-
-## Setup
+## Setup (local)
 
 ```bash
 npm install
-cp .env.example .env        # add ANTHROPIC_API_KEY
-npm run crawl               # build kb/catalogue.json (needs internet access to jayshreemachinetools.in)
-npm run dev                 # http://localhost:3000/demo.html
+cp .env.example .env        # add ANTHROPIC_API_KEY (and ADMIN_PASSWORD for /admin)
+npm run kb:check
+npm run crawl               # optional: needs internet access to the sellers' sites
+npm run dev                 # http://localhost:3000
 ```
 
-Without a crawled catalogue, the bot still works from the business card and product cards. It just never quotes a price or shares product links, which is what the guardrails require.
+Without a crawled catalogue, a seller's site shows the business card and product cards, and the bot still answers from them. It never quotes a price or shares product links, which is what the guardrails require.
 
 ### Configuration (`.env`)
 
 | Variable | Default | Notes |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | (none) | Required |
-| `BOT_MODEL` | `claude-sonnet-5-5` | Use `claude-opus-5-5` for the most capable model, or `claude-haiku-5-5` for the cheapest |
+| `BOT_MODEL` | `claude-sonnet-5-5` | `claude-opus-5-5` is the most capable model; `claude-haiku-5-5` is the cheapest |
 | `BOT_EFFORT` | `low` | `low` suits chat; raise it if answers miss nuance |
-| `BOT_FALLBACKS` | `true` | Server-side refusal fallback. It only works on the Claude API, so set `false` on Bedrock, Vertex or Foundry |
-| `ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated sites allowed to call the API |
-| `CRAWL_ON_START` / `CRAWL_INTERVAL_HOURS` | `false` / `24` | Keeps the catalogue fresh while running |
+| `BOT_FALLBACKS` | `true` | Server-side refusal fallback. Claude API only; set `false` on Bedrock, Vertex or Foundry |
+| `ADMIN_PASSWORD` | (none) | Turns on `/admin` |
+| `DATA_DIR` | `./data` | Holds `chatbot.db` and each seller's runtime `catalogue.json` |
+| `SELLERS_DIR` | `kb/sellers` | Where the seller folders are |
+| `ALLOWED_ORIGINS` | (none) | Extra websites allowed to embed **any** seller's bot. Each seller's own site goes in `seller.json` |
+| `CRAWL_ON_START` / `CRAWL_INTERVAL_HOURS` | `false` / `24` | Re-crawls every seller, one after another |
 | `DEMO_OTP` | `12345` | Demo OTP |
-| `DATA_DIR` | `./data` | Holds `chatbot.db` and the runtime-refreshed `catalogue.json` (which takes precedence over `kb/catalogue.json`) |
-| `ADMIN_PASSWORD` | (none) | Turns on `/admin/leads` |
 
 ## Deploying on Render
 
 `render.yaml` is a Render Blueprint. It sets up:
 
 - a Node 22 web service in Singapore, the closest Render region to India
-- a 1 GB persistent disk at `/var/data` for the database and the refreshed catalogue
-- a health check on `/health`
+- a 1 GB persistent disk at `/var/data` for the database and the crawled catalogues
+- a health check on `/health`, which reports each seller's catalogue size
 - automatic deploys from `main`
 
 Steps:
 
-1. Merge the PR into `main`.
-2. In Render, choose **New → Blueprint**, connect GitHub and pick this repo.
-3. When prompted, enter the two secrets:
-   - `ANTHROPIC_API_KEY`
-   - `ADMIN_PASSWORD` (at least 8 characters)
-4. Apply. The first build takes a few minutes. When it finishes, `https://jayshree-chatbot.onrender.com/health` (or whatever URL Render shows) should return `{"ok":true,...}`.
-5. Open `https://<your-service>.onrender.com/demo.html` to try the bot.
-6. Optional: under the service's **Settings → Custom Domains**, add something like `chat.jayshreemachinetools.in` and create the CNAME record Render shows. Then use that domain in the embed snippet.
+1. In Render, choose **New → Blueprint** and pick this repo.
+2. When prompted, enter `ANTHROPIC_API_KEY` and `ADMIN_PASSWORD`.
+3. Apply. When the build finishes, open the service URL: `/` is the seller directory.
+4. Optional: under the service's **Settings → Custom Domains**, add a domain and create the CNAME record Render shows.
 
 Things to know:
 
-- **Cost:** a persistent disk needs a paid instance. The Blueprint uses `starter`, Render's cheapest paid plan, which also doesn't sleep when idle.
-- **Brief downtime on deploy:** with a disk attached, Render stops the old instance before starting the new one, so each deploy causes a few seconds of downtime.
-- **Catalogue refresh:** `CRAWL_ON_START=true`, so the catalogue is re-crawled from the sitemap on every start and every 24 hours after that. The result is saved to the disk.
+- **Cost:** a persistent disk needs a paid instance (`starter`), which also never sleeps.
+- **Downtime on deploy:** with a disk attached, each deploy causes a few seconds of downtime.
 - **Backups:** download `/admin/leads.csv` regularly. Render also takes daily snapshots of the disk.
 
-## Embedding on the seller's website
+## Embedding a bot on the seller's own website
 
-Add this once, just before `</body>`, on every page of jayshreemachinetools.in (in a site-wide footer or custom-code section):
+Add this just before `</body>` on every page, replacing `<slug>` with the seller's folder name:
 
 ```html
-<script src="https://YOUR-BOT-HOST/widget.js" defer
-        data-title="Jayshree Machinetools"
-        data-color="#0b5cad"></script>
+<script src="https://YOUR-BOT-HOST/widget.js" defer data-seller="<slug>"></script>
 ```
 
-Optional attributes:
-
-- `data-api`: the API host, if it differs from where `widget.js` is served
-- `data-greeting`: replaces the opening message
-- `data-chips="Press Brake|Shearing Machine|…"`: replaces the quick replies
-- `data-demo="true"`: shows the demo OTP hint
-
-The site's domains are already in `ALLOWED_ORIGINS` in `render.yaml`. If the site is ever served from a different domain, add it there.
-
-## Changing the bot's behaviour
-
-- **Persona, rules and lead flow:** edit `prompts/system.md`.
-- **Per-turn context:** edit `prompts/user.md`.
-- **Business card or product cards:** replace the JSON in `kb/` and restart.
-
-The prompts are plain markdown templates (`{{PLACEHOLDER}}`), so they can be changed without touching code.
+- The bubble appears bottom-left, in the seller's colour and name from `seller.json`.
+- The seller's site must be listed in that seller's `allowedOrigins`.
+- `/demo.html?seller=<slug>` shows the embed on a blank page.
+- Pages can also open the chat from a button: `SellerChat.open("<slug>", { message: "optional first message" })`.
 
 ## Tests
 
 ```bash
-npm test          # unit tests: crawler, catalogue search, guardrails, OTP/lead flow, prompts, chat loop (fake Claude client)
-npm run eval      # live scenarios against the real model, one or more per guardrail, plus the full lead flow
+npm test          # unit and HTTP tests, using two fixture sellers in tests/fixtures/sellers/
+npm run eval      # live scenarios against the real model for Jayshree, one or more per guardrail, plus the lead flow
 ```
 
-`npm run eval` calls the Claude API and costs a small amount per run. It uses a fixed sample catalogue, so the price rules can be tested before a real crawl.
+`npm test` covers:
+
+- the registry and KB validation
+- isolation between sellers (prompts, catalogue search, sessions, leads)
+- the migration from the old single-seller database
+- the crawler
+- every guardrail rule
+- the OTP and lead flow
+- website rendering
+- the admin pages
+
+`npm run eval` calls the Claude API and costs a small amount per run.
 
 ## Project layout
 
 ```
-kb/            business card, product cards, sitemap, crawled catalogue
-prompts/       system.md (dedicated system prompt), user.md (per-turn user prompt)
-src/           app (HTTP + admin), server bootstrap, Claude loop, tools, guardrails, crawler, catalogue search, SQLite store
-public/        widget.js (embeddable), demo.html
-tests/         vitest unit tests + HTML fixtures
-scripts/       eval.ts (live-model guardrail scenarios)
-render.yaml    Render Blueprint (web service + persistent disk)
+kb/sellers/<slug>/   KB you supply per seller (+ an optional committed catalogue)
+prompts/             system.md, user.md, guardrails.md (shared)
+src/                 app.ts (HTTP: chat API, website, admin), server.ts, sellers.ts (registry), claude.ts (chat loop),
+                     tools.ts, guardrails.ts, crawler.ts, catalogue.ts, db.ts (SQLite), site/ (page templates)
+public/              widget.js (embeddable chat), site.css, demo.html
+scripts/             crawl.ts, kb-check.ts, eval.ts
+tests/               vitest tests + fixtures (HTML pages, two sample sellers)
+render.yaml          Render Blueprint (web service + persistent disk)
 ```

@@ -3,30 +3,27 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Jayshree Machinetools (demo page)</title>
+    <title>Widget embed demo</title>
     <style>
       body { margin: 0; font-family: system-ui, sans-serif; color: #1d2433; background: #fff; }
-      header { background: #10233f; color: #fff; padding: 20px 16px; }
-      header h1 { margin: 0; font-size: 22px; }
-      main { max-width: 900px; margin: 0 auto; padding: 24px 16px 120px; line-height: 1.6; }
-      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
-      .card { border: 1px solid #e3e8f0; border-radius: 12px; padding: 16px; }
+      main { max-width: 760px; margin: 0 auto; padding: 24px 16px 120px; line-height: 1.6; }
+      code { background: #f5f7fb; padding: 2px 6px; border-radius: 4px; }
     </style>
   </head>
   <body>
-    <header>
-      <h1>Jayshree Machinetools Pvt Ltd</h1>
-      <div>Manufacturer of press brakes, shearing machines, laser cutters and hydraulic presses · Rajkot, Gujarat</div>
-    </header>
     <main>
-      <p>This is a mock seller page for testing the chat widget locally. The chat bubble sits in the bottom-left corner.</p>
-      <div class="grid">
-        <div class="card"><strong>CNC Press Brake</strong><br />NC and CNC controllers, 80 to 100 ton.</div>
-        <div class="card"><strong>Hydraulic Shearing Machine</strong><br />Sheet and plate shearing for MS.</div>
-        <div class="card"><strong>Fiber Laser Cutting Machine</strong><br />1.5 kW and 3 kW sources.</div>
-        <div class="card"><strong>Hydraulic Press</strong><br />C frame and H frame presses.</div>
-      </div>
+      <h1>Widget embed demo</h1>
+      <p>This page embeds a seller's chat widget the same way a seller's own website would. The bubble sits in the bottom-left corner.</p>
+      <p>Pick a seller with <code>?seller=&lt;slug&gt;</code> (default <code>jayshree-machinetools</code>). The full list of sellers is on the <a href="/">directory</a>.</p>
+      <pre><code>&lt;script src="https://YOUR-BOT-HOST/widget.js" defer data-seller="jayshree-machinetools"&gt;&lt;/script&gt;</code></pre>
     </main>
-    <script src="/widget.js" defer data-title="Jayshree Machinetools" data-color="#0b5cad" data-demo="true"></script>
+    <script>
+      var s = document.createElement("script");
+      s.src = "/widget.js";
+      s.defer = true;
+      s.dataset.seller = new URLSearchParams(location.search).get("seller") || "jayshree-machinetools";
+      s.dataset.demo = "true";
+      document.body.appendChild(s);
+    </script>
   </body>
 </html>

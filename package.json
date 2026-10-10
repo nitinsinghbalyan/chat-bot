@@ -10,8 +10,9 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "crawl": "tsx src/crawler.ts",
-    "eval": "tsx scripts/eval.ts"
+    "crawl": "tsx scripts/crawl.ts",
+    "eval": "tsx scripts/eval.ts",
+    "kb:check": "tsx scripts/kb-check.ts"
   },
   "engines": {
     "node": "22.x"

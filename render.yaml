@@ -26,8 +26,7 @@ services:
         value: claude-sonnet-5-5
       - key: BOT_EFFORT
         value: low
-      - key: ALLOWED_ORIGINS
-        value: https://www.jayshreemachinetools.in,https://jayshreemachinetools.in
+      # Each seller's own website is allowed via "allowedOrigins" in kb/sellers/<slug>/seller.json.
       - key: CRAWL_ON_START
         value: "true"
       - key: CRAWL_INTERVAL_HOURS

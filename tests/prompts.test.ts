@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import path from "node:path";
 import { loadKnowledgeBase } from "../src/kb.js";
+
+const JAYSHREE = path.join(__dirname, "..", "kb", "sellers", "jayshree-machinetools");
 import { neutralizeBuyerText, renderSystemPrompt, renderUserPrompt } from "../src/prompts.js";
 
-const kb = loadKnowledgeBase();
+const kb = loadKnowledgeBase(JAYSHREE);
 
 describe("knowledge base", () => {
   it("loads the business card and the four product cards", () => {
@@ -22,7 +25,7 @@ describe("system prompt", () => {
   const sys = renderSystemPrompt(kb);
 
   it("is byte-identical across renders (prompt-cache friendly)", () => {
-    expect(renderSystemPrompt(loadKnowledgeBase())).toBe(sys);
+    expect(renderSystemPrompt(loadKnowledgeBase(JAYSHREE))).toBe(sys);
   });
 
   it("has every placeholder filled", () => {

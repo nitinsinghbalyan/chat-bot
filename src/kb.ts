@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { paths } from "./config.js";
+import path from "node:path";
 
 export interface BusinessCard {
   name: string;
@@ -92,31 +92,40 @@ function digits(s: string): string {
   return s.replace(/\D/g, "");
 }
 
-function sitemapDomains(): string[] {
-  if (!fs.existsSync(paths.sitemap)) return [];
-  const xml = fs.readFileSync(paths.sitemap, "utf8");
-  const hosts = new Set<string>();
-  for (const m of xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/g)) {
-    try {
-      hosts.add(new URL(m[1]).hostname.replace(/^www\./, ""));
-    } catch {
-      // ignore malformed URL
-    }
-  }
-  return [...hosts].sort();
+export function sitemapUrls(xml: string): string[] {
+  return [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/g)].map((m) => m[1]);
 }
 
-export function loadKnowledgeBase(): KnowledgeBase {
-  const businessCard = readJson<BusinessCard>(paths.businessCard);
-  const productCards = readJson<ProductCard[]>(paths.productCards).sort((a, b) =>
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Loads one seller's KB from its folder (business_card.json, product_cards.json, sitemap.xml).
+ * `siteUrl` adds the seller's own domain to the links the bot may share (Guardrail 3).
+ */
+export function loadKnowledgeBase(dir: string, siteUrl?: string): KnowledgeBase {
+  const businessCard = readJson<BusinessCard>(path.join(dir, "business_card.json"));
+  const productCards = readJson<ProductCard[]>(path.join(dir, "product_cards.json")).sort((a, b) =>
     a.canonical_name.localeCompare(b.canonical_name),
   );
+  const sitemapFile = path.join(dir, "sitemap.xml");
+  const urls = fs.existsSync(sitemapFile) ? sitemapUrls(fs.readFileSync(sitemapFile, "utf8")) : [];
+  const domains = new Set<string>();
+  for (const u of [...urls, ...(siteUrl ? [siteUrl] : [])]) {
+    const h = hostOf(u);
+    if (h) domains.add(h);
+  }
   return {
     businessCard,
     productCards,
     businessCardText: renderBusinessCard(businessCard),
     productCardsText: productCards.map(renderProductCard).join("\n\n---\n\n"),
     allowedPhones: businessCard.listed_contact ? [digits(businessCard.listed_contact)] : [],
-    allowedDomains: sitemapDomains(),
+    allowedDomains: [...domains].sort(),
   };
 }
