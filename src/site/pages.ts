@@ -271,7 +271,7 @@ ${PAGE_SCRIPT}`;
 /** Shown while a seller's catalogue hasn't been crawled yet: the machines from the product cards. */
 function productCardTiles(seller: SellerContext): string {
   return grid(
-    seller.kb.productCards.map(
+    seller.kb.productCards.slice(0, 12).map(
       (c) => `<article class="card"><div class="card-body"><div class="card-title">${esc(c.canonical_name)}</div>${
         (c.aliases as string[] | undefined)?.length ? `<div class="muted small">${esc((c.aliases as string[]).slice(0, 4).join(" · "))}</div>` : ""
       }</div><div class="card-actions">${chatButton(seller, "Ask about this", `Tell me about your ${c.canonical_name}.`, "btn small")}</div></article>`,

@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { config } from "./config.js";
+import type { MediaCard, MediaKind } from "./media.js";
 import type { LeadState, Session } from "./session.js";
 
 const MAX_OTP_ATTEMPTS = 3;
@@ -59,6 +60,42 @@ export const toolDefinitions: Anthropic.Beta.BetaTool[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: "show_options",
+    description:
+      "Show tap-to-reply buttons under your message. Use it whenever you ask the buyer a qualification question (ISQ) that has listed options, or any question with a few clear choices. Write the question in your reply text first, then call this with 2 to 8 short options (each under 60 characters), usually the options listed for that ISQ. Do not use it while collecting the mobile number, OTP or name. After it returns, end your turn and wait for the buyer.",
+    strict: true,
+    eager_input_streaming: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        options: { type: "array", items: { type: "string" }, description: "2 to 8 short answer options, in the order to show them." },
+      },
+      required: ["options"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "share_media",
+    description:
+      "Show the buyer product cards, photos, videos or PDF brochures as a carousel in the chat. Use it when the buyer asks to see photos, images, a video, a brochure or catalogue, or asks for related or similar products. Pass product ids from the PRODUCT CARDS (\"Product id\") or the SELLER CATALOGUE (\"ID\"), or \"company\" for company-wide media. The result says what was shared and what is not available; describe only that, in one short sentence, and never paste the links.",
+    strict: true,
+    eager_input_streaming: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        product_ids: { type: "array", items: { type: "string" }, description: "1 to 6 product ids, a category id, or \"company\"." },
+        kinds: {
+          type: "array",
+          items: { type: "string", enum: ["product", "image", "video", "document"] },
+          description: "What to show: product cards, photos, videos and/or PDF documents.",
+        },
+        include_related: { type: "boolean", description: "Also show related products from the same category." },
+      },
+      required: ["product_ids", "kinds", "include_related"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 const inputSchemas = {
@@ -73,6 +110,16 @@ const inputSchemas = {
       city: z.string().max(100),
     })
     .strict(),
+  show_options: z
+    .object({ options: z.array(z.string().trim().min(1).max(60, "keep each option under 60 characters")).min(2, "give at least 2 options").max(8, "give at most 8 options") })
+    .strict(),
+  share_media: z
+    .object({
+      product_ids: z.array(z.string().trim().min(1).max(100)).min(1, "give at least one product id").max(6, "give at most 6 product ids"),
+      kinds: z.array(z.enum(["product", "image", "video", "document"])).min(1).max(4),
+      include_related: z.boolean(),
+    })
+    .strict(),
 };
 
 export type ToolName = keyof typeof inputSchemas;
@@ -80,7 +127,12 @@ export type ToolName = keyof typeof inputSchemas;
 export interface ToolResult {
   content: string;
   isError: boolean;
+  /** What the chat window should show: reply buttons or media cards. */
+  ui?: { chips?: string[]; cards?: MediaCard[] };
 }
+
+/** Resolves share_media requests against the seller's KB and catalogue (see shareMedia.ts). */
+export type MediaSharer = (ids: string[], kinds: MediaKind[], includeRelated: boolean) => { cards: MediaCard[]; content: string; isError: boolean };
 
 export interface Lead {
   createdAt: string;
@@ -127,7 +179,7 @@ export function executeTool(
   session: Session,
   name: string,
   rawInput: unknown,
-  opts: { saveLead: LeadSink; pageUrl?: string },
+  opts: { saveLead: LeadSink; pageUrl?: string; shareMedia?: MediaSharer },
 ): ToolResult {
   if (!(name in inputSchemas)) return { content: `Unknown tool: ${name}`, isError: true };
   const parsed = inputSchemas[name as ToolName].safeParse(rawInput);
@@ -137,6 +189,25 @@ export function executeTool(
   const lead = session.lead;
 
   switch (name as ToolName) {
+    case "show_options": {
+      if (lead.stage === "otp_sent" || lead.stage === "verified") {
+        return { content: "Not shown: the buyer is typing their OTP or name now, so don't offer buttons.", isError: true };
+      }
+      const seen = new Set<string>();
+      const options = (parsed.data as z.infer<typeof inputSchemas.show_options>).options.filter((o) => {
+        const k = o.toLowerCase();
+        return !seen.has(k) && seen.add(k);
+      });
+      return { content: `Shown ${options.length} reply buttons under your message. End your turn now and wait for the buyer's answer.`, isError: false, ui: { chips: options } };
+    }
+
+    case "share_media": {
+      const input = parsed.data as z.infer<typeof inputSchemas.share_media>;
+      if (!opts.shareMedia) return { content: "Media sharing is not available in this chat.", isError: true };
+      const r = opts.shareMedia(input.product_ids, input.kinds, input.include_related);
+      return { content: r.content, isError: r.isError, ui: r.cards.length ? { cards: r.cards } : undefined };
+    }
+
     case "send_otp": {
       const { mobile } = parsed.data as z.infer<typeof inputSchemas.send_otp>;
       if (lead.stage === "captured") return { content: "The enquiry is already with our team; no need to verify again.", isError: true };

@@ -48,6 +48,14 @@ const ALPHA = "alpha-presses";
 const BETA = "beta-pumps";
 const db = new ChatDb(":memory:");
 const requests: any[] = [];
+const script: Scripted[] = [
+  { content: [{ type: "tool_use", id: "a", name: "send_otp", input: { mobile: "9876543210" } }], stop_reason: "tool_use" },
+  { content: [{ type: "text", text: "OTP sent. Please enter it." }], stop_reason: "end_turn" },
+  { content: [{ type: "tool_use", id: "b", name: "verify_otp", input: { otp: "12345" } }], stop_reason: "tool_use" },
+  { content: [{ type: "text", text: "Verified. Your name?" }], stop_reason: "end_turn" },
+  { content: [{ type: "tool_use", id: "c", name: "save_lead", input: { name: "=Ramesh", product: "Press Brake", requirements: "100 ton", quantity: "1 piece", city: "Rajkot" } }], stop_reason: "tool_use" },
+  { content: [{ type: "text", text: "Thanks, our team will contact you." }], stop_reason: "end_turn" },
+];
 const recrawled: string[] = [];
 let base = "";
 let close: () => void;
@@ -55,17 +63,7 @@ let close: () => void;
 beforeAll(async () => {
   const sellers = SellerRegistry.load(path.join(__dirname, "fixtures", "sellers"), fs.mkdtempSync(path.join(os.tmpdir(), "app-data-")));
   const app = createApp({
-    client: fakeClient(
-      [
-        { content: [{ type: "tool_use", id: "a", name: "send_otp", input: { mobile: "9876543210" } }], stop_reason: "tool_use" },
-        { content: [{ type: "text", text: "OTP sent. Please enter it." }], stop_reason: "end_turn" },
-        { content: [{ type: "tool_use", id: "b", name: "verify_otp", input: { otp: "12345" } }], stop_reason: "tool_use" },
-        { content: [{ type: "text", text: "Verified. Your name?" }], stop_reason: "end_turn" },
-        { content: [{ type: "tool_use", id: "c", name: "save_lead", input: { name: "=Ramesh", product: "Press Brake", requirements: "100 ton", quantity: "1 piece", city: "Rajkot" } }], stop_reason: "tool_use" },
-        { content: [{ type: "text", text: "Thanks, our team will contact you." }], stop_reason: "end_turn" },
-      ],
-      requests,
-    ),
+    client: fakeClient(script, requests),
     sellers,
     sessions: new SessionStore(db),
     db,
@@ -137,7 +135,7 @@ describe("chat API", () => {
     await chat(ALPHA, "what is the price of this?", { origin: base, sessionId: "page-ctx-1", pageUrl: `${base}/s/${ALPHA}/p/cnc-press-brake-a1b2c3d` });
     const userText = requests[0].messages.at(-1).content[0].text as string;
     expect(userText).toContain("<current_page>\nThe buyer is viewing: CNC Press Brake (https://www.alphapresses.example/product/cnc-press-brake-a1b2c3d.html)");
-    expect(userText).toContain("Listed starting price: ₹4,50,000 / Piece");
+    expect(userText).toContain("Price: confirmed by our team on enquiry");
   });
 });
 
@@ -260,6 +258,59 @@ describe("admin", () => {
   });
 });
 
+describe("knowledge base upload", () => {
+  const kbJson = fs.readFileSync(path.join(__dirname, "fixtures", "kb", "alpha-kb.json"), "utf8");
+  const upload = (seller: string, body: string, origin = base) =>
+    fetch(`${base}/admin/sellers/${seller}/kb`, { method: "POST", headers: { ...auth(PASSWORD), Origin: origin, "Content-Type": "application/json" }, body });
+
+  it("protects the upload and blocks cross-site posts", async () => {
+    expect((await fetch(`${base}/admin/sellers/${ALPHA}/kb`, { method: "POST", body: kbJson })).status).toBe(401);
+    expect((await upload(ALPHA, kbJson, "https://evil.example")).status).toBe(403);
+  });
+
+  it("reports invalid JSON and schema problems by field", async () => {
+    const notJson = await upload(ALPHA, "{oops");
+    expect(notJson.status).toBe(400);
+    expect((await notJson.json()).errors[0]).toMatch(/^Not valid JSON/);
+    const bad = await upload(ALPHA, JSON.stringify({ seller: {}, products: [] }));
+    expect(bad.status).toBe(400);
+    expect((await bad.json()).errors).toContain("seller.company_name: Invalid input: expected string, received undefined");
+  });
+
+  it("uploads a KB the next chat turn is grounded in, with chips, cards and no prices", async () => {
+    const res = await upload(ALPHA, kbJson);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, summary: { products: 2, categories: 1, videos: 3 } });
+    const adminPage = await (await fetch(`${base}/admin`, { headers: auth(PASSWORD) })).text();
+    expect(adminPage).toContain("Uploaded JSON");
+    expect(adminPage).toContain(`href="/admin/sellers/${ALPHA}/kb.json"`);
+    expect((await fetch(`${base}/admin/kb-template.json`, { headers: auth(PASSWORD) })).status).toBe(200);
+    expect((await fetch(`${base}/admin/sellers/${ALPHA}/kb.json`, { headers: auth(PASSWORD) })).status).toBe(200);
+
+    requests.length = 0;
+    script.push(
+      { content: [{ type: "tool_use", id: "m1", name: "share_media", input: { product_ids: ["cnc-press-brake-a1b2c3d"], kinds: ["image"], include_related: true } }], stop_reason: "tool_use" },
+      { content: [{ type: "text", text: "Here are photos. Which control type do you need?" }, { type: "tool_use", id: "o1", name: "show_options", input: { options: ["CNC", "NC"] } }], stop_reason: "tool_use" },
+      { content: [], stop_reason: "end_turn" },
+    );
+    const { body } = await chat(ALPHA, "show me photos of the cnc press brake", { origin: base, sessionId: "kb-upload-1", pageUrl: `${base}/s/${ALPHA}/` });
+    expect(requests[0].system[0].text).toContain("Product id: cnc-press-brake-a1b2c3d");
+    expect(requests[0].system[0].text).not.toContain("4,50,000");
+    expect(body).toContain("event: cards");
+    expect(body).toContain('"url":"https://img.alphapresses.example/cnc.jpg"');
+    // Buyer is on this site, so the related product card links to the generated page when it exists, else the seller's page.
+    expect(body).toContain('"type":"product","title":"NC Press Brake","url":"https://www.alphapresses.example/product/nc-press-brake-z9y8x7w.html"');
+    expect(body).toContain('"chips":["CNC","NC"]');
+    expect(db.transcript(`${ALPHA}:kb-upload-1`).at(-1)?.text).toContain('[Shared: image "CNC Press Brake 100 Ton"');
+  });
+
+  it("removes the upload and goes back to the KB folder", async () => {
+    const res = await fetch(`${base}/admin/sellers/${ALPHA}/kb/delete`, { method: "POST", headers: { ...auth(PASSWORD), Origin: base }, redirect: "manual" });
+    expect(res.status).toBe(303);
+    expect((await fetch(`${base}/admin/sellers/${ALPHA}/kb.json`, { headers: auth(PASSWORD) })).status).toBe(404);
+  });
+});
+
 describe("brand persona prompts", () => {
   const form = (seller: string, fields: Record<string, string>, origin = base) =>
     fetch(`${base}/admin/sellers/${seller}/prompts`, {
@@ -290,10 +341,12 @@ describe("brand persona prompts", () => {
     expect(requests[0].system[0].text).toContain("<brand_persona>\nYou are Ava, the Alpha Presses assistant.\n</brand_persona>");
     expect(requests[0].messages.at(-1).content[0].text).toContain("<seller_instructions>\nAlways ask the sheet thickness.\n</seller_instructions>");
 
+    // Beta keeps its own default persona from its KB folder's persona.json.
     requests.length = 0;
     await chat(BETA, "hello", { origin: base, sessionId: "persona-test-2", pageUrl: `${base}/s/${BETA}/` });
-    expect(requests[0].system[0].text).not.toContain("brand_persona");
-    expect(requests[0].messages.at(-1).content[0].text).not.toContain("seller_instructions");
+    expect(requests[0].system[0].text).not.toContain("You are Ava");
+    expect(requests[0].system[0].text).toContain("<brand_persona>\nYou are Beta Pumps' helpful pump expert.\n</brand_persona>");
+    expect(requests[0].messages.at(-1).content[0].text).toContain("<seller_instructions>\nAsk the required head and flow first.\n</seller_instructions>");
 
     expect((await page_("/")).body).toContain("Brand persona set");
   });
@@ -304,6 +357,49 @@ describe("brand persona prompts", () => {
     requests.length = 0;
     await chat(ALPHA, "hello again", { origin: base, sessionId: "persona-test-3", pageUrl: `${base}/s/${ALPHA}/` });
     expect(requests[0].system[0].text).not.toContain("brand_persona");
+  });
+});
+
+describe("common system prompt and guardrails", () => {
+  const save = (fields: Record<string, string>) =>
+    fetch(`${base}/admin/prompts`, {
+      method: "POST",
+      headers: { ...auth(PASSWORD), Origin: base, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(fields).toString(),
+      redirect: "manual",
+    });
+
+  it("is admin-only and keeps the required placeholders", async () => {
+    expect((await fetch(`${base}/admin/prompts`)).status).toBe(401);
+    const page = await (await fetch(`${base}/admin/prompts`, { headers: auth(PASSWORD) })).text();
+    expect(page).toContain("These apply to <b>all 2 sellers</b>");
+    expect(page).toContain("Beta Pumps"); // has its own guardrails.md
+    const bad = await save({ system: "You are a bot. {{GUARDRAILS}}", guardrails: "Be nice." });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toContain("The system prompt must contain {{BUSINESS_CARD}}.");
+  });
+
+  it("applies saved common guardrails to every seller without its own, and resets", async () => {
+    const page = await (await fetch(`${base}/admin/prompts`, { headers: auth(PASSWORD) })).text();
+    const system = page.match(/<textarea id="system" name="system" rows="22">([\s\S]*?)<\/textarea>/)![1].replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+    expect((await save({ system: `COMMON-SYSTEM-MARKER\n${system}`, guardrails: "COMMON-GUARDRAIL-MARKER: never discuss competitors." })).status).toBe(303);
+    expect(db.getPlatformPrompt("guardrails")?.value).toContain("COMMON-GUARDRAIL-MARKER");
+
+    requests.length = 0;
+    await chat(ALPHA, "hi", { origin: base, sessionId: "common-1", pageUrl: `${base}/s/${ALPHA}/` });
+    expect(requests[0].system[0].text).toContain("COMMON-SYSTEM-MARKER");
+    expect(requests[0].system[0].text).toContain("COMMON-GUARDRAIL-MARKER");
+    requests.length = 0;
+    await chat(BETA, "hi", { origin: base, sessionId: "common-2", pageUrl: `${base}/s/${BETA}/` });
+    expect(requests[0].system[0].text).toContain("COMMON-SYSTEM-MARKER");
+    expect(requests[0].system[0].text).toContain("BETA-ONLY GUARDRAIL");
+    expect(requests[0].system[0].text).not.toContain("COMMON-GUARDRAIL-MARKER");
+
+    expect((await save({ reset: "1" })).status).toBe(303);
+    expect(db.getPlatformPrompt("guardrails")).toBeNull();
+    requests.length = 0;
+    await chat(ALPHA, "hi again", { origin: base, sessionId: "common-3", pageUrl: `${base}/s/${ALPHA}/` });
+    expect(requests[0].system[0].text).not.toContain("COMMON-SYSTEM-MARKER");
   });
 });
 

@@ -42,7 +42,7 @@
   function persist() {
     if (!current || !state) return;
     state.updatedAt = Date.now();
-    state.history = state.history.slice(-60);
+    state.history = state.history.slice(-40);
     try {
       localStorage.setItem(storeKey(current), JSON.stringify(state));
     } catch (e) {
@@ -87,7 +87,7 @@
     ".head button{background:transparent;border:0;color:#fff;cursor:pointer;font-size:22px;line-height:1;padding:4px;border-radius:6px;display:flex;align-items:center}" +
     ".head button:hover{background:rgba(255,255,255,.16)}.head button:disabled{opacity:.45;cursor:default;background:transparent}.head .new svg{width:18px;height:18px}" +
     ".log{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px;background:#f5f7fb}" +
-    ".m{max-width:85%;padding:9px 12px;border-radius:14px;font-size:14px;line-height:1.45;white-space:pre-wrap;word-wrap:break-word}" +
+    ".m{flex-shrink:0;max-width:85%;padding:9px 12px;border-radius:14px;font-size:14px;line-height:1.45;white-space:pre-wrap;word-wrap:break-word}" +
     ".m.bot{background:#fff;border:1px solid #e3e8f0;align-self:flex-start;border-bottom-left-radius:4px}" +
     ".m.me{background:var(--c);color:#fff;align-self:flex-end;border-bottom-right-radius:4px}" +
     ".m a{color:inherit;text-decoration:underline}" +
@@ -104,6 +104,23 @@
     ".hint{font-size:11px;color:#6b7588;padding:0 14px 6px;background:#fff}" +
     ".foot{font-size:11px;color:#8b94a7;text-align:center;padding:0 0 8px;background:#fff}" +
     ":host([data-pos=left]) .bubble,:host([data-pos=left]) .panel{right:auto;left:20px}" +
+    ".cards{display:flex;flex-shrink:0;gap:8px;overflow-x:auto;padding:2px 2px 6px;align-self:stretch;scroll-snap-type:x mandatory;scrollbar-width:thin}" +
+    ".card{flex:0 0 150px;scroll-snap-align:start;background:#fff;border:1px solid #e3e8f0;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;cursor:pointer;text-align:left;padding:0;font:inherit;color:#1d2433;text-decoration:none}" +
+    ".card:hover{border-color:var(--c)}" +
+    ".card .th{position:relative;width:100%;height:104px;background:#eef2f7 center/cover no-repeat;display:flex;align-items:center;justify-content:center}" +
+    ".card .th img{width:100%;height:100%;object-fit:cover;display:block}" +
+    ".card .play{position:absolute;width:38px;height:38px;border-radius:50%;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center}.card .play svg{width:16px;height:16px;fill:#fff;margin-left:2px}" +
+    ".card .pdf{font-weight:700;font-size:15px;color:#c0392b;border:2px solid #c0392b;border-radius:6px;padding:6px 8px}" +
+    ".card .cb{padding:7px 9px 9px;display:flex;flex-direction:column;gap:2px}" +
+    ".card .ct{font-size:12.5px;font-weight:600;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}" +
+    ".card .cs{font-size:11px;color:#6b7588;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+    ".card .ca{font-size:11.5px;color:var(--c);font-weight:600;margin-top:2px}" +
+    ".lb{position:fixed;inset:0;z-index:2147483001;background:rgba(10,14,20,.88);display:none;align-items:center;justify-content:center;padding:48px 16px 16px}" +
+    ".lb.open{display:flex}.lb .lbx{position:absolute;top:10px;right:14px;background:transparent;border:0;color:#fff;font-size:30px;cursor:pointer;line-height:1}" +
+    ".lb .lbc{max-width:min(960px,100%);max-height:100%;width:100%;display:flex;flex-direction:column;align-items:center;gap:10px}" +
+    ".lb img{max-width:100%;max-height:calc(100vh - 130px);object-fit:contain;border-radius:8px;background:#fff}" +
+    ".lb iframe,.lb video{width:100%;aspect-ratio:16/9;max-height:calc(100vh - 130px);border:0;border-radius:8px;background:#000}" +
+    ".lb .lbt{color:#fff;font-size:14px;text-align:center}.lb .lbt a{color:#fff}" +
     "@media (max-width:480px){.panel,:host([data-pos=left]) .panel{left:0;right:0;bottom:0;width:100vw;max-width:100vw;height:100%;max-height:100%;border-radius:0}.bubble{right:16px;bottom:16px}:host([data-pos=left]) .bubble{left:16px}}" +
     "</style>" +
     '<button class="bubble" aria-label="Chat with us" aria-expanded="false" hidden>' +
@@ -118,7 +135,8 @@
     '<div class="hint" hidden></div>' +
     '<form><input aria-label="Type your message" autocomplete="off" maxlength="1000"/><button type="submit">Send</button></form>' +
     '<div class="foot">Virtual assistant · replies may be checked by our team</div>' +
-    "</section>";
+    "</section>" +
+    '<div class="lb" role="dialog" aria-label="Media viewer"><button type="button" class="lbx" aria-label="Close">×</button><div class="lbc"></div></div>';
 
   var bubble = root.querySelector(".bubble");
   var panel = root.querySelector(".panel");
@@ -130,6 +148,8 @@
   var sendBtn = root.querySelector("form button");
   var titleEl = root.querySelector(".t");
   var newBtn = root.querySelector(".new");
+  var lightbox = root.querySelector(".lb");
+  var lightboxBody = root.querySelector(".lbc");
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
@@ -149,6 +169,135 @@
     log.scrollTop = log.scrollHeight;
     return el;
   }
+  function safeHref(u) {
+    try {
+      var x = new URL(u);
+      return x.protocol === "https:" || x.protocol === "http:" ? x.href : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text) e.textContent = text;
+    return e;
+  }
+  function openLightbox(card) {
+    lightboxBody.innerHTML = "";
+    var href = safeHref(card.url);
+    if (card.type === "image") {
+      var img = el("img");
+      img.src = safeHref(card.url) || "";
+      img.alt = card.title || "";
+      img.referrerPolicy = "no-referrer";
+      lightboxBody.appendChild(img);
+    } else if (card.type === "video") {
+      var embed = safeHref(card.embed);
+      if (embed && /\.(mp4|webm)(\?|$)/i.test(embed)) {
+        var v = el("video");
+        v.src = embed;
+        v.controls = true;
+        v.autoplay = true;
+        lightboxBody.appendChild(v);
+      } else if (embed) {
+        var f = el("iframe");
+        f.src = embed;
+        f.title = card.title || "Video";
+        f.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+        f.allowFullscreen = true;
+        f.referrerPolicy = "strict-origin-when-cross-origin";
+        lightboxBody.appendChild(f);
+      }
+    }
+    var cap = el("div", "lbt", card.title || "");
+    if (href) {
+      cap.appendChild(document.createTextNode(card.title ? " · " : ""));
+      var a = el("a", "", card.type === "video" ? "Open video" : "Open full size");
+      a.href = href;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      cap.appendChild(a);
+    }
+    lightboxBody.appendChild(cap);
+    lightbox.classList.add("open");
+  }
+  function closeLightbox() {
+    lightbox.classList.remove("open");
+    lightboxBody.innerHTML = "";
+  }
+  function cardEl(card) {
+    var href = safeHref(card.url);
+    if (!href) return null;
+    var lightboxable = card.type === "image" || (card.type === "video" && safeHref(card.embed));
+    var c;
+    if (lightboxable) {
+      c = el("button", "card");
+      c.type = "button";
+      c.addEventListener("click", function () {
+        openLightbox(card);
+      });
+    } else {
+      c = el("a", "card");
+      c.href = href;
+      c.target = "_blank";
+      c.rel = "noopener noreferrer";
+    }
+    var th = el("div", "th");
+    var thumb = safeHref(card.thumb);
+    if (thumb) {
+      var img = el("img");
+      img.src = thumb;
+      img.alt = "";
+      img.loading = "lazy";
+      img.referrerPolicy = "no-referrer";
+      img.onerror = function () {
+        img.remove();
+      };
+      th.appendChild(img);
+    } else if (card.type === "document") {
+      th.appendChild(el("span", "pdf", "PDF"));
+    }
+    if (card.type === "video") {
+      var play = el("span", "play");
+      play.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+      th.appendChild(play);
+    }
+    c.appendChild(th);
+    var body = el("div", "cb");
+    body.appendChild(el("div", "ct", card.title || ""));
+    if (card.subtitle) body.appendChild(el("div", "cs", card.subtitle));
+    body.appendChild(el("div", "ca", { product: "View product", image: "View photo", video: "Play video", document: "Open PDF" }[card.type] || "Open"));
+    c.appendChild(body);
+    c.setAttribute("aria-label", ({ product: "Product", image: "Photo", video: "Video", document: "Document" }[card.type] || "") + ": " + (card.title || ""));
+    return c;
+  }
+  function addCards(cards) {
+    if (!cards || !cards.length) return;
+    var wrap = el("div", "cards");
+    cards.forEach(function (card) {
+      var c = cardEl(card);
+      if (c) wrap.appendChild(c);
+    });
+    if (!wrap.children.length) return;
+    log.appendChild(wrap);
+    log.scrollTop = log.scrollHeight;
+  }
+  /** Reply buttons under the last bot message; tapping one sends it as the buyer's answer. */
+  function showChips(list, prefix) {
+    chips.innerHTML = "";
+    (list || []).forEach(function (label) {
+      var b = document.createElement("button");
+      b.className = "chip";
+      b.type = "button";
+      b.textContent = label;
+      b.onclick = function () {
+        send(prefix ? prefix + label : label);
+      };
+      chips.appendChild(b);
+    });
+  }
+
   function greeting(c) {
     return c.greeting || "Hi! I'm the " + c.name + " assistant. Tell me what you're looking for and I'll help you find the right product.";
   }
@@ -193,21 +342,11 @@
     log.innerHTML = "";
     addMsg("bot", greeting(c));
     state.history.forEach(function (h) {
-      addMsg(h.who, h.text);
+      if (h.text) addMsg(h.who, h.text);
+      addCards(h.cards);
     });
-    chips.innerHTML = "";
-    if (state.history.length === 0) {
-      (c.chips || []).forEach(function (label) {
-        var b = document.createElement("button");
-        b.className = "chip";
-        b.type = "button";
-        b.textContent = label;
-        b.onclick = function () {
-          send("I'm looking for a " + label);
-        };
-        chips.appendChild(b);
-      });
-    }
+    if (state.history.length === 0) showChips(c.chips, "I'm looking for a ");
+    else showChips(state.chips);
     setAskFor(state.askFor);
   }
 
@@ -240,6 +379,7 @@
     sendBtn.disabled = true;
     newBtn.disabled = true;
     chips.innerHTML = "";
+    state.chips = null;
     var seller = current;
     var display = state.askFor === "otp" ? "•".repeat(Math.min(text.length, 8)) : text;
     addMsg("me", display);
@@ -248,6 +388,8 @@
     var botEl = addMsg("bot", "");
     botEl.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
     var reply = "";
+    var replyCards = null;
+    var replyChips = null;
 
     fetch(API + "/api/chat", {
       method: "POST",
@@ -296,7 +438,11 @@
             reply += payload.text;
             botEl.innerHTML = linkify(reply.replace(/^\s+/, ""));
             log.scrollTop = log.scrollHeight;
-          } else if (ev === "ui") state.askFor = payload.askFor || null;
+          } else if (ev === "cards") replyCards = payload.cards || null;
+          else if (ev === "ui") {
+            state.askFor = payload.askFor || null;
+            replyChips = payload.chips && payload.chips.length ? payload.chips : null;
+          }
           else if (ev === "error") throw new Error(payload.error);
         }
         return pump();
@@ -307,7 +453,10 @@
       .then(function () {
         reply = reply.trim() || "Sorry, something went wrong. Please try again.";
         botEl.innerHTML = linkify(reply);
-        state.history.push({ who: "bot", text: reply });
+        addCards(replyCards);
+        state.history.push(replyCards ? { who: "bot", text: reply, cards: replyCards } : { who: "bot", text: reply });
+        state.chips = replyChips;
+        showChips(replyChips);
         sending = false;
         sendBtn.disabled = false;
         newBtn.disabled = false;
@@ -321,7 +470,7 @@
   function reset(ask) {
     if (sending || !current || !state) return false;
     if (ask && state.history.length && !window.confirm("Start a new chat? This conversation will be cleared.")) return false;
-    state = { sessionId: newId(), history: [], askFor: null };
+    state = { sessionId: newId(), history: [], askFor: null, chips: null };
     persist();
     render();
     input.focus();
@@ -336,6 +485,13 @@
     else openPanel();
   });
   root.querySelector(".x").addEventListener("click", closePanel);
+  lightbox.querySelector(".lbx").addEventListener("click", closeLightbox);
+  lightbox.addEventListener("click", function (e) {
+    if (e.target === lightbox) closeLightbox();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && lightbox.classList.contains("open")) closeLightbox();
+  });
   form.addEventListener("submit", function (e) {
     e.preventDefault();
     send(input.value);

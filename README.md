@@ -34,7 +34,9 @@ Create a folder `kb/sellers/<slug>/`, where `<slug>` uses lowercase letters, dig
 | `business_card.json` | yes | **BUSINESS CARD**: company facts, `deals_in`, `listed_contact` |
 | `product_cards.json` | yes | **PRODUCT CARDS**: options, qualification questions, handling rules |
 | `sitemap.xml` | yes | The seller's sitemap, which the crawler builds the catalogue from |
-| `guardrails.md` | no | Replaces the shared `prompts/guardrails.md` for this seller only |
+| `guardrails.md` | no | Replaces the common guardrails for this seller only |
+| `persona.json` | no | The seller's default brand persona: `{"system": "...", "user": "..."}` (see below) |
+| `seller_kb.json` | no | A committed seller KB JSON; an upload on `/admin` takes precedence |
 | `catalogue.json` | no | A committed crawl (`npm run crawl -- <slug>`), used until the server's own crawl finishes |
 
 `seller.json`:
@@ -71,15 +73,62 @@ git add kb/sellers/<slug> && git commit -m "Add <seller>" && git push
 
 On Render, the push redeploys. The server then crawls every seller's sitemap on start and every 24 hours after that, and the new seller appears in the directory. An invalid folder stops the server from starting, with every problem listed in the log, so run `kb:check` first.
 
-## Knowledge and prompts
+## Seller knowledge base (JSON upload)
+
+On `/admin`, each seller row has **Upload JSON**. The file is the seller export (`_version` 3.0, with `seller`, `company_pages`, `photo_gallery`, `categories` and `products`). **Download a template** on the same page gives a small example. The upload is checked first, and any problem is listed by field (for example `products[2].name: must not be empty`); nothing changes until the file is valid.
+
+Once uploaded, the JSON is the bot's **main source**: it replaces `business_card.json` and `product_cards.json` for that seller. Crawled website pages remain an extra source. The file is kept on the Render disk (`DATA_DIR/sellers/<slug>/seller_kb.json`), so it survives redeploys. **Download** returns it and **Remove** goes back to the KB folder files.
+
+What the bot is given from it:
+
+| From the JSON | Becomes |
+|---|---|
+| `seller` (name, nature of business, address, phone, WhatsApp, website, contact person) and allowed factsheet rows (CEO, registered address, legal status, certifications, after-sales support, competitive advantage, quality measures, infrastructure) | BUSINESS CARD |
+| `company_pages` home, about, why us, our advantage, quality, infrastructure, certificates | "About the company" in the BUSINESS CARD |
+| `categories` | Category guide with each category's products and **ISQs** |
+| `products` (name, category, brand, model code, minimum order, specifications, description, media counts, page link) | PRODUCT CARDS, one per product, with a `Product id` (the slug of its page URL) |
+| `products[].media`, `photo_gallery` (by `tagged_products`), corporate video and brochure | Photos, videos and PDFs the bot can share as cards |
+
+**Never given to the bot (guardrails):** prices, currency and price units, delivery time, payment terms, dispatch port, packaging, production capacity, turnover, staff numbers, year of establishment, member-since, GST and statutory details, bankers, ratings, key customers, and the profile, insights, team, jobs, news and testimonial pages. Sentences about tenure, turnover, export share, staff or customer counts, prices, freight, delivery, payment, GST or stock are also dropped from descriptions and page text, as are phone numbers, emails and links inside text.
+
+**ISQs:** the export has no question list, so they are derived per category. Each specification whose values differ across the category's products (for example Control Type: CNC / NC) becomes a question, and its values become the options. Brand, model and country of origin are skipped, and each category gets up to 5 ISQs with up to 8 options each.
+
+## Chat features
+
+- **ISQ chips:** the bot asks one ISQ per message and calls `show_options`, and the widget shows the options as tap-to-reply buttons under the message. The buyer can tap one or type their own answer. No buttons are shown while it is collecting the mobile number, OTP or name.
+- **Media and related products:** when the buyer asks for photos, a video, a brochure or PDF, or related products, the bot calls `share_media` with product ids. The server builds the cards from the KB and the crawl only, never from model text, so links can't be made up. The widget shows a swipeable carousel of up to 12 cards:
+  - product cards (photo, name, category)
+  - photos, which open in a viewer
+  - videos with a play-button thumbnail, which play inside the chat (YouTube/Vimeo/MP4)
+  - PDF cards
+  On this platform's own site, product cards open the generated product page; on the seller's own website, they open the seller's page. Cards stay in the chat history after a reload.
+- **No prices in chat:** the bot never states, confirms or estimates a price. It says prices are confirmed by the seller's team and offers to pass the enquiry on. The model is never shown prices, and any amount it writes is replaced before the buyer sees it. The website pages still show the seller's listed starting prices.
+
+## Prompts: common system prompt, common guardrails, seller brand persona
+
+With many sellers, each layer has one place to edit:
+
+| Layer | Applies to | Default file | Edit in admin |
+|---|---|---|---|
+| **System prompt** (role, sources, ISQ and media rules, enquiry steps, style) | Every seller | `prompts/system.md` | `/admin/prompts` |
+| **Chat guardrails** (the 9 rules) | Every seller without its own `guardrails.md` | `prompts/guardrails.md` | `/admin/prompts` |
+| **Brand persona**: system part (who the assistant is, tone, greeting, what to emphasise) | One seller | `kb/sellers/<slug>/persona.json` → `system` | `/admin/sellers/<slug>/prompts` |
+| **Brand persona**: user part (standing note sent with every buyer message) | One seller | `persona.json` → `user` | same page |
+| **Per-turn user prompt** (lead status, catalogue hits, current page, seller note, buyer message) | Every seller | `prompts/user.md` | (file only) |
+
+- `/admin/prompts` saves for all sellers at once and takes effect on the next chat turn. The system prompt must keep `{{GUARDRAILS}}`, `{{BUSINESS_CARD}}`, `{{PRODUCT_CARDS}}` and `{{BRAND_PERSONA}}` (and may use `{{SELLER_NAME}}`). **Reset to defaults** goes back to the files in `prompts/`. Edits are stored in the database (`platform_prompts`).
+- A seller's persona from `persona.json` is used until someone saves one in admin. **Reset to default** on the persona page goes back to `persona.json`.
+- Starting a persona for a new seller: copy `kb/sellers/jayshree-machinetools/persona.json` and change the company, brand, product range and tone. Keep to verified facts: Guardrail 7 rules out tenure, earnings and customer counts.
+
+## Knowledge and prompts (KB folder)
 
 | Name in the guardrails | Source | Goes into |
 |---|---|---|
-| BUSINESS CARD | `business_card.json` | System prompt (cached) |
-| PRODUCT CARDS | `product_cards.json` | System prompt (cached) |
+| BUSINESS CARD | uploaded JSON, else `business_card.json` | System prompt (cached) |
+| PRODUCT CARDS | uploaded JSON, else `product_cards.json` | System prompt (cached) |
 | SELLER CATALOGUE (RAG) | crawled from `sitemap.xml` | Each turn's user prompt: the top matches, plus the page the buyer is viewing |
 
-- `prompts/system.md` is the system prompt template shared by all sellers. `{{GUARDRAILS}}` is filled from `prompts/guardrails.md`, or from the seller's own `guardrails.md`.
+- `prompts/system.md` is the default common system prompt. `{{GUARDRAILS}}` is filled from the common guardrails, or from the seller's own `guardrails.md`.
 - `prompts/user.md` is the template for each turn. It carries `<current_page>` when the buyer is on a product or category page, so "what's the price of this?" just works.
 - The crawler skips profile, testimonial and director pages (guardrail 7). It also drops spec rows, description sentences and feature bullets about GST, freight, delivery, payment or stock, and sentences containing phone numbers, emails or links, so neither the website nor the bot shows them.
 - For each page the crawler keeps the title, starting price, specifications, every product photo (linked from the seller's site, not copied), the description, feature bullets, breadcrumbs, and on category pages the listed products with their thumbnails.
@@ -107,7 +156,7 @@ Each seller's assistant can have its own voice. On the directory, click **Edit p
 
 - Both are **added on top of** the built-in prompt. The 9 guardrails, the knowledge-source rules and the OTP enquiry steps always apply, and the prompt tells the model they win if anything conflicts. The code-level output guardrails also still check every sentence.
 - Saving takes effect on the next chat turn; there's no redeploy. The prompts are stored in the SQLite database (`seller_prompts` table), so they survive restarts and redeploys on the Render disk.
-- **Clear** removes both. The form also shows a preview of the full system prompt.
+- **Reset to default** goes back to the seller's `persona.json` (or nothing, if it has none). The form also shows a preview of the full system prompt.
 - Tags such as `<business_card>` or `<seller_instructions>` are stripped from both the prompts and buyer messages, so neither can break out of its block.
 
 ## Guardrails
@@ -116,13 +165,13 @@ The 9 shared guardrails are in `prompts/guardrails.md`, word for word. The high-
 
 | Guardrail | Code enforcement |
 |---|---|
-| 1 Price | Any ₹, lakh or crore amount must match a catalogue price retrieved in this chat; otherwise the sentence is replaced. The website labels prices as "Starting price". |
+| 1 Price | The bot never states a price. Prices are kept out of what the model sees, and any ₹, lakh or crore amount it writes is replaced with "Prices are confirmed by our team…". The website still labels the seller's listed prices as "Starting price". |
 | 2 Freight | Freight or transport terms (included, extra, free…) are replaced. |
 | 3 Contact | Phone numbers other than the seller's listed number, and any email or external link, are replaced. Only links to the seller's own site pass. |
 | 4 Stock / brand | "In stock", "genuine <Brand>" and similar are replaced. |
 | 5 Payment / ID | UPI, card, Aadhaar, PAN, GSTIN, IFSC and bank account numbers typed by the buyer are redacted before the model or logs see them. |
 | 6 Delivery | Dispatch dates, lead times and door-delivery promises are replaced. |
-| 7 Disclosure | Business-profile pages are never crawled; the prompt handles the rest. |
+| 7 Disclosure | Business-profile pages are never crawled; turnover, staff, tenure, GST, bank and rating fields of an uploaded JSON are never read, and such sentences are dropped from its text; the prompt handles the rest. |
 | 8 GST | GST rates and "inclusive/exclusive of tax" are replaced. |
 | 9 Other products | Specs come only from the catalogue; the prompt asks the bot to collect the requirement instead. |
 
@@ -146,7 +195,8 @@ Everything is kept in one SQLite file, `DATA_DIR/chatbot.db`. Every table has a 
 | `transcript` | What buyers typed (payment and ID details already redacted) and what they were shown |
 | `leads` | Verified leads |
 | `guardrail_events` | Each sentence the output guardrails replaced |
-| `seller_prompts` | Each seller's brand persona (system and user prompt) |
+| `seller_prompts` | Each seller's brand persona (system and user prompt) saved in admin |
+| `platform_prompts` | The common system prompt and guardrails, when edited in admin |
 
 A database from the earlier single-seller version is migrated automatically on start. Its rows are assigned to `jayshree-machinetools`.
 
@@ -154,7 +204,9 @@ A database from the earlier single-seller version is migrated automatically on s
 
 Set `ADMIN_PASSWORD` (at least 8 characters). The browser asks for a login: any username, with that password. If `ADMIN_PASSWORD` isn't set, the admin pages return 404.
 
-- `/admin`: every seller with lead count, catalogue size, last crawl result, a link to their brand persona prompts and a **Re-crawl now** button
+- `/admin`: every seller with lead count, catalogue size, last crawl result, **Upload JSON** (knowledge base), a link to their brand persona prompts and a **Re-crawl now** button
+- `/admin/prompts`: the common system prompt and chat guardrails for all sellers
+- `/admin/kb-template.json`: a template for the knowledge base JSON
 - `/admin/sellers/<slug>/prompts`: edit that seller's system and user prompts
 - `/admin/leads`, filtered by seller with `?seller=<slug>`: leads, newest first, each linking to its chat
 - `/admin/leads.csv` (also takes `?seller=`): a CSV that opens in Excel
@@ -246,12 +298,13 @@ npm run eval      # live scenarios against the real model for Jayshree, one or m
 ## Project layout
 
 ```
-kb/sellers/<slug>/   KB you supply per seller (+ an optional committed catalogue)
-prompts/             system.md, user.md, guardrails.md (shared)
+kb/sellers/<slug>/   KB you supply per seller (+ optional persona.json, seller_kb.json, catalogue)
+prompts/             system.md, user.md, guardrails.md (common defaults; editable at /admin/prompts)
 src/                 app.ts (HTTP: chat API, website, admin), server.ts, sellers.ts (registry), claude.ts (chat loop),
-                     tools.ts, guardrails.ts, crawler.ts, catalogue.ts, db.ts (SQLite), site/ (page templates)
+                     tools.ts (OTP, lead, show_options, share_media), sellerKb.ts (JSON upload), shareMedia.ts,
+                     media.ts, guardrails.ts, crawler.ts, catalogue.ts, db.ts (SQLite), site/ (page templates)
 public/              widget.js (embeddable chat), site.css, demo.html
 scripts/             crawl.ts, kb-check.ts, eval.ts
-tests/               vitest tests + fixtures (HTML pages, two sample sellers)
+tests/               vitest tests + fixtures (HTML pages, two sample sellers, a sample KB JSON)
 render.yaml          Render Blueprint (web service + persistent disk)
 ```

@@ -16,6 +16,20 @@ export function sharedGuardrails(): string {
   return readPrompt("guardrails.md").trim();
 }
 
+/** The common system prompt template (prompts/system.md), shared by every seller. */
+export function defaultSystemTemplate(): string {
+  return readPrompt("system.md");
+}
+
+/** Placeholders a system prompt template must keep, so every seller's knowledge and guardrails still reach the bot. */
+export const REQUIRED_PLACEHOLDERS = ["GUARDRAILS", "BUSINESS_CARD", "PRODUCT_CARDS", "BRAND_PERSONA"] as const;
+
+export function validateSystemTemplate(template: string): string[] {
+  const errors = REQUIRED_PLACEHOLDERS.filter((p) => !template.includes(`{{${p}}}`)).map((p) => `The system prompt must contain {{${p}}}.`);
+  if (template.length > 40_000) errors.push(`The system prompt is too long (${template.length} of 40,000 characters).`);
+  return errors;
+}
+
 function personaSection(persona: string | undefined): string {
   const text = neutralizeBuyerText(persona ?? "").trim();
   if (!text) return "";
@@ -34,8 +48,8 @@ ${text}
  * Each seller's system prompt is rendered at startup and again only when their brand persona is
  * saved, so it stays cacheable between chats.
  */
-export function renderSystemPrompt(kb: KnowledgeBase, guardrails = sharedGuardrails(), persona?: string): string {
-  return fill(readPrompt("system.md"), {
+export function renderSystemPrompt(kb: KnowledgeBase, guardrails = sharedGuardrails(), persona?: string, template = defaultSystemTemplate()): string {
+  return fill(template, {
     SELLER_NAME: kb.businessCard.name,
     BRAND_PERSONA: personaSection(persona),
     GUARDRAILS: guardrails.trim(),

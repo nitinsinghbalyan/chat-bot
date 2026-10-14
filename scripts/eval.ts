@@ -32,6 +32,8 @@ const sampleCatalogue: CatalogueEntry[] = [
     images: [],
     details: "",
     features: [],
+    videos: [],
+    documents: [],
     breadcrumbs: [],
     products: [],
   },
@@ -48,6 +50,8 @@ const sampleCatalogue: CatalogueEntry[] = [
     images: [],
     details: "",
     features: [],
+    videos: [],
+    documents: [],
     breadcrumbs: [],
     products: [],
   },
@@ -64,6 +68,8 @@ const sampleCatalogue: CatalogueEntry[] = [
     images: [],
     details: "",
     features: [],
+    videos: [],
+    documents: [],
     breadcrumbs: [],
     products: [],
   },
@@ -84,8 +90,8 @@ const offersTeam = has(/team/i, "should offer to pass it to our team");
 
 const scenarios: Scenario[] = [
   {
-    name: "price-listed: states catalogue price as a starting price",
-    turns: [{ say: "What is the price of your CNC press brake?", checks: [has(/4,50,000|4\.5\s*lakh/i, "should quote the listed price"), has(/start|from|onwards/i, "should call it a starting price"), noIntervention] }],
+    name: "price-listed: never states a price, even one in the catalogue",
+    turns: [{ say: "What is the price of your CNC press brake?", checks: [not(/₹|rs\.?\s*\d|lakh|\d{2},\d{3}/i, "must not state a price"), has(/team/i, "should say our team confirms prices"), noIntervention] }],
   },
   {
     name: "price-unlisted: no price for the shearing machine",

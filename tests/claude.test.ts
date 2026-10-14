@@ -75,22 +75,24 @@ const text = (t: string): Scripted => ({ content: [{ type: "text", text: t }], s
 describe("runTurn", () => {
   it("streams a grounded answer and sends a cache-friendly request", async () => {
     const session = new SessionStore().get("jayshree-machinetools", "s-basic-0001");
-    const { d, requests } = deps([text("Yes, we make CNC press brakes. The starting price is ₹4,50,000 per piece. What thickness do you bend?")]);
+    const { d, requests } = deps([text("Yes, we make CNC press brakes. Our team confirms prices. What thickness do you bend?")]);
     let streamed = "";
     const r = await runTurn(session, "do you make press brake? price?", d, { onText: (t) => (streamed += t) });
 
     expect(streamed).toBe(r.text);
-    expect(r.text).toContain("₹4,50,000");
+    expect(r.text).toContain("Our team confirms prices.");
     expect(r.interventions).toEqual([]);
     const req = requests[0];
     expect(req.system).toEqual([{ type: "text", text: "SYSTEM", cache_control: { type: "ephemeral" } }]);
     expect(req.tool_choice).toEqual({ type: "auto" });
-    expect(req.tools.map((t: any) => t.name)).toEqual(["send_otp", "verify_otp", "save_lead"]);
+    expect(req.tools.map((t: any) => t.name)).toEqual(["send_otp", "verify_otp", "save_lead", "show_options", "share_media"]);
     expect(req.output_config).toEqual({ effort: "low" });
     expect(req.fallbacks).toBe("default");
     expect(req.betas).toEqual(["server-side-fallback-2026-07-01"]);
     const userText = req.messages[0].content[0].text as string;
-    expect(userText).toContain("Listed starting price: ₹4,50,000");
+    // Guardrail 1: the model never sees catalogue prices.
+    expect(userText).toContain("Price: confirmed by our team on enquiry");
+    expect(userText).not.toContain("4,50,000");
     expect(userText).toContain("<buyer_message>\ndo you make press brake? price?\n</buyer_message>");
     expect(session.messages).toHaveLength(2);
     expect(session.turns).toBe(1);
@@ -171,5 +173,55 @@ describe("runTurn", () => {
     const r = await runTurn(session, "hello", d);
     expect(r.text).toBe(FALLBACK_REPLY);
     expect(session.messages).toHaveLength(0);
+  });
+});
+
+describe("never states prices", () => {
+  it("replaces a price even when the catalogue lists it", async () => {
+    const session = new SessionStore().get("jayshree-machinetools", "s-noprice-0001");
+    const { d } = deps([text("The CNC press brake starts at ₹4,50,000 per piece. Which bending length do you need?")]);
+    const r = await runTurn(session, "cnc press brake price", d);
+    expect(r.text).not.toContain("4,50,000");
+    expect(r.text).toContain(REPLACEMENTS.G1_price);
+  });
+});
+
+describe("chips and media", () => {
+  const tool = (id: string, name: string, input: unknown): Scripted => ({ content: [{ type: "tool_use", id, name, input }], stop_reason: "tool_use" });
+
+  it("returns ISQ options as reply buttons", async () => {
+    const session = new SessionStore().get("jayshree-machinetools", "s-chips-0001");
+    const { d, requests } = deps([
+      { content: [{ type: "text", text: "Which control type do you need?" }, { type: "tool_use", id: "c1", name: "show_options", input: { options: ["CNC", "NC", "cnc"] } }], stop_reason: "tool_use" },
+      { content: [], stop_reason: "end_turn" },
+    ]);
+    const r = await runTurn(session, "I need a press brake", d);
+    expect(r.chips).toEqual(["CNC", "NC"]);
+    expect(r.text).toBe("Which control type do you need?");
+    expect(requests[1].messages.at(-1).content[0]).toMatchObject({ type: "tool_result", is_error: false });
+  });
+
+  it("never shows buttons while collecting the OTP", async () => {
+    const session = new SessionStore().get("jayshree-machinetools", "s-chips-0002");
+    session.lead.stage = "otp_sent";
+    session.lead.mobile = "9876543210";
+    const { d, requests } = deps([tool("c1", "show_options", { options: ["A", "B"] }), text("Please enter the OTP.")]);
+    const r = await runTurn(session, "ok", d);
+    expect(r.chips).toEqual([]);
+    expect(requests[1].messages.at(-1).content[0].is_error).toBe(true);
+  });
+
+  it("passes share_media to the seller's resolver and returns the cards", async () => {
+    const session = new SessionStore().get("jayshree-machinetools", "s-media-0001");
+    const calls: unknown[] = [];
+    const { d } = deps([tool("m1", "share_media", { product_ids: ["cnc-press-brake"], kinds: ["image", "video"], include_related: false }), text("Here are photos of the CNC press brake.")]);
+    d.shareMedia = (ids, kinds, related) => {
+      calls.push({ ids, kinds, related });
+      return { cards: [{ type: "image", title: "CNC Press Brake", url: "https://img.example/a.jpg", thumb: "https://img.example/a.jpg" }], content: "shared 1 photo", isError: false };
+    };
+    const r = await runTurn(session, "show me photos", d);
+    expect(calls).toEqual([{ ids: ["cnc-press-brake"], kinds: ["image", "video"], related: false }]);
+    expect(r.cards).toHaveLength(1);
+    expect(r.text).toBe("Here are photos of the CNC press brake.");
   });
 });

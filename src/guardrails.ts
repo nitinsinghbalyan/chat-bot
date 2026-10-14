@@ -107,7 +107,7 @@ export interface OutputContext {
 export type RuleId = "G1_price" | "G2_freight" | "G3_contact" | "G4_stock" | "G5_payment" | "G6_delivery" | "G8_tax";
 
 export const REPLACEMENTS: Record<RuleId, string> = {
-  G1_price: "For the price of this exact configuration, our team can share a quote.",
+  G1_price: "Prices are confirmed by our team, who will share a quote for your exact requirement.",
   G2_freight: "Our team will confirm the freight details with you.",
   G3_contact: "I can share our listed contact number if you'd like it, or pass your enquiry to our team.",
   G4_stock: "Our team will confirm availability for you.",

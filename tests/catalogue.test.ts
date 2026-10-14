@@ -38,7 +38,8 @@ describe("Catalogue", () => {
 
   it("formats hits for the prompt", () => {
     const text = formatCatalogueHits(cat.search("press brake"));
-    expect(text).toContain("Listed starting price: ₹4,50,000");
+    expect(text).toContain("Price: confirmed by our team on enquiry");
+    expect(text).not.toContain("4,50,000");
     expect(text).toContain("Link: https://www.jayshreemachinetools.in/product/cnc-press-brake.html");
     expect(formatCatalogueHits([])).toBe("No matching catalogue entry.");
   });

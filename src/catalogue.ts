@@ -22,6 +22,8 @@ function normalize(e: Partial<CatalogueEntry> & { url: string; related_links?: s
     images: e.images?.length ? e.images : e.image ? [e.image] : [],
     details: e.details ?? "",
     features: e.features ?? [],
+    videos: e.videos ?? [],
+    documents: e.documents ?? [],
     breadcrumbs: e.breadcrumbs ?? [],
     products: e.products ?? (e.related_links ?? []).map((url) => ({ url, title: "" })),
   };
@@ -135,7 +137,8 @@ export function formatCatalogueHits(hits: CatalogueEntry[]): string {
   return hits
     .map((h, i) => {
       const lines = [`[${i + 1}] ${h.title}`, `Link: ${h.url}`, `Type: ${h.kind}${h.category ? ` | Category: ${h.category}` : ""}`];
-      lines.push(h.price_text ? `Listed starting price: ${h.price_text}` : "Listed price: none");
+      // Guardrail 1: prices are never shown to the model; our team confirms them.
+      lines.push("Price: confirmed by our team on enquiry");
       const specs = Object.entries(h.specs);
       if (specs.length) lines.push(`Specifications: ${specs.map(([k, v]) => `${k}: ${v}`).join("; ")}`);
       if (h.kind === "category" && h.products.length) lines.push(`Products on this page: ${h.products.map((p) => p.title).filter(Boolean).slice(0, 12).join("; ")}`);

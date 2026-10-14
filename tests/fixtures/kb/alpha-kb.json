@@ -1,0 +1,93 @@
+{
+  "_version": "3.0",
+  "_generated_for": "BotPress AI Assistant",
+  "seller": {
+    "seller_id": 1,
+    "company_name": "Alpha Presses Pvt Ltd",
+    "website_url": "https://www.alphapresses.example/",
+    "business_summary": "We are a leading manufacturer of press brakes. Established in 1995, we have 500 employees.",
+    "nature_of_business": "Manufacturer",
+    "year_established": "1995",
+    "employees": "101 to 500 People",
+    "contact_person": "A. Sharma",
+    "contact_designation": "Owner",
+    "address": { "line1": "Nil, Plot 12 GIDC", "locality": "Metoda", "city": "Rajkot", "state": "Gujarat", "pincode": "360021", "country": "India" },
+    "phone": "+91-9000000001",
+    "whatsapp_number": "",
+    "gst_verified": 1,
+    "ratings": { "overall_rating": "4.4", "total_ratings_count": 42 },
+    "factsheet": [
+      { "section": "Basic Information", "name": "Company CEO", "value": "A. Sharma" },
+      { "section": "Basic Information", "name": "Key Customers", "value": [] },
+      { "section": "Basic Information", "name": "Annual Turnover", "value": "Rs. 50 - 100 Crore" },
+      { "section": "Basic Information", "name": "Year of Establishment", "value": "1995" },
+      { "section": "Statutory Profile", "name": "Banker", "value": "HDFC BANK" },
+      { "section": "GST Information", "name": "GST", "value": "24AAAAA0000A1Z5" }
+    ],
+    "logo_url": "https://img.alphapresses.example/logo.png",
+    "corporate_video_url": "https://www.youtube.com/watch?v=CORPVID0001",
+    "corporate_brochure_url": "https://www.alphapresses.example/catalogue.pdf"
+  },
+  "company_pages": [
+    { "page_type": "about", "title": "About Us - Alpha", "url": "https://www.alphapresses.example/about.html", "text": "Established in the year 1995, we build press brakes. Our machines are built in our own Rajkot factory. We export up to forty percent of our machines.", "sections": [] },
+    { "page_type": "profile", "title": "Profile - Alpha", "url": "https://www.alphapresses.example/profile.html", "text": "Our turnover is huge.", "sections": [] }
+  ],
+  "photo_gallery": [
+    { "media_id": 1, "image_url": "https://i.ytimg.com/vi/TAGGEDVID01/hq.jpg", "video_url": "https://youtu.be/TAGGEDVID01", "title": "VIDEO", "caption": "VIDEO", "source": "IM", "sub_type": "VIDEO", "tagged_products": [{ "DISPLAY_ID": 501, "PDP_URL": "https://www.alphapresses.example/product/cnc-press-brake-a1b2c3d.html" }] },
+    { "media_id": 2, "image_url": "https://img.alphapresses.example/factory.jpg", "video_url": "", "title": "Factory", "caption": "", "source": "IM", "sub_type": "IMAGE", "tagged_products": [] }
+  ],
+  "categories": [
+    { "category_id": 11, "name": "Press Brakes", "url": "https://www.alphapresses.example/press-brakes.html", "description": "Our press brakes. Delivery within 15 days.", "image_url": "https://img.alphapresses.example/cat.jpg", "product_ids": [501, 502] }
+  ],
+  "products": [
+    {
+      "product_id": 501,
+      "product_url": "https://www.alphapresses.example/product/cnc-press-brake-a1b2c3d.html",
+      "visible_on_site": 1,
+      "name": "CNC Press Brake",
+      "display_name": "CNC Press Brake 100 Ton",
+      "category_id": 11,
+      "taxonomy": { "category_name": "Press Brakes" },
+      "item_code": "AP-100",
+      "description": "Robust CNC press brake with +0.03 mm accuracy. Price includes GST. Call 9876543210 for offers.",
+      "specifications": [
+        { "name": "Control Type", "value": "CNC" },
+        { "name": "Capacity", "value": "100 Ton" },
+        { "name": "Country of Origin", "value": "Made in India" },
+        { "name": "GST Rate", "value": "18%" }
+      ],
+      "brand": "ALPHA",
+      "price": 450000.0,
+      "price_text": "₹ 4,50,000/Piece",
+      "min_order_quantity": "1",
+      "price_unit": "Piece",
+      "delivery_time": "1 MONTH",
+      "payment_terms": "Cash",
+      "media": {
+        "main_image_url": "https://img.alphapresses.example/cnc.jpg",
+        "gallery_image_urls": ["https://img.alphapresses.example/cnc-side.jpg"],
+        "videos": [{ "url": "https://www.youtube.com/watch?v=PRODVID0001", "platform": "youtube", "thumbnail_url": "", "title": "CNC press brake demo" }],
+        "document_urls": ["https://img.alphapresses.example/cnc-press-brake.pdf"]
+      }
+    },
+    {
+      "product_id": 502,
+      "product_url": "https://www.alphapresses.example/product/nc-press-brake-z9y8x7w.html",
+      "visible_on_site": 1,
+      "name": "NC Press Brake",
+      "display_name": "",
+      "category_id": 11,
+      "taxonomy": { "category_name": "Press Brakes" },
+      "item_code": "",
+      "description": "Economical NC press brake.",
+      "specifications": [
+        { "name": "Control Type", "value": "NC" },
+        { "name": "Capacity", "value": "60 Ton, 100 TON" }
+      ],
+      "brand": "",
+      "price": null,
+      "price_text": "",
+      "media": { "main_image_url": "https://img.alphapresses.example/nc.jpg", "gallery_image_urls": [], "videos": [], "document_urls": [] }
+    }
+  ]
+}

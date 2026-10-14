@@ -9,7 +9,8 @@ import { Catalogue } from "./catalogue.js";
 import { paths } from "./config.js";
 import { loadKnowledgeBase, sitemapUrls, type KnowledgeBase } from "./kb.js";
 import type { SellerPersona } from "./db.js";
-import { renderSystemPrompt, sharedGuardrails } from "./prompts.js";
+import { defaultSystemTemplate, renderSystemPrompt, sharedGuardrails } from "./prompts.js";
+import { KbView, knowledgeFromKb, validateSellerKb, type KbSummary, type SellerKb } from "./sellerKb.js";
 
 export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,58}[a-z0-9])?$/;
 
@@ -38,6 +39,12 @@ const sellerConfigSchema = z
 
 export type SellerConfig = z.infer<typeof sellerConfigSchema>;
 
+/** kb/sellers/<slug>/persona.json: the seller's default brand persona. */
+const personaSchema = z
+  .object({ system: z.string().max(4000).default(""), user: z.string().max(2000).default("") })
+  .strict()
+  .transform((p) => ({ system: p.system.trim(), user: p.user.trim() }));
+
 const businessCardSchema = z.object({ name: z.string().min(1) }).passthrough();
 const productCardsSchema = z.array(
   z.object({ product_id: z.string(), canonical_name: z.string().min(1), flow: z.object({ markdown: z.string() }).passthrough() }).passthrough(),
@@ -50,10 +57,23 @@ export interface CrawlStatus {
   message: string;
 }
 
+export interface UploadedKb {
+  view: KbView;
+  uploadedAt: string;
+  summary: KbSummary;
+}
+
 export interface SellerContext {
   config: SellerConfig;
   dir: string;
+  /** The knowledge the bot uses: the uploaded KB JSON when there is one, else the KB folder's files. */
   kb: KnowledgeBase;
+  /** The KB folder's business card and product cards (used when no JSON is uploaded). */
+  fileKb: KnowledgeBase;
+  /** The uploaded seller KB JSON, if any. */
+  uploaded: UploadedKb | null;
+  /** Where an uploaded KB JSON is stored (persistent disk). */
+  uploadedKbFile: string;
   catalogue: Catalogue;
   systemPrompt: string;
   sitemapFile: string;
@@ -61,8 +81,10 @@ export interface SellerContext {
   runtimeCatalogueFile: string;
   /** Catalogue committed in the KB folder, used until the first runtime crawl. */
   bundledCatalogueFile: string;
-  /** Guardrails text in force for this seller (shared or their own override). */
-  guardrails: string;
+  /** The seller's own guardrails.md, which replaces the common guardrails; null = use the common ones. */
+  ownGuardrails: string | null;
+  /** Default brand persona from the KB folder's persona.json (used until one is saved in admin). */
+  defaultPersona: SellerPersona;
   /** Brand persona set in admin: `system` goes into the system prompt, `user` into every buyer turn. */
   persona: SellerPersona;
   /** Number of URLs in the sitemap. */
@@ -104,6 +126,11 @@ export function validateSellerDir(dir: string): string[] {
   const pcFile = path.join(dir, "product_cards.json");
   const pc = readJsonFile(pcFile, errors);
   if (pc !== undefined) zodErrors(pcFile, productCardsSchema.safeParse(pc), errors);
+  const personaFile = path.join(dir, "persona.json");
+  if (fs.existsSync(personaFile)) {
+    const persona = readJsonFile(personaFile, errors);
+    if (persona !== undefined) zodErrors(personaFile, personaSchema.safeParse(persona), errors);
+  }
   const smFile = path.join(dir, "sitemap.xml");
   if (!fs.existsSync(smFile)) errors.push(`${smFile}: missing`);
   else if (sitemapUrls(fs.readFileSync(smFile, "utf8")).length === 0) errors.push(`${smFile}: no <loc> URLs found`);
@@ -129,31 +156,84 @@ export class SellerRegistry {
     const problems = dirs.flatMap(validateSellerDir);
     if (problems.length) throw new Error(`Invalid seller KB:\n  - ${problems.join("\n  - ")}`);
     const reg = new SellerRegistry();
-    const shared = sharedGuardrails();
     for (const dir of dirs) {
       const config = sellerConfigSchema.parse(JSON.parse(fs.readFileSync(path.join(dir, "seller.json"), "utf8")));
       const kb = loadKnowledgeBase(dir, config.siteUrl);
       const override = path.join(dir, "guardrails.md");
-      const guardrails = fs.existsSync(override) ? fs.readFileSync(override, "utf8") : shared;
+      const ownGuardrails = fs.existsSync(override) ? fs.readFileSync(override, "utf8") : null;
+      const personaFile = path.join(dir, "persona.json");
+      const defaultPersona = fs.existsSync(personaFile) ? personaSchema.parse(JSON.parse(fs.readFileSync(personaFile, "utf8"))) : { system: "", user: "" };
       const runtimeCatalogueFile = path.join(dataRoot, config.slug, "catalogue.json");
       const bundledCatalogueFile = path.join(dir, "catalogue.json");
       const sitemapFile = path.join(dir, "sitemap.xml");
+      const uploadedKbFile = path.join(dataRoot, config.slug, "seller_kb.json");
       reg.sellers.set(config.slug, {
         config,
         dir,
         kb,
+        fileKb: kb,
+        uploaded: null,
+        uploadedKbFile,
         catalogue: Catalogue.fromDisk([runtimeCatalogueFile, bundledCatalogueFile]),
-        systemPrompt: renderSystemPrompt(kb, guardrails),
-        guardrails,
-        persona: { system: "", user: "" },
+        systemPrompt: "",
+        ownGuardrails,
+        defaultPersona,
+        persona: defaultPersona,
         sitemapFile,
         runtimeCatalogueFile,
         bundledCatalogueFile,
         sitemapPages: sitemapUrls(fs.readFileSync(sitemapFile, "utf8")).length,
         lastCrawl: null,
       });
+      reg.render(reg.sellers.get(config.slug)!);
+      // An uploaded KB on the persistent disk wins; a seller_kb.json committed in the KB folder is the fallback.
+      for (const file of [uploadedKbFile, path.join(dir, "seller_kb.json")]) {
+        if (!fs.existsSync(file)) continue;
+        try {
+          const result = validateSellerKb(JSON.parse(fs.readFileSync(file, "utf8")));
+          if (!result.ok) throw new Error(result.errors.slice(0, 5).join("; "));
+          reg.setUploadedKb(config.slug, result.kb, fs.statSync(file).mtime.toISOString());
+          break;
+        } catch (err) {
+          console.error(`[kb:${config.slug}] ignoring ${file}: ${(err as Error).message}`);
+        }
+      }
     }
     return reg;
+  }
+
+  /** Makes an uploaded KB (or, with null, the KB folder's files) the seller's knowledge, and re-renders the prompt. */
+  setUploadedKb(slug: string, kb: SellerKb | null, uploadedAt = new Date().toISOString()) {
+    const s = this.sellers.get(slug);
+    if (!s) return;
+    if (kb) {
+      const view = new KbView(kb);
+      s.uploaded = { view, uploadedAt, summary: view.summary() };
+      s.kb = knowledgeFromKb(view, s.fileKb);
+    } else {
+      s.uploaded = null;
+      s.kb = s.fileKb;
+    }
+    this.render(s);
+  }
+
+  /** The common system prompt template and guardrails, shared by every seller. */
+  common = { system: defaultSystemTemplate(), guardrails: sharedGuardrails() };
+
+  /** Replaces the common system prompt and/or guardrails (undefined = file default) and re-renders every seller. */
+  setCommonPrompts(p: { system?: string | null; guardrails?: string | null }) {
+    if (p.system !== undefined) this.common.system = p.system ?? defaultSystemTemplate();
+    if (p.guardrails !== undefined) this.common.guardrails = (p.guardrails ?? sharedGuardrails()).trim();
+    for (const s of this.sellers.values()) this.render(s);
+  }
+
+  /** Guardrails in force for a seller: their own guardrails.md, else the common ones. */
+  guardrailsFor(s: SellerContext): string {
+    return s.ownGuardrails ?? this.common.guardrails;
+  }
+
+  private render(s: SellerContext) {
+    s.systemPrompt = renderSystemPrompt(s.kb, this.guardrailsFor(s), s.persona.system, this.common.system);
   }
 
   /** Applies a brand persona and re-renders that seller's system prompt. */
@@ -161,7 +241,7 @@ export class SellerRegistry {
     const s = this.sellers.get(slug);
     if (!s) return;
     s.persona = { system: persona.system.trim(), user: persona.user.trim() };
-    s.systemPrompt = renderSystemPrompt(s.kb, s.guardrails, s.persona.system);
+    this.render(s);
   }
 
   get(slug: string): SellerContext | undefined {
