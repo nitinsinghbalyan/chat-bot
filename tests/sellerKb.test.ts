@@ -22,21 +22,41 @@ describe("validateSellerKb", () => {
     expect(validateSellerKb(SELLER_KB_TEMPLATE).ok).toBe(true);
   });
 
-  it("names the field of each problem", () => {
-    const bad = raw();
-    bad.products[1].name = "";
-    delete bad.seller.company_name;
-    const r = validateSellerKb(bad);
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.errors).toContain("seller.company_name: Invalid input: expected string, received undefined");
-      expect(r.errors.some((e) => e.startsWith("products[1].name:"))).toBe(true);
-    }
-    const dup = raw();
-    dup.products[1].product_id = 501;
-    const d = validateSellerKb(dup);
-    expect(!d.ok && d.errors[0]).toBe("products[1].product_id: 501 is also used by products[0]");
-    expect(validateSellerKb({ products: [] }).ok).toBe(false);
+  it("refuses only unusable files, naming the field", () => {
+    const noName = raw();
+    delete noName.seller.company_name;
+    const r = validateSellerKb(noName);
+    expect(!r.ok && r.errors).toContain("seller.company_name: Invalid input: expected string, received undefined");
+    expect(validateSellerKb({ seller: { company_name: "X Ltd" }, products: [] }).ok).toBe(false);
+    const allBad = raw();
+    allBad.products.forEach((p: any) => { p.name = ""; p.display_name = ""; });
+    const b = validateSellerKb(allBad);
+    expect(!b.ok && b.errors[0]).toBe("products: no usable products (each needs a name)");
+  });
+
+  it("repairs blank ids and names and skips duplicates instead of rejecting the file", () => {
+    const messy = raw();
+    messy.categories[0].category_id = ""; // the production failure: categories[45].category_id was ""
+    messy.categories.push({ category_id: null, name: "", url: "", product_ids: [] });
+    messy.products[1].product_id = "";
+    messy.products.push({ ...messy.products[0], name: "", display_name: "Copy of CNC" }); // duplicate id 501
+    messy.products.push({ product_id: 900, name: "", display_name: "" });
+    const r = validateSellerKb(messy);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.warnings).toEqual(
+      expect.arrayContaining([
+        "categories[0].category_id (Press Brakes): empty; generated one",
+        "categories[1]: no name, skipped",
+        "products[1].product_id (NC Press Brake): empty; generated one",
+        "products[2].product_id (Copy of CNC): 501 is used by an earlier product; skipped this one",
+        "products[3]: no name or display_name, skipped",
+      ]),
+    );
+    expect(r.summary).toMatchObject({ products: 2, categories: 1 });
+    // The repaired category still lists both products: one via product_ids, the other via its taxonomy name.
+    const view = new KbView(r.kb);
+    expect(view.productsIn(r.kb.categories[0]).map((p) => p.name)).toEqual(["CNC Press Brake", "NC Press Brake"]);
   });
 });
 

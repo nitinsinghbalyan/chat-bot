@@ -26,7 +26,11 @@ const str = z
     if (typeof v === "object") return "";
     return String(v).trim();
   });
-const id = z.union([z.string().min(1), z.number()]).transform(String);
+/** Ids are sometimes numbers, sometimes strings, sometimes blank; blanks are repaired after parsing. */
+const id = z
+  .union([z.string(), z.number()])
+  .nullish()
+  .transform((v) => (v == null ? "" : String(v).trim()));
 const list = <T extends z.ZodTypeAny>(item: T) =>
   z
     .array(item)
@@ -56,11 +60,11 @@ const companyPage = z.looseObject({
 
 const category = z.looseObject({
   category_id: id,
-  name: z.string().trim().min(1, "must not be empty"),
+  name: str,
   url: str,
   description: str,
   image_url: str,
-  product_ids: list(id),
+  product_ids: list(id).transform((ids) => ids.filter(Boolean)),
 });
 
 const productVideo = z.looseObject({ url: str, thumbnail_url: str, title: str });
@@ -69,9 +73,9 @@ const documentRef = z.union([z.string(), z.looseObject({ url: str, title: str })
 const product = z.looseObject({
   product_id: id,
   product_url: str,
-  name: z.string().trim().min(1, "must not be empty"),
+  name: str,
   display_name: str,
-  category_id: z.union([z.string(), z.number()]).nullish().transform((v) => (v == null ? "" : String(v))),
+  category_id: id,
   taxonomy: z.looseObject({ category_name: str }).nullish(),
   item_code: str,
   description: str,
@@ -212,18 +216,17 @@ export function validateSellerKb(input: unknown): KbValidation {
   const kb = parsed.data;
   const warnings: string[] = [];
   if (kb._version && kb._version !== "3.0") warnings.push(`_version is "${kb._version}"; this importer was built for version 3.0`);
-  const errors: string[] = [];
-  const seen = new Map<string, number>();
+  const fixes = repairKb(kb);
+  if (kb.products.length === 0) return { ok: false, errors: ["products: no usable products (each needs a name)", ...fixes.slice(0, 20)] };
+  warnings.push(...fixes);
+  const seen = new Set(kb.products.map((p) => p.product_id));
   kb.products.forEach((p, i) => {
-    if (seen.has(p.product_id)) errors.push(`products[${i}].product_id: ${p.product_id} is also used by products[${seen.get(p.product_id)}]`);
-    seen.set(p.product_id, i);
     if (p.product_url && !httpUrl(p.product_url)) warnings.push(`products[${i}].product_url: not a valid URL, ignored`);
   });
   for (const [i, c] of kb.categories.entries()) {
     const missing = c.product_ids.filter((pid) => !seen.has(pid));
     if (missing.length) warnings.push(`categories[${i}] (${c.name}): ${missing.length} product id(s) not found in products, ignored`);
   }
-  if (errors.length) return { ok: false, errors };
   const view = new KbView(kb);
   const size = view.systemText().length;
   if (size > MAX_PROMPT_CHARS) {
@@ -231,6 +234,53 @@ export function validateSellerKb(input: unknown): KbValidation {
   }
   warnings.push("Prices, delivery and payment terms, turnover, staff numbers, year of establishment, GST, bank and rating details are not used by the bot (guardrails).");
   return { ok: true, kb, warnings, summary: view.summary() };
+}
+
+/**
+ * Fixes gaps that real exports have (blank ids or names, duplicates) instead of rejecting the
+ * whole file. Returns one note per fix, naming the field, for the admin to review.
+ */
+function repairKb(kb: SellerKb): string[] {
+  const notes: string[] = [];
+  const keptCategories: SellerKb["categories"] = [];
+  const categoryIds = new Set<string>();
+  kb.categories.forEach((c, i) => {
+    if (!c.name) {
+      notes.push(`categories[${i}]: no name, skipped`);
+      return;
+    }
+    if (!c.category_id) {
+      c.category_id = `auto-c-${i}`;
+      notes.push(`categories[${i}].category_id (${c.name}): empty; generated one`);
+    } else if (categoryIds.has(c.category_id)) {
+      notes.push(`categories[${i}].category_id (${c.name}): ${c.category_id} is used twice; generated a new one`);
+      c.category_id = `auto-c-${i}`;
+    }
+    categoryIds.add(c.category_id);
+    keptCategories.push(c);
+  });
+  kb.categories = keptCategories;
+
+  const keptProducts: SellerKb["products"] = [];
+  const productIds = new Set<string>();
+  kb.products.forEach((p, i) => {
+    if (!p.name) p.name = p.display_name;
+    if (!p.name) {
+      notes.push(`products[${i}]: no name or display_name, skipped`);
+      return;
+    }
+    if (!p.product_id) {
+      p.product_id = `auto-p-${i}`;
+      notes.push(`products[${i}].product_id (${p.name}): empty; generated one`);
+    } else if (productIds.has(p.product_id)) {
+      notes.push(`products[${i}].product_id (${p.name}): ${p.product_id} is used by an earlier product; skipped this one`);
+      return;
+    }
+    productIds.add(p.product_id);
+    keptProducts.push(p);
+  });
+  kb.products = keptProducts;
+  return notes;
 }
 
 // ---------------------------------------------------------------------------
@@ -303,13 +353,24 @@ export class KbView {
       this.byId.set(p.product_id, p);
       this.bySlug.set(this.slug(p), p);
     }
+    // A product's category: listed in the category's product_ids, else by category_id, else by taxonomy name.
     for (const c of kb.categories) for (const pid of c.product_ids) if (!this.categoryOfProduct.has(pid)) this.categoryOfProduct.set(pid, c);
+    const byName = new Map(kb.categories.map((c) => [c.name.toLowerCase(), c]));
     for (const p of kb.products) {
       if (this.categoryOfProduct.has(p.product_id)) continue;
-      const c = kb.categories.find((c) => c.category_id === p.category_id);
+      const c = (p.category_id && kb.categories.find((c) => c.category_id === p.category_id)) || byName.get((p.taxonomy?.category_name ?? "").toLowerCase());
       if (c) this.categoryOfProduct.set(p.product_id, c);
     }
+    for (const p of kb.products) {
+      const c = this.categoryOfProduct.get(p.product_id);
+      if (!c) continue;
+      const list = this.inCategory.get(c) ?? [];
+      list.push(p);
+      this.inCategory.set(c, list);
+    }
   }
+
+  private inCategory = new Map<SellerKb["categories"][number], KbProduct[]>();
 
   /** The id the bot uses for a product: the slug of its page URL (same as the crawled page), else "p-<id>". */
   slug(p: KbProduct): string {
@@ -328,9 +389,11 @@ export class KbView {
     return this.categoryOfProduct.get(p.product_id);
   }
 
+  /** The category's products: its product_ids in order, then any others linked to it by id or name. */
   productsIn(c: SellerKb["categories"][number]): KbProduct[] {
-    const out = c.product_ids.map((pid) => this.byId.get(pid)).filter((p): p is KbProduct => !!p);
-    return out.length ? out : this.kb.products.filter((p) => p.category_id === c.category_id);
+    const listed = c.product_ids.map((pid) => this.byId.get(pid)).filter((p): p is KbProduct => !!p);
+    const rest = (this.inCategory.get(c) ?? []).filter((p) => !listed.includes(p));
+    return [...listed, ...rest];
   }
 
   specs(p: KbProduct): Array<[string, string]> {
@@ -453,18 +516,19 @@ export class KbView {
    */
   catalogueEntries(): CatalogueEntry[] {
     const entries: CatalogueEntry[] = [];
+    // Records without a page URL still get a page here, keyed by a stable placeholder on the seller's site.
+    const site = httpUrl(this.kb.seller.website_url) ?? "https://seller.invalid/";
+    const urlOfCategory = (c: SellerKb["categories"][number]) => httpUrl(c.url) ?? `${site}#category-${encodeURIComponent(c.category_id)}`;
+    const urlOfProduct = (p: KbProduct) => httpUrl(p.product_url) ?? `${site}#product-${encodeURIComponent(p.product_id)}`;
     for (const c of this.kb.categories) {
-      const url = httpUrl(c.url);
+      const url = urlOfCategory(c);
       if (!url) continue;
-      const products = this.productsIn(c).flatMap((p) => {
-        const u = httpUrl(p.product_url);
-        return u ? [{ url: u, title: this.title(p), image: this.images(p)[0]?.url ?? null }] : [];
-      });
+      const products = this.productsIn(c).map((p) => ({ url: urlOfProduct(p), title: this.title(p), image: this.images(p)[0]?.url ?? null }));
       const desc = cleanText(c.description);
       entries.push({
         url,
         kind: "category",
-        slug: slugFromUrl(url) || `c-${c.category_id}`,
+        slug: slugFromUrl(url) || slugFromUrl(`https://x/${c.name}`) || `c-${c.category_id}`,
         title: c.name,
         category: c.name,
         price_text: null,
@@ -481,10 +545,9 @@ export class KbView {
       });
     }
     for (const p of this.kb.products) {
-      const url = httpUrl(p.product_url);
-      if (!url) continue;
+      const url = urlOfProduct(p);
       const c = this.categoryOf(p);
-      const cUrl = httpUrl(c?.url);
+      const cUrl = c ? urlOfCategory(c) : null;
       const images = this.images(p).map((i) => i.url);
       const details = cleanText(p.description);
       entries.push({

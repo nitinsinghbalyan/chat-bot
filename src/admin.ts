@@ -80,6 +80,10 @@ const DROPZONE_SCRIPT = `<script>
     wrap.appendChild(ul);
     out.appendChild(wrap);
   }
+  /** Notes about records the importer repaired or skipped (not the standing guardrail note). */
+  window.fixCount = function (warnings) {
+    return (warnings || []).filter(function (w) { return /generated|skipped|ignored|used twice/.test(w); }).length;
+  };
   window.adminShow = function (out, kind, text, items, itemsLabel) {
     out.className = "dz-result " + kind;
     out.textContent = text;
@@ -107,8 +111,9 @@ const DROPZONE_SCRIPT = `<script>
         return res.json().catch(function () { return { ok: false, errors: ["Upload failed (HTTP " + res.status + ")"] }; });
       }).then(function (r) {
         if (r.ok) {
-          adminShow(out, "ok", "✓ Uploaded: " + r.summary.products + " products, " + r.summary.categories + " categories, " + r.summary.images + " photos, " + r.summary.videos + " videos, " + r.summary.documents + " PDFs. Live from the next chat message.", r.warnings, "Notes");
-          setTimeout(function () { location.href = "/admin?kb=" + encodeURIComponent(zone.getAttribute("data-slug")) + "#seller-" + zone.getAttribute("data-slug"); }, 1800);
+          var fixed = fixCount(r.warnings);
+          adminShow(out, "ok", "✓ Uploaded: " + r.summary.products + " products, " + r.summary.categories + " categories, " + r.summary.images + " photos, " + r.summary.videos + " videos, " + r.summary.documents + " PDFs. Live from the next chat message." + (fixed ? " " + fixed + " record" + (fixed === 1 ? " was" : "s were") + " fixed or skipped: see Notes." : ""), r.warnings, "Notes");
+          setTimeout(function () { location.href = "/admin?kb=" + encodeURIComponent(zone.getAttribute("data-slug")) + "#seller-" + zone.getAttribute("data-slug"); }, fixed ? 6000 : 1800);
         } else adminShow(out, "err", "Not uploaded. Fix these and try again:", r.errors);
       }).catch(function (err) { adminShow(out, "err", err.message); });
     });
@@ -355,7 +360,13 @@ ${DROPZONE_SCRIPT}
     fetch("/admin/sellers", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ config: config, kb: kb }) })
       .then(function (res) { return res.json().catch(function () { return { ok: false, errors: ["Failed (HTTP " + res.status + ")"] }; }); })
       .then(function (r) {
-        if (r.ok) location.href = "/admin?added=" + encodeURIComponent(r.slug) + "#seller-" + r.slug;
+        if (r.ok) {
+          var fixed = fixCount(r.warnings), go = function () { location.href = "/admin?added=" + encodeURIComponent(r.slug) + "#seller-" + r.slug; };
+          if (!fixed) return go();
+          adminShow(out, "ok", "✓ Added. " + fixed + " record" + (fixed === 1 ? " was" : "s were") + " fixed or skipped (see Notes). Opening the sellers page…", r.warnings, "Notes");
+          out.querySelector("details").open = true;
+          setTimeout(go, 6000);
+        }
         else { adminShow(out, "err", "Not added. Fix these and try again:", r.errors); $("create").disabled = false; }
       })
       .catch(function (err) { adminShow(out, "err", err.message); $("create").disabled = false; });
