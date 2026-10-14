@@ -30,6 +30,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 | **prompt versions** | Every save/reset/restore of common prompts and personas, plus each shipped default, kept with View (diff) and Restore |
 | **traces** | Langfuse: one per buyer message, chats as Sessions; mobiles masked, OTPs never sent; off without `LANGFUSE_*` keys |
 | **seller row / Manage** | `/admin` lists sellers as one-line rows; **Manage** expands the controls |
+| **model** | `claude-sonnet-5-5`, effort low, 1M context; system prompt ~43k tokens (Jayshree), cached |
 | **demo OTP** | `12345`; no SMS gateway yet |
 → Full glossary: memory/glossary.md
 

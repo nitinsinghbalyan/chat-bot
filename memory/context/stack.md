@@ -14,6 +14,11 @@
 | GitHub MCP tools | PRs and merges (no `gh` CLI in cloud sessions) |
 | Langfuse JS v6 (`@langfuse/tracing`, `@langfuse/otel`, `@langfuse/client`) + OpenTelemetry `NodeTracerProvider` | Tracing, scores |
 
+## Model and capacity
+- `BOT_MODEL` is `claude-sonnet-5-5` (set in `render.yaml`; can be overridden in Render's Environment), effort `low`, server-side fallbacks on.
+- Sonnet 5.5: 1M-token context, $2 / $10 per M tokens, cache reads $0.20, cache writes $2.50 (5-minute TTL). Prices for traces live in `src/tracing.ts` (`PRICES`).
+- Jayshree system prompt ~43k tokens; large-catalogue cap ~75–85k; worst case ~200k tokens per request. Cost and capacity questions: check current numbers with the claude-api skill, don't answer from memory.
+
 ## Commands
 | Command | What |
 |---------|------|
@@ -42,6 +47,8 @@ Don't call them `CLAUDE_*`: the harness sets `CLAUDE_EFFORT`, which once clashed
 - Playwright is global: import `$(npm root -g)/playwright/index.mjs`, launch with `executablePath: "/opt/pw-browsers/chromium"`.
 - Branch workflow: after a PR merges, `git fetch origin main && git checkout -B claude/practical-clarke-0tbalp origin/main`, then push with `--force-with-lease`. Always fetch first: local `origin/main` goes stale after a merge done through the GitHub tools.
 - Testing big imports: copy a real export in the scratchpad and multiply its products (new ids and URLs); never commit it. Post it to the local server's `POST /admin/sellers` with `{config: {slug, name, siteUrl, color}, kb}`.
+- The scratchpad is per session: the e2e helpers (`e2e/server.ts`, `e2e/flow.ts`, `e2e/fake-langfuse.mjs`, Playwright scripts) have to be recreated in a new session.
+- `npm view <package> readme` works through the proxy; use it (and the installed `.d.ts` files) to check a library's current API before coding.
 - Chat flow checks: `e2e/flow.ts` in the scratchpad is a stateful fake model that walks machine → mobile → OTP → name → ISQ chips (recreate it if the scratchpad is gone).
 - cloud.langfuse.com is blocked by the agent proxy too, so real trace delivery can only be checked on production.
 - Tracing checks: run `e2e/fake-langfuse.mjs` (records OTLP and score requests) on port 3470 and start the app with `LANGFUSE_BASE_URL=http://127.0.0.1:3470`, test keys, `LANGFUSE_FLUSH_AT=1` and `NO_PROXY=127.0.0.1`.

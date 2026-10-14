@@ -5,10 +5,13 @@
 
 ## What it does
 - Answers buyers' discovery and enquiry questions **on the seller's behalf**, grounded in the seller's KB, within 9 guardrails.
-- Captures verified leads: mobile, OTP (demo `12345`), name.
-- Asks ISQs one at a time as tap-to-reply chips. Shares photos, videos, PDFs and related products as a carousel.
+- Enquiry order: machine named → mobile → OTP (demo `12345`) → name (lead saved) → ISQs one at a time as tap-to-reply chips **inline in the chat** → lead updated with the answers. A buyer who won't share a number isn't blocked.
+- Replies are brief: 1–2 short sentences (~40 words), answer first, no filler, options only as chips.
+- Shares photos, videos, PDFs and related products as a carousel.
+- Handles large catalogues: over ~300k characters the system prompt keeps categories, ISQs and a product index; details come per message from the catalogue search.
 - Generates a full website per seller from the KB JSON (with crawled pages as a fallback).
-- Admin for the team: sellers, KB upload and add seller, crawls, personas, common prompts, leads and transcripts.
+- Admin for the team: seller rows (Manage), KB upload and add seller, crawls, personas, common prompts with **version history** (View diff, Restore, newer built-in banner), leads and transcripts.
+- Langfuse tracing (when keys are set): a trace per buyer message, chats as Sessions, mobiles masked, OTPs never sent; scores plus 👍/👎 buyer feedback.
 
 ## Architecture (where things live)
 | Area | Files |
@@ -31,6 +34,9 @@
 - server-side fallback `server-side-fallback-2026-07-01` with `fallbacks: "default"`
 - strict tools with `eager_input_streaming`; `tool_choice` auto (forced tool use is a 400 on 5.5 models)
 - the system prompt is cached; with Jayshree's JSON it is about 43k tokens
+- capacity (estimates from the code's limits, not measured): Sonnet 5.5 has a 1M-token context; a large catalogue is capped at ~75–85k tokens; the worst case (large catalogue + 40-turn chat cap) is ~200k tokens per request
+- rough cost per message: under 1¢ for Jayshree once cached, ~2¢ for a large catalogue, ~11¢ for the first message after 5 idle minutes (cache rewrite)
+- each Claude round is one `generation` in Langfuse, with the served model, tokens and cost
 
 **Tools:** `send_otp`, `verify_otp`, `save_lead`, `show_options`, `share_media`.
 
@@ -87,4 +93,5 @@
 - Large-catalogue answers (index/partial modes, details via per-message search) are untested with the live model; check on production with questions that name specific models.
 - Check on production that seller photos (imimg.com) load; they can't be seen from cloud sessions.
 - The seller's own site rate-limits the Render crawler. The JSON covers the website, so this is low priority.
+- Idea (offered, not built): per-chat token and cost readout on the admin transcript page.
 - Possible: write a `persona.json` for each new seller; an About page built from the export's `company_pages`.
