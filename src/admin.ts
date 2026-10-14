@@ -68,7 +68,28 @@ const badge = (text: string, tone: "ok" | "warn" | "err" | "info" | "" = "", tit
 
 const plural = (n: number, word: string, pl = `${word}s`) => `${n.toLocaleString("en-IN")} ${n === 1 ? word : pl}`;
 
-/** Upload script shared by the seller cards (replace a KB) and the Add seller page. */
+/** Opens the seller row named in the URL (after an add, upload or crawl) and filters rows by name or slug. */
+const ROWS_SCRIPT = `<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var slug = q.get("added") || q.get("kb") || q.get("crawl") || (location.hash.indexOf("#seller-") === 0 ? location.hash.slice(8) : "");
+  var row = slug && document.getElementById("seller-" + slug);
+  if (row) { row.open = true; row.scrollIntoView({ block: "start" }); }
+  var f = document.getElementById("seller-filter");
+  if (!f) return;
+  f.addEventListener("input", function () {
+    var t = f.value.trim().toLowerCase(), shown = 0;
+    document.querySelectorAll(".srow").forEach(function (r) {
+      var hit = !t || r.getAttribute("data-search").indexOf(t) !== -1;
+      r.hidden = !hit;
+      if (hit) shown++;
+    });
+    document.querySelector(".empty-filter").hidden = shown > 0;
+  });
+})();
+</script>`;
+
+/** Upload script shared by the seller rows (replace a KB) and the Add seller page. */
 const DROPZONE_SCRIPT = `<script>
 (function () {
   function list(out, items, label) {
@@ -187,7 +208,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
     return { label: "No persona", tone: "", text: "" };
   }
 
-  function sellerCard(s: SellerContext, leads: number): string {
+  function sellerRow(s: SellerContext, leads: number): string {
     const slug = esc(s.config.slug);
     const u = s.uploaded;
     const persona = personaState(s);
@@ -226,28 +247,40 @@ export function mountAdmin(app: Express, d: AdminDeps) {
     <a class="btn small" href="/admin/sellers/${slug}/prompts">${persona.text ? "Edit" : "Set up"}</a>
   </div>
 </section>`;
-    return `<article class="scard" id="seller-${slug}">
-  <header class="scard-head">
-    <span class="avatar" style="--c:${esc(s.config.color)}">${esc(s.config.name.charAt(0).toUpperCase())}</span>
-    <div class="who"><h2>${esc(s.config.name)}</h2><div class="muted small">${slug} · ${s.source === "admin" ? "added in admin" : "KB folder in the repo"}</div></div>
-    <a class="btn small" href="/s/${slug}/" target="_blank" rel="noopener">View site ↗</a>
-  </header>
-  <div class="badges">${u ? badge("JSON knowledge base", "ok") : badge("KB folder files", "info")}${crawlBadge(s)}${badge(persona.label, persona.tone)}</div>
-  <div class="stats">
-    <a class="stat" href="/admin/leads?seller=${slug}"><b>${leads}</b><span>Leads</span></a>
-    <div class="stat"><b>${products}</b><span>Products</span></div>
-    <div class="stat"><b>${categories}</b><span>Categories</span></div>
-    <div class="stat"><b>${u?.summary.images ?? "–"}</b><span>Photos</span></div>
-    <div class="stat"><b>${u?.summary.videos ?? "–"}</b><span>Videos</span></div>
-    <div class="stat"><b>${u?.summary.documents ?? "–"}</b><span>PDFs</span></div>
+    const updated = u ? `JSON ${ago(u.uploadedAt)}` : s.crawledAt ? `Crawled ${ago(s.crawledAt)}` : "Not crawled";
+    const updatedTitle = u ? fmtIST(u.uploadedAt) : s.crawledAt ? fmtIST(s.crawledAt) : "";
+    return `<details class="srow" id="seller-${slug}" data-search="${esc(`${s.config.name} ${s.config.slug}`.toLowerCase())}">
+  <summary>
+    <div class="seller"><span class="avatar" style="--c:${esc(s.config.color)}">${esc(s.config.name.charAt(0).toUpperCase())}</span><div class="who"><h2>${esc(s.config.name)}</h2><div class="muted small">${slug} · ${s.source === "admin" ? "added in admin" : "KB folder in the repo"}</div></div></div>
+    <div class="badges">${u ? badge("JSON knowledge base", "ok") : badge("KB folder files", "info")}${crawlBadge(s)}${badge(persona.label, persona.tone)}</div>
+    <div class="nums">
+      <a class="num" href="/admin/leads?seller=${slug}" title="Leads"><b>${leads}</b><span>Leads</span></a>
+      <span class="num"><b>${products}</b><span>Products</span></span>
+      <span class="num"><b>${categories}</b><span>Categories</span></span>
+    </div>
+    <span class="updated muted small"${updatedTitle ? ` title="${esc(updatedTitle)}"` : ""}>${esc(updated)}</span>
+    <div class="row-actions">
+      <a class="btn small" href="/s/${slug}/" target="_blank" rel="noopener">View site ↗</a>
+      <span class="btn small manage" aria-hidden="true">Manage <span class="chev">▾</span></span>
+    </div>
+  </summary>
+  <div class="srow-body">
+    <div class="stats">
+      <a class="stat" href="/admin/leads?seller=${slug}"><b>${leads}</b><span>Leads</span></a>
+      <div class="stat"><b>${products}</b><span>Products</span></div>
+      <div class="stat"><b>${categories}</b><span>Categories</span></div>
+      <div class="stat"><b>${u?.summary.images ?? "–"}</b><span>Photos</span></div>
+      <div class="stat"><b>${u?.summary.videos ?? "–"}</b><span>Videos</span></div>
+      <div class="stat"><b>${u?.summary.documents ?? "–"}</b><span>PDFs</span></div>
+    </div>
+    <div class="blocks">${kbBlock}${catalogueBlock}${personaBlock}</div>
+    ${
+      s.source === "admin"
+        ? `<footer class="srow-foot"><form class="inline" method="post" action="/admin/sellers/${slug}/delete" onsubmit="return confirm('Delete ${esc(s.config.name).replace(/'/g, "\\'")}? Its website and bot stop working. Leads and chats are kept.')"><button class="btn danger small" type="submit">Delete seller</button></form></footer>`
+        : ""
+    }
   </div>
-  <div class="blocks">${kbBlock}${catalogueBlock}${personaBlock}</div>
-  ${
-    s.source === "admin"
-      ? `<footer class="scard-foot"><form class="inline" method="post" action="/admin/sellers/${slug}/delete" onsubmit="return confirm('Delete ${esc(s.config.name).replace(/'/g, "\\'")}? Its website and bot stop working. Leads and chats are kept.')"><button class="btn danger small" type="submit">Delete seller</button></form></footer>`
-      : ""
-  }
-</article>`;
+</details>`;
   }
 
   app.get("/admin", requireAdmin, (req, res) => {
@@ -270,9 +303,18 @@ export function mountAdmin(app: Express, d: AdminDeps) {
         `<div class="page-head"><div><h1>Sellers</h1><p class="muted">${plural(list.length, "seller")} · ${plural(totalLeads, "lead")}</p></div>
 <div class="btn-row"><a class="btn" href="/admin/kb-template.json">Download JSON template</a><a class="btn primary" href="/admin/sellers/new">+ Add seller</a></div></div>
 ${flash}
-${list.length ? `<div class="cards">${list.map((s) => sellerCard(s, counts[s.config.slug] ?? 0)).join("")}</div>` : `<div class="panel empty">No sellers yet. <a href="/admin/sellers/new">Add the first one</a> by uploading its JSON.</div>`}
+${
+  list.length
+    ? `${list.length > 3 ? `<input id="seller-filter" class="filter" type="search" placeholder="Filter sellers by name or slug" aria-label="Filter sellers">` : ""}
+<div class="srows">
+  <div class="srows-head" aria-hidden="true"><span>Seller</span><span>Status</span><span>Totals</span><span>Updated</span><span></span></div>
+  ${list.map((s) => sellerRow(s, counts[s.config.slug] ?? 0)).join("")}
+</div>
+<p class="muted small empty-filter" hidden>No seller matches that filter.</p>`
+    : `<div class="panel empty">No sellers yet. <a href="/admin/sellers/new">Add the first one</a> by uploading its JSON.</div>`
+}
 <p class="note">The knowledge base JSON is the seller export (version 3.0: <code>seller</code>, <code>company_pages</code>, <code>photo_gallery</code>, <code>categories</code>, <code>products</code>). Prices, delivery and payment terms, turnover, staff numbers, year of establishment, GST, bank and rating details in it are never given to the bot. The website still shows listed starting prices.</p>
-${DROPZONE_SCRIPT}`,
+${DROPZONE_SCRIPT}${ROWS_SCRIPT}`,
         "sellers",
       ),
     );

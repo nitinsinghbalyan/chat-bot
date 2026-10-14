@@ -212,8 +212,11 @@ A database from the earlier single-seller version is migrated automatically on s
 
 Set `ADMIN_PASSWORD` (at least 8 characters). The browser asks for a login: any username, with that password. If `ADMIN_PASSWORD` isn't set, the admin pages return 404.
 
-- `/admin`: one card per seller. Each card shows:
+- `/admin`: one row per seller, with a filter box once there are more than 3. Each row shows:
   - status badges: knowledge base, crawl (OK, partial or failed) and persona
+  - leads, products and categories, when the JSON was uploaded (or the last crawl), and **View site**
+
+  **Manage** opens the row, which holds:
   - stats: leads, products, categories, photos, videos and PDFs
   - a drag-and-drop JSON upload, with download and remove
   - the website catalogue and **Re-crawl now**

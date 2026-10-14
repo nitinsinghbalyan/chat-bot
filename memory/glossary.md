@@ -7,6 +7,7 @@ Shorthand and internal language for the Seller assistants project.
 |------|---------|-------|
 | seller | One business with its own bot, website `/s/<slug>/` and leads | `SellerContext` in `src/sellers.ts` |
 | slug | Seller id in URLs, lowercase letters, digits and dashes (`SLUG_RE`) | `seller.json` |
+| seller row / Manage | One line per seller on `/admin` (badges, leads, products, categories, updated, View site); **Manage** expands the KB upload, crawl, persona and Delete controls. Opens itself after `?added=`, `?kb=`, `?crawl=` or `#seller-<slug>` | `sellerRow()` in `src/admin.ts` |
 | directory | Public home `/`: list of sellers, **Visit site** only (plus **Edit prompts** for admins) | `directoryPage` |
 | seller site / mini-site | Generated website: Home, About Us, Products, category, product, Contact, search | `src/site/pages.ts` |
 | widget | Embeddable chat bubble, bottom-right; `SellerChat.open/close/reset` | `public/widget.js` |
