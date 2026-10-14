@@ -7,7 +7,8 @@ import { OutputFilter, REPLACEMENTS, type Intervention } from "./guardrails.js";
 import type { KnowledgeBase } from "./kb.js";
 import { renderUserPrompt } from "./prompts.js";
 import type { Session } from "./session.js";
-import { describeLeadStatus, executeTool, toolDefinitions, type LeadSink } from "./tools.js";
+import type { MediaCard } from "./media.js";
+import { describeLeadStatus, executeTool, toolDefinitions, type LeadSink, type MediaSharer } from "./tools.js";
 
 export type AskFor = "mobile" | "otp" | "name" | null;
 
@@ -18,6 +19,8 @@ export interface ChatDeps {
   systemPrompt: string;
   /** The seller's per-turn persona instruction, added to every buyer turn. */
   sellerInstructions?: string;
+  /** Resolves share_media calls to cards (product cards, photos, videos, PDFs). */
+  shareMedia?: MediaSharer;
   /** Where verified leads go (the database in production). */
   saveLead: LeadSink;
   /** Records sentences the output guardrails replaced. */
@@ -32,6 +35,10 @@ export interface TurnCallbacks {
 export interface TurnResult {
   text: string;
   askFor: AskFor;
+  /** Reply buttons to show under the message (from show_options). */
+  chips: string[];
+  /** Media cards to show under the message (from share_media). */
+  cards: MediaCard[];
   interventions: Intervention[];
   usage: { input: number; output: number; cacheRead: number; cacheWrite: number };
 }
@@ -90,7 +97,7 @@ export async function runTurn(
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   if (session.turns >= MAX_HISTORY_TURNS) {
     cb.onText?.(LIMIT_REPLY);
-    return { text: LIMIT_REPLY, askFor: "mobile", interventions: [], usage };
+    return { text: LIMIT_REPLY, askFor: "mobile", chips: [], cards: [], interventions: [], usage };
   }
 
   const hits = retrieve(session, deps.catalogue, buyerText, opts.pageEntry);
@@ -107,12 +114,15 @@ export async function runTurn(
   const messages: Anthropic.Beta.BetaMessageParam[] = [...session.messages, { role: "user", content: [{ type: "text", text: userContent }] }];
 
   const filter = new OutputFilter({
-    allowedPrices: [...session.seenCatalogue.values()].map((e) => e.price_text).filter((p): p is string => !!p),
+    // Guardrail 1: the bot never states a price, so no amount is ever allowed through.
+    allowedPrices: [],
     allowedPhones: [...deps.kb.allowedPhones, ...(session.lead.mobile ? [session.lead.mobile] : [])],
     allowedDomains: deps.kb.allowedDomains,
   });
 
   let shown = "";
+  let chips: string[] = [];
+  const cards: MediaCard[] = [];
   const emit = (t: string) => {
     if (!t) return;
     shown += t;
@@ -156,7 +166,7 @@ export async function runTurn(
       if (final.stop_reason === "refusal") {
         // Never run tools from a refused turn, and don't keep it in history.
         if (!shown.trim()) emit(REFUSAL_REPLY);
-        return { text: shown, askFor: null, interventions: filter.interventions, usage };
+        return { text: shown, askFor: null, chips: [], cards: [], interventions: filter.interventions, usage };
       }
 
       // Append-only: keep the model's content exactly as returned (thinking blocks included).
@@ -170,7 +180,9 @@ export async function runTurn(
       }
 
       const results: Anthropic.Beta.BetaToolResultBlockParam[] = toolUses.map((tu) => {
-        const r = executeTool(session, tu.name, tu.input, { saveLead: deps.saveLead, pageUrl: opts.pageUrl });
+        const r = executeTool(session, tu.name, tu.input, { saveLead: deps.saveLead, pageUrl: opts.pageUrl, shareMedia: deps.shareMedia });
+        if (r.ui?.chips) chips = r.ui.chips;
+        if (r.ui?.cards) for (const c of r.ui.cards) if (cards.length < 12 && !cards.some((x) => x.url === c.url && x.type === c.type)) cards.push(c);
         return { type: "tool_result", tool_use_id: tu.id, content: r.content, is_error: r.isError };
       });
       messages.push({ role: "user", content: results });
@@ -178,7 +190,7 @@ export async function runTurn(
   } catch (err) {
     logApiError(err);
     if (!shown.trim()) emit(FALLBACK_REPLY);
-    return { text: shown, askFor: "mobile", interventions: filter.interventions, usage };
+    return { text: shown, askFor: "mobile", chips: [], cards: [], interventions: filter.interventions, usage };
   }
 
   if (!shown.trim()) emit(FALLBACK_REPLY);
@@ -189,7 +201,9 @@ export async function runTurn(
   if (filter.interventions.length) {
     (deps.logGuardrail ?? ((id, iv) => console.warn(`[guardrail] ${id}`, iv.map((i) => i.rule).join(","))))(session.id, filter.interventions);
   }
-  return { text: shown, askFor: askForAfterTurn(session, shown), interventions: filter.interventions, usage };
+  const askFor = askForAfterTurn(session, shown);
+  // Buttons only make sense when the buyer isn't being asked for a mobile number, OTP or name.
+  return { text: shown, askFor, chips: askFor ? [] : chips, cards, interventions: filter.interventions, usage };
 }
 
 function logApiError(err: unknown) {

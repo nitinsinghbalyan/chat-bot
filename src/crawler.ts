@@ -8,12 +8,19 @@
 import fs from "node:fs";
 import path from "node:path";
 import * as cheerio from "cheerio";
+import { videoInfo } from "./media.js";
 
 export interface PageLink {
   url: string;
   title: string;
   /** Thumbnail shown next to the link on the seller's page, if any. */
   image?: string | null;
+}
+
+/** A video or document linked from a page (YouTube/Vimeo/MP4, or a PDF brochure). */
+export interface MediaLink {
+  url: string;
+  title: string;
 }
 
 export interface CatalogueEntry {
@@ -34,6 +41,10 @@ export interface CatalogueEntry {
   details: string;
   /** Bullet points from the description area. */
   features: string[];
+  /** Videos embedded or linked on the page. */
+  videos: MediaLink[];
+  /** PDF brochures and catalogues linked on the page. */
+  documents: MediaLink[];
   /** Breadcrumb trail from the seller's site, excluding "Home". */
   breadcrumbs: PageLink[];
   /** On category pages: the products listed there. */
@@ -60,7 +71,7 @@ export function slugFromUrl(url: string): string {
 const SKIP_PATHS = [/\/profile\.html$/, /\/testimonial\.html$/, /\/registration-directors-info\.html$/, /\/sitemap\.html$/, /\/$/];
 
 /** Spec rows on topics the guardrails forbid the bot to state (G2, G5, G6, G7, G8). */
-const FORBIDDEN_SPEC_KEYS =
+export const FORBIDDEN_SPEC_KEYS =
   /gst|tax|freight|transport|shipping|delivery|dispatch|lead\s*time|payment|turnover|revenue|established|employees|staff|bank|upi|stock|availability/i;
 
 /** The same topics, for description sentences and bullet points. */
@@ -72,9 +83,14 @@ const CONTACT_TEXT = /(?:\+?91[\s-]?)?\b\d{5}[\s-]?\d{5}\b|\b0\d{2,4}[\s-]?\d{6,
 
 const allowedText = (t: string) => !FORBIDDEN_TEXT.test(t) && !CONTACT_TEXT.test(t);
 
+/** Splits text into sentences without breaking decimals such as "0.03 mm". */
+export function splitSentences(text: string): string[] {
+  return text.match(/(?:[^.!?]|[.!?](?=\d))+(?:[.!?]+|$)/g) ?? [];
+}
+
 /** Drops sentences on topics the guardrails keep off the website and away from the bot. */
 export function stripForbidden(text: string): string {
-  return (text.match(/[^.!?]+(?:[.!?]+|$)/g) ?? [])
+  return splitSentences(text)
     .map((s) => s.trim())
     .filter((s) => s && allowedText(s))
     .join(" ");
@@ -205,11 +221,39 @@ const kind = (url: string): CatalogueEntry["kind"] => (/\/product\//.test(new UR
 
 const DESCRIPTION_AREAS = "[class*='desc' i], [id*='desc' i], [class*='detail' i], [id*='detail' i], [class*='about' i], [itemprop='description']";
 
+/** Videos (YouTube/Vimeo embeds and links, <video> files) and PDF documents on a page. */
+function pickMedia($: cheerio.CheerioAPI, url: string): { videos: MediaLink[]; documents: MediaLink[] } {
+  const videos: MediaLink[] = [];
+  const documents: MediaLink[] = [];
+  const add = (list: MediaLink[], href: string | undefined, title: string, fallback: string) => {
+    const abs = absolute(href, url);
+    if (!abs || list.some((m) => m.url === abs) || list.length >= 6) return;
+    list.push({ url: abs, title: clean(title).slice(0, 120) || fallback });
+  };
+  // Only links to an actual video count, not channel or profile pages in the footer.
+  const isVideoUrl = (u: string | null) => !!u && !!videoInfo(u);
+  $("iframe[src], iframe[data-src]").each((_, f) => {
+    const src = $(f).attr("src") || $(f).attr("data-src");
+    if (isVideoUrl(absolute(src, url))) add(videos, src, $(f).attr("title") ?? "", "Product video");
+  });
+  $("video[src], video source[src]").each((_, v) => add(videos, $(v).attr("src"), $(v).closest("video").attr("title") ?? "", "Product video"));
+  $("a[href]").each((_, a) => {
+    const href = $(a).attr("href");
+    const abs = absolute(href, url);
+    if (!abs) return;
+    const text = $(a).attr("title") || $(a).text();
+    if (isVideoUrl(abs)) add(videos, href, text, "Product video");
+    else if (/\.pdf(\?|#|$)/i.test(new URL(abs).pathname)) add(documents, href, text, "Brochure (PDF)");
+  });
+  return { videos, documents };
+}
+
 export function extractPage(html: string, url: string): CatalogueEntry {
   const $ = cheerio.load(html);
   const ld = jsonLdProducts($)[0];
   const image = pickImage($, ld, url);
   const images = kind(url) === "product" ? pickImages($, ld, url, image) : image ? [image] : [];
+  const { videos, documents } = pickMedia($, url);
   $("script:not([type='application/ld+json']), style, noscript, iframe, header nav, footer").remove();
 
   const title = clean(ld?.name) || clean($("h1").first().text()) || clean($("title").text());
@@ -311,6 +355,8 @@ export function extractPage(html: string, url: string): CatalogueEntry {
     images,
     details,
     features,
+    videos,
+    documents,
     breadcrumbs,
     products:
       pageKind === "category"

@@ -87,6 +87,12 @@ CREATE TABLE IF NOT EXISTS guardrail_events (
   original    TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS platform_prompts (
+  key         TEXT PRIMARY KEY,
+  value       TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS seller_prompts (
   seller          TEXT PRIMARY KEY,
   system_persona  TEXT NOT NULL DEFAULT '',
@@ -235,6 +241,20 @@ export class ChatDb {
       | { system_persona: string; user_persona: string; updated_at: string }
       | undefined;
     return { system: row?.system_persona ?? "", user: row?.user_persona ?? "", updatedAt: row?.updated_at ?? null };
+  }
+
+  /** The common system prompt template or guardrails edited in admin ("system" or "guardrails"); null = the file default. */
+  getPlatformPrompt(key: "system" | "guardrails"): { value: string; updatedAt: string } | null {
+    const row = this.db.prepare("SELECT value, updated_at FROM platform_prompts WHERE key = ?").get(key) as { value: string; updated_at: string } | undefined;
+    return row ? { value: row.value, updatedAt: row.updated_at } : null;
+  }
+
+  setPlatformPrompt(key: "system" | "guardrails", value: string | null) {
+    if (value === null) this.db.prepare("DELETE FROM platform_prompts WHERE key = ?").run(key);
+    else
+      this.db
+        .prepare("INSERT INTO platform_prompts (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+        .run(key, value, new Date().toISOString());
   }
 
   /** Saving two empty prompts removes the seller's row. */
