@@ -9,6 +9,7 @@
  *
  *   SellerChat.open("seller-slug", { message: "optional first message" })
  *   SellerChat.close()
+ *   SellerChat.reset()   // start a new conversation (the header's "New chat" button does the same)
  */
 (function () {
   "use strict";
@@ -83,7 +84,8 @@
     ".panel.open{display:flex}" +
     ".head{background:var(--c);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px}" +
     ".head .t{font-weight:600;font-size:15px;flex:1;line-height:1.2}.head .s{font-size:12px;opacity:.85;font-weight:400}" +
-    ".head button{background:transparent;border:0;color:#fff;cursor:pointer;font-size:22px;line-height:1;padding:4px}" +
+    ".head button{background:transparent;border:0;color:#fff;cursor:pointer;font-size:22px;line-height:1;padding:4px;border-radius:6px;display:flex;align-items:center}" +
+    ".head button:hover{background:rgba(255,255,255,.16)}.head button:disabled{opacity:.45;cursor:default;background:transparent}.head .new svg{width:18px;height:18px}" +
     ".log{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px;background:#f5f7fb}" +
     ".m{max-width:85%;padding:9px 12px;border-radius:14px;font-size:14px;line-height:1.45;white-space:pre-wrap;word-wrap:break-word}" +
     ".m.bot{background:#fff;border:1px solid #e3e8f0;align-self:flex-start;border-bottom-left-radius:4px}" +
@@ -108,7 +110,9 @@
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
     "</button>" +
     '<section class="panel" role="dialog" aria-label="Chat">' +
-    '<div class="head"><div class="t"></div><button class="x" aria-label="Close chat">×</button></div>' +
+    '<div class="head"><div class="t"></div>' +
+    '<button type="button" class="new" aria-label="Start a new chat" title="New chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></button>' +
+    '<button type="button" class="x" aria-label="Close chat" title="Close">×</button></div>' +
     '<div class="log" aria-live="polite"></div>' +
     '<div class="chips"></div>' +
     '<div class="hint" hidden></div>' +
@@ -125,6 +129,7 @@
   var input = root.querySelector("input");
   var sendBtn = root.querySelector("form button");
   var titleEl = root.querySelector(".t");
+  var newBtn = root.querySelector(".new");
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
@@ -233,6 +238,7 @@
     if (!text || sending || !current) return;
     sending = true;
     sendBtn.disabled = true;
+    newBtn.disabled = true;
     chips.innerHTML = "";
     var seller = current;
     var display = state.askFor === "otp" ? "•".repeat(Math.min(text.length, 8)) : text;
@@ -304,12 +310,27 @@
         state.history.push({ who: "bot", text: reply });
         sending = false;
         sendBtn.disabled = false;
+        newBtn.disabled = false;
         setAskFor(state.askFor);
         persist();
         input.focus();
       });
   }
 
+  /** Starts a fresh conversation: new session id, empty history. The old chat stays on the server for the team. */
+  function reset(ask) {
+    if (sending || !current || !state) return false;
+    if (ask && state.history.length && !window.confirm("Start a new chat? This conversation will be cleared.")) return false;
+    state = { sessionId: newId(), history: [], askFor: null };
+    persist();
+    render();
+    input.focus();
+    return true;
+  }
+
+  newBtn.addEventListener("click", function () {
+    reset(true);
+  });
   bubble.addEventListener("click", function () {
     if (panel.classList.contains("open")) closePanel();
     else openPanel();
@@ -334,6 +355,10 @@
         });
     },
     close: closePanel,
+    /** Starts a new conversation with the current seller (no confirmation). */
+    reset: function () {
+      return reset(false);
+    },
   };
 
   if (ds.seller) {
