@@ -10,6 +10,7 @@ import type { SellerContext, SellerRegistry } from "./sellers.js";
 import type { SessionStore } from "./session.js";
 import { mountAdmin } from "./admin.js";
 import { validateSystemTemplate } from "./prompts.js";
+import { recordStartupVersions } from "./promptVersions.js";
 import { shareMedia } from "./shareMedia.js";
 import { aboutPage, categoryPage, contactPage, directoryPage, notFoundPage, productPage, productsPage, searchPage, sellerHomePage } from "./site/pages.js";
 
@@ -50,6 +51,9 @@ export function createApp(deps: AppDeps) {
     const p = db.getPrompts(s.config.slug);
     if (p.system || p.user) sellers.setPersona(s.config.slug, p);
   }
+
+  // Version history: record shipped defaults that changed with this deploy, and older edits.
+  recordStartupVersions(db, sellers);
 
   const app = express();
   app.disable("x-powered-by");
@@ -180,7 +184,7 @@ export function createApp(deps: AppDeps) {
           systemPrompt: seller.systemPrompt,
           sellerInstructions: seller.persona.user,
           shareMedia: (ids, kinds, related) => shareMedia(seller, ids, kinds, related, { siteOrigin: onPlatform ? `${req.protocol}://${req.headers.host}` : null }),
-          saveLead: (lead) => db.insertLead(lead),
+          saveLead: (lead) => void (lead.update ? db.updateLead(lead.seller, lead.sessionId, lead) || db.insertLead(lead) : db.insertLead(lead)),
           logGuardrail: (id, interventions) => db.logGuardrailEvents(slug, id, interventions),
         },
         { onText: (text) => send("text", { text }) },

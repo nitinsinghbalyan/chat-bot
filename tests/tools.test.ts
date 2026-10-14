@@ -84,14 +84,19 @@ describe("lead capture flow", () => {
     expect(run("verify_otp", { otp: "12345" }).isError).toBe(true);
   });
 
-  it("requires a name and does not save twice", () => {
+  it("requires a name, and a second save_lead updates the same enquiry", () => {
     const { leads, run } = setup();
     run("send_otp", { mobile: "9876543210" });
     run("verify_otp", { otp: "12345" });
     expect(run("save_lead", { ...leadInput, name: " " }).isError).toBe(true);
-    run("save_lead", leadInput);
-    expect(run("save_lead", leadInput).isError).toBe(true);
-    expect(leads).toHaveLength(1);
+    run("save_lead", { ...leadInput, requirements: "" });
+    expect(leads[0]).toMatchObject({ requirements: "" });
+    expect(leads[0].update).toBeUndefined();
+    // After the ISQs: same buyer, more details; the name can't be changed this way.
+    const second = run("save_lead", { ...leadInput, name: "Someone Else", requirements: "CNC, 3 m, 6 mm" });
+    expect(second.isError).toBe(false);
+    expect(leads).toHaveLength(2);
+    expect(leads[1]).toMatchObject({ update: true, name: leads[0].name, mobile: "9876543210", requirements: "CNC, 3 m, 6 mm" });
   });
 
   it("validates tool inputs", () => {

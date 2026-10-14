@@ -484,6 +484,64 @@ describe("common system prompt and guardrails", () => {
   });
 });
 
+describe("prompt versions", () => {
+  const post = (url: string, fields: Record<string, string> = {}) =>
+    fetch(`${base}${url}`, {
+      method: "POST",
+      headers: { ...auth(PASSWORD), Origin: base, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(fields).toString(),
+      redirect: "manual",
+    });
+  const get = async (url: string) => (await fetch(`${base}${url}`, { headers: auth(PASSWORD) })).text();
+
+  it("lists each save of the common prompts, shows a diff and restores an older version", async () => {
+    const page = await get("/admin/prompts");
+    expect(page).toContain('id="versions"');
+    expect(page).toContain("Built-in default");
+    const system = (await get("/admin/prompts")).match(/<textarea id="system" name="system" rows="22">([\s\S]*?)<\/textarea>/)![1].replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+    expect((await post("/admin/prompts", { system, guardrails: "VERSION-ONE guardrails.", note: "first try" })).status).toBe(303);
+    expect((await post("/admin/prompts", { system, guardrails: "VERSION-TWO guardrails.", note: "second try" })).status).toBe(303);
+    const versions = db.listPromptVersions("common");
+    expect(versions.slice(0, 2).map((v) => v.note)).toEqual(["second try", "first try"]);
+    const [v2, v1] = versions;
+
+    const list = await get("/admin/prompts");
+    expect(list).toContain(`<b>v${v2.number}</b> <span class="badge ok">Active</span>`);
+    expect(list).toContain(`action="/admin/prompts/versions/${v1.id}/restore"`);
+    const view = await get(`/admin/prompts/versions/${v1.id}`);
+    expect(view).toContain('<span class="d add">+ VERSION-ONE guardrails.</span>');
+    expect(view).toContain('<span class="d del">− VERSION-TWO guardrails.</span>');
+    expect(view).toContain("Same as the version in use.");
+
+    const restored = await post(`/admin/prompts/versions/${v1.id}/restore`);
+    expect(restored.status).toBe(303);
+    expect(restored.headers.get("location")).toBe(`/admin/prompts?restored=${v1.number}`);
+    expect(db.getPlatformPrompt("guardrails")?.value).toBe("VERSION-ONE guardrails.");
+    expect(db.listPromptVersions("common")[0]).toMatchObject({ source: "restored", note: `Restored v${v1.number}` });
+    requests.length = 0;
+    await chat(ALPHA, "hi", { origin: base, sessionId: "versions-1", pageUrl: `${base}/s/${ALPHA}/` });
+    expect(requests[0].system[0].text).toContain("VERSION-ONE guardrails.");
+
+    expect((await post("/admin/prompts", { reset: "1" })).status).toBe(303);
+    expect(db.listPromptVersions("common")[0].source).toBe("reset");
+    expect((await fetch(`${base}/admin/prompts/versions/${v1.id}/restore`, { method: "POST", headers: { ...auth(PASSWORD), Origin: "https://evil.example" } })).status).toBe(403);
+    expect((await fetch(`${base}/admin/prompts/versions/999999`, { headers: auth(PASSWORD) })).status).toBe(404);
+  });
+
+  it("keeps versions of each seller's brand persona, back to its persona.json default", async () => {
+    expect((await post(`/admin/sellers/${BETA}/prompts`, { system: "BETA-PERSONA-EDIT", user: "Ask the flow rate.", note: "pilot" })).status).toBe(303);
+    const versions = db.listPromptVersions(`seller:${BETA}`);
+    expect(versions[0]).toMatchObject({ a: "BETA-PERSONA-EDIT", note: "pilot", source: "saved" });
+    const builtIn = versions.find((v) => v.source === "built-in")!;
+    const page = await get(`/admin/sellers/${BETA}/prompts`);
+    expect(page).toContain(`action="/admin/prompts/versions/${builtIn.id}/restore"`);
+    expect((await post(`/admin/prompts/versions/${builtIn.id}/restore`)).headers.get("location")).toBe(`/admin/sellers/${BETA}/prompts?restored=${builtIn.number}`);
+    // Restoring the shipped default clears the override, so later persona.json changes still apply.
+    expect(db.getPrompts(BETA)).toMatchObject({ system: "", user: "" });
+    expect(await get(`/admin/sellers/${BETA}/prompts`)).toContain(`<b>v${db.listPromptVersions(`seller:${BETA}`)[0].number}</b> <span class="badge ok">Active</span>`);
+  });
+});
+
 describe("csvCell", () => {
   it("quotes and escapes", () => {
     expect(csvCell('say "hi"')).toBe('"say ""hi"""');

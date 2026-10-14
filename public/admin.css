@@ -86,6 +86,24 @@ form.inline { display: inline; }
 .flash.ok { background: var(--ok-bg); border-color: color-mix(in srgb, var(--ok) 35%, transparent); color: var(--ok); }
 .flash.err { background: var(--err-bg); border-color: color-mix(in srgb, var(--err) 35%, transparent); color: var(--err); }
 .flash ul { margin: 6px 0 0; padding-left: 18px; }
+.flash.warn { background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 35%, transparent); color: var(--warn); }
+.flash.warn .btn:not(.primary) { color: var(--text, inherit); }
+
+/* Prompt versions */
+.versions h2 { margin: 0 0 4px; font-size: 1.05rem; }
+.versions table { width: 100%; }
+.versions tr.active td { background: var(--ok-bg); }
+.versions td.actions { text-align: right; }
+.versions td.actions .btn + form { margin-left: 6px; }
+.nowrap { white-space: nowrap; }
+.note-field input { max-width: 560px; }
+pre.diff { padding: 8px 0; }
+pre.diff .d { display: block; padding: 0 12px; }
+pre.diff .d.skip { color: var(--muted); font-style: italic; background: var(--panel); margin: 4px 0; }
+pre.diff .d.add { background: var(--ok-bg); color: var(--ok); }
+pre.diff .d.del { background: var(--err-bg); color: var(--err); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--err) 45%, transparent); }
+.d-add { color: var(--ok); font-weight: 600; }
+.d-del { color: var(--err); font-weight: 600; }
 .note { color: var(--muted); font-size: 0.88rem; margin-top: 22px; }
 
 /* Badges */

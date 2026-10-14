@@ -103,7 +103,8 @@ What the bot is given from it:
 
 ## Chat features
 
-- **ISQ chips:** the bot asks one ISQ per message and calls `show_options`, and the widget shows the options as tap-to-reply buttons under the message. The buyer can tap one or type their own answer. No buttons are shown while it is collecting the mobile number, OTP or name.
+- **ISQ chips:** the bot asks one ISQ per message and calls `show_options`. The widget shows the options as tap-to-reply buttons inside the conversation, right under that message. The buyer can tap one or type their own answer; the row then stays in the chat greyed out, with the chosen option highlighted. No buttons are shown while it is collecting the mobile number, OTP or name.
+- **Order of an enquiry:** machine → mobile number → OTP → name (lead saved) → ISQs → lead updated with the answers. Replies are kept to one or two short sentences.
 - **Media and related products:** when the buyer asks for photos, a video, a brochure or PDF, or related products, the bot calls `share_media` with product ids. The server builds the cards from the KB and the crawl only, never from model text, so links can't be made up. The widget shows a swipeable carousel of up to 12 cards:
   - product cards (photo, name, category)
   - photos, which open in a viewer
@@ -126,6 +127,7 @@ With many sellers, each layer has one place to edit:
 
 - `/admin/prompts` saves for all sellers at once and takes effect on the next chat turn. The system prompt must keep `{{GUARDRAILS}}`, `{{BUSINESS_CARD}}`, `{{PRODUCT_CARDS}}` and `{{BRAND_PERSONA}}` (and may use `{{SELLER_NAME}}`). **Reset to defaults** goes back to the files in `prompts/`. Edits are stored in the database (`platform_prompts`).
 - A seller's persona from `persona.json` is used until someone saves one in admin. **Reset to default** on the persona page goes back to `persona.json`.
+- **Versions:** both pages have a **Versions** panel. Every save, reset and restore is kept with an optional "What changed?" note (the newest 50 per prompt), and so is each shipped default whenever a deploy changes `prompts/*.md` or a `persona.json` ("Built-in default"). **View** shows a version's changes against the one in use, and **Restore** makes it live. If an edited common prompt is in use when a deploy ships a newer built-in default, `/admin/prompts` says so and offers **Use the new built-in**, because saved edits otherwise keep overriding the files. History is in the `prompt_versions` table.
 - Starting a persona for a new seller: copy `kb/sellers/jayshree-machinetools/persona.json` and change the company, brand, product range and tone. Keep to verified facts: Guardrail 7 rules out tenure, earnings and customer counts.
 
 ## Knowledge and prompts (KB folder)
@@ -189,7 +191,7 @@ A replaced sentence becomes a short hand-off line. The model is told about the c
 
 - `send_otp` checks the number is a valid Indian mobile (`+91` optional). No SMS is sent: this is demo mode, the OTP is **`12345`** (`DEMO_OTP`), and the widget shows that hint. The OTP is checked on the server and never appears in the prompt.
 - `verify_otp` allows 3 attempts per OTP and 3 OTPs per chat.
-- `save_lead` is refused until the number is verified. Each lead is stored under its seller.
+- `save_lead` is refused until the number is verified. The bot calls it as soon as it has the name, so a buyer who leaves mid-way is still a lead, and again after the last ISQ, which updates the same lead with the answers. Each lead is stored under its seller.
 
 To send real OTPs, replace the demo check in `src/tools.ts` with your SMS provider's calls, and stop returning `demo: true` from `/api/sellers/:slug` in `src/app.ts`.
 
@@ -202,6 +204,7 @@ Everything is kept in one SQLite file, `DATA_DIR/chatbot.db`. Every table has a 
 | `sessions` | Chat state (history, OTP progress, catalogue hits), keyed by seller and browser. One browser chatting with two sellers has two chats. Idle chats are pruned after 30 days. |
 | `transcript` | What buyers typed (payment and ID details already redacted) and what they were shown |
 | `leads` | Verified leads |
+| `prompt_versions` | Version history of the common prompts and each brand persona |
 | `guardrail_events` | Each sentence the output guardrails replaced |
 | `seller_prompts` | Each seller's brand persona (system and user prompt) saved in admin |
 | `platform_prompts` | The common system prompt and guardrails, when edited in admin |

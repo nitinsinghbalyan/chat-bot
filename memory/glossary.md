@@ -31,7 +31,9 @@ Shorthand and internal language for the Seller assistants project.
 | common prompts | Shared system prompt template + chat guardrails for all sellers; edit at `/admin/prompts` | `platform_prompts` table |
 | operator note | `<operator_note>`: tells the model a sentence of its last reply was replaced by a guardrail | `src/claude.ts` |
 | current page | `<current_page>`: the product or category page the buyer has open | `src/prompts.ts` |
-| lead | Verified enquiry: mobile, then OTP, then name, then `save_lead` | `leads` table |
+| lead | Verified enquiry: machine named → mobile → OTP → name → `save_lead` (saved) → ISQs → `save_lead` again (updates the same row) | `leads` table, `ChatDb.updateLead` |
+| prompt version | A snapshot of the common prompts (system + guardrails) or a seller's persona (system + user). Sources: saved, reset, restored, built-in (shipped default recorded at startup when a deploy changed it). View = diff vs in use; Restore. Newer built-in banner on `/admin/prompts` when an edit hides a new default | `prompt_versions` table, `src/promptVersions.ts`, `src/diff.ts` |
+| inline chips | ISQ buttons drawn in the chat log under the asking message; after the reply they stay greyed with the pick highlighted | `addChips`/`retireChips` in `public/widget.js` |
 | demo OTP | `12345` (`DEMO_OTP`); no SMS is sent yet | `src/tools.ts` |
 
 ## Guardrails (G1–G9, `prompts/guardrails.md`)
