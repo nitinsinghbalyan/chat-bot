@@ -26,6 +26,12 @@ const sellerConfigSchema = z
     allowedOrigins: z.array(z.string().url()).default([]),
     greeting: z.string().max(300).optional(),
     chips: z.array(z.string().min(1).max(40)).max(6).optional(),
+    /** Which bottom corner the chat bubble sits in. */
+    widgetPosition: z.enum(["right", "left"]).default("right"),
+    /** One line under the company name on the home page. */
+    tagline: z.string().max(200).optional(),
+    /** About Us text (paragraphs separated by blank lines). Keep it to verified BUSINESS CARD facts (Guardrail 7). */
+    about: z.string().max(3000).optional(),
   })
   .strict();
 

@@ -9,7 +9,7 @@ import { checkInput, RateLimiter } from "./guardrails.js";
 import type { SellerContext, SellerRegistry } from "./sellers.js";
 import type { SessionStore } from "./session.js";
 import { esc } from "./site/html.js";
-import { categoryPage, directoryPage, notFoundPage, productPage, searchPage, sellerHomePage } from "./site/pages.js";
+import { aboutPage, categoryPage, contactPage, directoryPage, notFoundPage, productPage, productsPage, searchPage, sellerHomePage } from "./site/pages.js";
 
 export interface AppDeps {
   client: Anthropic;
@@ -92,7 +92,7 @@ export function createApp(deps: AppDeps) {
     }
     const c = seller.config;
     // No SMS gateway is wired yet, so the widget shows the demo OTP hint.
-    res.json({ slug: c.slug, name: c.name, color: c.color, greeting: c.greeting ?? null, chips: c.chips ?? seller.kb.productCards.map((p) => p.canonical_name).slice(0, 4), demo: true });
+    res.json({ slug: c.slug, name: c.name, color: c.color, greeting: c.greeting ?? null, chips: c.chips ?? seller.kb.productCards.map((p) => p.canonical_name).slice(0, 4), position: c.widgetPosition, demo: true });
   });
 
   /** Works out which catalogue page the buyer is on: a page of this site or the seller's own page. */
@@ -193,6 +193,9 @@ export function createApp(deps: AppDeps) {
   app.get("/", (_req, res) => html(res, directoryPage(sellers.list())));
   // Routing isn't strict, so this serves both /s/<seller> and /s/<seller>/.
   app.get("/s/:seller/", withSeller((seller, _req, res) => html(res, sellerHomePage(seller))));
+  app.get("/s/:seller/about", withSeller((seller, _req, res) => html(res, aboutPage(seller))));
+  app.get("/s/:seller/products", withSeller((seller, _req, res) => html(res, productsPage(seller))));
+  app.get("/s/:seller/contact", withSeller((seller, _req, res) => html(res, contactPage(seller))));
   app.get(
     "/s/:seller/c/:slug",
     withSeller((seller, req, res) => {

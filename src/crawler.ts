@@ -12,6 +12,8 @@ import * as cheerio from "cheerio";
 export interface PageLink {
   url: string;
   title: string;
+  /** Thumbnail shown next to the link on the seller's page, if any. */
+  image?: string | null;
 }
 
 export interface CatalogueEntry {
@@ -26,6 +28,12 @@ export interface CatalogueEntry {
   description: string;
   /** Main product/category image on the seller's site (linked, not copied). */
   image: string | null;
+  /** Every product photo found on the page (the main image first), for the product gallery. */
+  images: string[];
+  /** Longer description from the page, with sentences on forbidden topics removed. */
+  details: string;
+  /** Bullet points from the description area. */
+  features: string[];
   /** Breadcrumb trail from the seller's site, excluding "Home". */
   breadcrumbs: PageLink[];
   /** On category pages: the products listed there. */
@@ -54,6 +62,23 @@ const SKIP_PATHS = [/\/profile\.html$/, /\/testimonial\.html$/, /\/registration-
 /** Spec rows on topics the guardrails forbid the bot to state (G2, G5, G6, G7, G8). */
 const FORBIDDEN_SPEC_KEYS =
   /gst|tax|freight|transport|shipping|delivery|dispatch|lead\s*time|payment|turnover|revenue|established|employees|staff|bank|upi|stock|availability/i;
+
+/** The same topics, for description sentences and bullet points. */
+const FORBIDDEN_TEXT =
+  /\bgst\b|\btax(es)?\b|freight|transport(ation)?\b|shipping|deliver(y|ed|ies)|dispatch|lead\s*time|payment|advance|turnover|revenue|\bestablished\b|employees|\bstaff\b|\bbank\b|\bupi\b|in\s+stock|ready\s+stock|availability/i;
+
+/** Phone numbers, emails and links inside page text (Guardrail 3: only the business card's contact). */
+const CONTACT_TEXT = /(?:\+?91[\s-]?)?\b\d{5}[\s-]?\d{5}\b|\b0\d{2,4}[\s-]?\d{6,8}\b|[\w.+-]+@[\w-]+\.[\w.]+|https?:\/\/|www\./i;
+
+const allowedText = (t: string) => !FORBIDDEN_TEXT.test(t) && !CONTACT_TEXT.test(t);
+
+/** Drops sentences on topics the guardrails keep off the website and away from the bot. */
+export function stripForbidden(text: string): string {
+  return (text.match(/[^.!?]+(?:[.!?]+|$)/g) ?? [])
+    .map((s) => s.trim())
+    .filter((s) => s && allowedText(s))
+    .join(" ");
+}
 
 const USER_AGENT = "SellerEnquiryBot-Crawler/0.1 (+catalogue refresh for on-site assistant)";
 
@@ -130,6 +155,36 @@ function imageFromJsonLd(product: Record<string, any> | undefined): string | und
   return img.url;
 }
 
+function imagesFromJsonLd(product: Record<string, any> | undefined): string[] {
+  const img = product?.image;
+  if (!img) return [];
+  const list = Array.isArray(img) ? img : [img];
+  return list.map((i) => (typeof i === "string" ? i : i?.url)).filter((i): i is string => typeof i === "string");
+}
+
+/** Product photos: JSON-LD images, og:image and the page's gallery/zoom images. Not other products' thumbnails. */
+function pickImages($: cheerio.CheerioAPI, ld: Record<string, any> | undefined, url: string, main: string | null): string[] {
+  const candidates = [
+    main,
+    ...imagesFromJsonLd(ld),
+    ...$('meta[property="og:image"]').map((_, m) => $(m).attr("content")).get(),
+    ...$('[itemprop="image"]').map((_, el) => $(el).attr("src") ?? $(el).attr("content") ?? $(el).attr("href")).get(),
+    ...$("[class*='gallery' i] img, [class*='thumb' i] img, [class*='zoom' i] img, [class*='slider' i] img, [id*='gallery' i] img")
+      .map((_, img) => $(img).attr("data-zoom-image") || $(img).attr("data-large") || $(img).attr("data-src") || $(img).attr("src"))
+      .get(),
+    ...$("[class*='gallery' i] a[href], [class*='zoom' i] a[href]")
+      .map((_, a) => $(a).attr("href"))
+      .get()
+      .filter((h) => /\.(jpe?g|png|webp)(\?|$)/i.test(h)),
+  ];
+  const out: string[] = [];
+  for (const c of candidates) {
+    const abs = absolute(c, url);
+    if (abs && !NOT_A_PRODUCT_IMAGE.test(abs) && !out.includes(abs)) out.push(abs);
+  }
+  return out.slice(0, 8);
+}
+
 function pickImage($: cheerio.CheerioAPI, ld: Record<string, any> | undefined, url: string): string | null {
   const candidates = [
     imageFromJsonLd(ld),
@@ -146,14 +201,19 @@ function pickImage($: cheerio.CheerioAPI, ld: Record<string, any> | undefined, u
   return null;
 }
 
+const kind = (url: string): CatalogueEntry["kind"] => (/\/product\//.test(new URL(url).pathname) ? "product" : "category");
+
+const DESCRIPTION_AREAS = "[class*='desc' i], [id*='desc' i], [class*='detail' i], [id*='detail' i], [class*='about' i], [itemprop='description']";
+
 export function extractPage(html: string, url: string): CatalogueEntry {
   const $ = cheerio.load(html);
   const ld = jsonLdProducts($)[0];
   const image = pickImage($, ld, url);
+  const images = kind(url) === "product" ? pickImages($, ld, url, image) : image ? [image] : [];
   $("script:not([type='application/ld+json']), style, noscript, iframe, header nav, footer").remove();
 
   const title = clean(ld?.name) || clean($("h1").first().text()) || clean($("title").text());
-  const kind: CatalogueEntry["kind"] = /\/product\//.test(new URL(url).pathname) ? "product" : "category";
+  const pageKind = kind(url);
 
   const specs: Record<string, string> = {};
   const addSpec = (k: string, v: string) => {
@@ -174,16 +234,39 @@ export function extractPage(html: string, url: string): CatalogueEntry {
   });
 
   // Category pages list many machines, so a price there can't be attributed to one product.
-  let priceText = kind === "product" ? priceFromJsonLd(ld) : null;
-  if (!priceText && kind === "product") {
+  let priceText = pageKind === "product" ? priceFromJsonLd(ld) : null;
+  if (!priceText && pageKind === "product") {
     const priceNode = $('[class*="price" i], [id*="price" i], [itemprop="price"]').first();
     priceText = extractPriceFromText(clean(priceNode.text()));
   }
 
-  const description =
-    clean(ld?.description) ||
-    clean($('meta[name="description"]').attr("content")) ||
-    clean($("p").first().text());
+  const description = stripForbidden(
+    clean(ld?.description) || clean($('meta[name="description"]').attr("content")) || clean($("p").first().text()),
+  );
+
+  // Longer text for the website: paragraphs in the description area, else every paragraph on the page.
+  const paragraphs = (sel: string) =>
+    $(sel)
+      .map((_, p) => clean($(p).text()))
+      .get()
+      .filter((t) => t.length >= 30);
+  let paras = paragraphs(`:is(${DESCRIPTION_AREAS}) p`);
+  if (paras.length === 0) paras = paragraphs("main p, article p, p");
+  const seen = new Set<string>();
+  const details = paras
+    .map(stripForbidden)
+    .filter((t) => t && !seen.has(t) && seen.add(t))
+    .join("\n\n")
+    .slice(0, 3000);
+
+  const features = [
+    ...new Set(
+      $(`:is(${DESCRIPTION_AREAS}) li`)
+        .map((_, li) => clean($(li).text()))
+        .get()
+        .filter((t) => t.length >= 3 && t.length <= 200 && allowedText(t)),
+    ),
+  ].slice(0, 15);
 
   const breadcrumbs: PageLink[] = [];
   $('[class*="breadcrumb" i] a, nav[aria-label="breadcrumb" i] a').each((_, a) => {
@@ -191,11 +274,12 @@ export function extractPage(html: string, url: string): CatalogueEntry {
     const href = absolute($(a).attr("href"), url);
     if (t && href && !/^home$/i.test(t) && !breadcrumbs.some((b) => b.url === href)) breadcrumbs.push({ title: t, url: href });
   });
-  const category = clean(ld?.category) || breadcrumbs[breadcrumbs.length - 1]?.title || (kind === "category" ? title : "");
+  const category = clean(ld?.category) || breadcrumbs[breadcrumbs.length - 1]?.title || (pageKind === "category" ? title : "");
 
   // Product links on this page, titled by the best anchor text (or image alt) seen for each URL.
   const host = new URL(url).hostname;
   const productTitles = new Map<string, string>();
+  const productImages = new Map<string, string>();
   $("a[href]").each((_, a) => {
     let href: URL;
     try {
@@ -208,13 +292,15 @@ export function extractPage(html: string, url: string): CatalogueEntry {
     if (key === url) return;
     const text = clean($(a).attr("title")) || clean($(a).text()) || clean($(a).find("img").attr("alt"));
     const useful = text && !GENERIC_LINK_TEXT.test(text) && text.length <= 120 ? text : "";
+    const thumb = absolute($(a).find("img").attr("data-src") || $(a).find("img").attr("src"), url);
+    if (thumb && !NOT_A_PRODUCT_IMAGE.test(thumb) && !productImages.has(key)) productImages.set(key, thumb);
     const prev = productTitles.get(key);
     if (prev === undefined || (!prev && useful) || (useful && useful.length > prev.length)) productTitles.set(key, useful);
   });
 
   return {
     url,
-    kind,
+    kind: pageKind,
     slug: slugFromUrl(url),
     title,
     category,
@@ -222,10 +308,13 @@ export function extractPage(html: string, url: string): CatalogueEntry {
     specs,
     description: description.slice(0, 600),
     image,
+    images,
+    details,
+    features,
     breadcrumbs,
     products:
-      kind === "category"
-        ? [...productTitles].slice(0, 60).map(([u, t]) => ({ url: u, title: t || titleFromSlug(slugFromUrl(u)) }))
+      pageKind === "category"
+        ? [...productTitles].slice(0, 60).map(([u, t]) => ({ url: u, title: t || titleFromSlug(slugFromUrl(u)), image: productImages.get(u) ?? null }))
         : [],
   };
 }

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import MiniSearch from "minisearch";
-import { slugFromUrl, type CatalogueEntry } from "./crawler.js";
+import { slugFromUrl, type CatalogueEntry, type PageLink } from "./crawler.js";
 
 interface IndexedEntry extends CatalogueEntry {
   id: number;
@@ -19,6 +19,9 @@ function normalize(e: Partial<CatalogueEntry> & { url: string; related_links?: s
     specs: e.specs ?? {},
     description: e.description ?? "",
     image: e.image ?? null,
+    images: e.images?.length ? e.images : e.image ? [e.image] : [],
+    details: e.details ?? "",
+    features: e.features ?? [],
     breadcrumbs: e.breadcrumbs ?? [],
     products: e.products ?? (e.related_links ?? []).map((url) => ({ url, title: "" })),
   };
@@ -112,7 +115,7 @@ export class Catalogue {
   }
 
   /** Products listed on a category page, resolved to full catalogue entries where crawled. */
-  productsIn(category: CatalogueEntry): Array<CatalogueEntry | { url: string; title: string; slug: string }> {
+  productsIn(category: CatalogueEntry): Array<CatalogueEntry | (PageLink & { slug: string })> {
     return category.products.map((p) => this.byPageUrl(p.url) ?? { ...p, slug: slugFromUrl(p.url) });
   }
 
@@ -136,6 +139,7 @@ export function formatCatalogueHits(hits: CatalogueEntry[]): string {
       const specs = Object.entries(h.specs);
       if (specs.length) lines.push(`Specifications: ${specs.map(([k, v]) => `${k}: ${v}`).join("; ")}`);
       if (h.kind === "category" && h.products.length) lines.push(`Products on this page: ${h.products.map((p) => p.title).filter(Boolean).slice(0, 12).join("; ")}`);
+      if (h.features.length) lines.push(`Features: ${h.features.slice(0, 8).join("; ")}`);
       if (h.description) lines.push(`Description: ${h.description}`);
       return lines.join("\n");
     })

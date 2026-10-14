@@ -107,7 +107,7 @@ describe("chat API", () => {
 
   it("serves each seller's widget settings", async () => {
     const res = await fetch(`${base}/api/sellers/${ALPHA}`);
-    expect(await res.json()).toMatchObject({ slug: ALPHA, name: "Alpha Presses", color: "#aa3300", chips: ["Press Brake"] });
+    expect(await res.json()).toMatchObject({ slug: ALPHA, name: "Alpha Presses", color: "#aa3300", chips: ["Press Brake"], position: "right" });
     expect((await fetch(`${base}/api/sellers/nobody`)).status).toBe(404);
   });
 
@@ -170,8 +170,35 @@ describe("website", () => {
     expect(body).toContain("Starting price ₹4,50,000 / Piece");
     expect(body).toContain("<th>Pressing Force</th><td>100 ton</td>");
     expect(body).toContain('<link rel="canonical" href="https://www.alphapresses.example/product/cnc-press-brake-a1b2c3d.html">');
-    expect(body).toContain("Ask about this product");
+    expect(body).toContain("Get the best quote");
     expect(body).toContain(`href="/s/${ALPHA}/c/press-brakes">Press Brakes</a>`);
+    // Photo gallery with every crawled image, plus description paragraphs and features.
+    expect(body).toContain('id="gallery-main" class="img detail-img" src="https://img.alphapresses.example/cnc.jpg"');
+    expect(body).toContain('data-gallery-src="https://img.alphapresses.example/cnc-side.jpg"');
+    expect(body).toContain("<p>Heavy frame.</p><p>Back gauge included.</p>");
+    expect(body).toContain("<li>CNC controller</li>");
+  });
+
+  it("renders About Us from the business card facts only", async () => {
+    const { status, body } = await page(`/s/${ALPHA}/about`);
+    expect(status).toBe(200);
+    expect(body).toContain("<th>CEO</th><td>A. Sharma</td>");
+    expect(body).toContain("<th>Location</th><td>Rajkot, Gujarat</td>");
+    // "Press Brakes" in deals_in links to the matching crawled category.
+    expect(body).toContain(`<li><a href="/s/${ALPHA}/c/press-brakes">Press Brakes</a></li>`);
+    expect(body).toContain("<li>Shearing Machines</li>");
+    expect(body).not.toMatch(/turnover|employees|established/i);
+  });
+
+  it("renders the products and contact pages with the main navigation", async () => {
+    const products = (await page(`/s/${ALPHA}/products`)).body;
+    expect(products).toContain('<section id="press-brakes">');
+    expect(products).toContain(`href="/s/${ALPHA}/p/cnc-press-brake-a1b2c3d"`);
+    expect(products).toContain(`<a href="/s/${ALPHA}/products" aria-current="page">Products</a>`);
+    const contact = (await page(`/s/${ALPHA}/contact`)).body;
+    expect(contact).toContain('href="tel:9000000001"');
+    expect(contact).toContain("Start an enquiry");
+    for (const nav of ["About Us", "Contact Us"]) expect(contact).toContain(`>${nav}</a>`);
   });
 
   it("searches only within the seller", async () => {
