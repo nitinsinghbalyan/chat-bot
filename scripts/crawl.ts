@@ -17,11 +17,8 @@ const sellers = slugs.length ? slugs.map((s) => registry.get(s) ?? (console.erro
 let failed = 0;
 for (const seller of sellers) {
   console.log(`\n== ${seller.config.name} (${seller.config.slug})`);
-  const entries = await refreshCatalogue({
-    sitemapFile: seller.sitemapFile,
-    outFile: runtime ? seller.runtimeCatalogueFile : seller.bundledCatalogueFile,
-    log: (m) => console.log(`  ${m}`),
-  });
-  if (!entries) failed++;
+  const outFile = runtime || !seller.bundledCatalogueFile ? seller.runtimeCatalogueFile : seller.bundledCatalogueFile;
+  const r = await refreshCatalogue({ urls: registry.crawlUrls(seller), outFile, log: (m) => console.log(`  ${m}`) });
+  if (!r.entries) failed++;
 }
 process.exit(failed ? 1 : 0);

@@ -423,25 +423,55 @@ export async function crawl(opts: CrawlOptions): Promise<CatalogueEntry[]> {
   return results.sort((a, b) => a.url.localeCompare(b.url));
 }
 
+export interface RefreshResult {
+  /** The new catalogue, or null when the previous one was kept. */
+  entries: CatalogueEntry[] | null;
+  status: "ok" | "partial" | "failed";
+  fetched: number;
+  total: number;
+  message: string;
+}
+
+/** A crawl that fetches fewer than this share of the pages we already have doesn't replace them. */
+export const MIN_CRAWL_SHARE = 0.8;
+
 /**
- * Crawl a seller's sitemap and write their catalogue. Keeps the old catalogue (returns null)
- * if nothing could be fetched, e.g. when the site is unreachable.
+ * Crawls a seller's pages and writes their catalogue. Keeps the old catalogue when nothing could
+ * be fetched (site unreachable) or when the crawl got far fewer pages than the catalogue already
+ * has (the site rate-limiting or blocking us part-way), so a bad crawl never shrinks the site.
  */
 export async function refreshCatalogue(opts: {
-  sitemapFile: string;
+  urls: string[];
   outFile: string;
+  /** Pages in the catalogue being replaced; read from outFile when not given. */
+  previous?: number;
   log?: (msg: string) => void;
   fetchImpl?: typeof fetch;
-}): Promise<CatalogueEntry[] | null> {
+  delayMs?: number;
+  retryDelayMs?: number;
+}): Promise<RefreshResult> {
   const log = opts.log ?? console.log;
-  const urls = parseSitemap(fs.readFileSync(opts.sitemapFile, "utf8"));
-  const entries = await crawl({ urls, log, fetchImpl: opts.fetchImpl });
+  const total = opts.urls.filter(shouldCrawl).length;
+  let previous = opts.previous ?? 0;
+  if (opts.previous === undefined && fs.existsSync(opts.outFile)) {
+    try {
+      previous = (JSON.parse(fs.readFileSync(opts.outFile, "utf8")) as unknown[]).length;
+    } catch {
+      previous = 0;
+    }
+  }
+  const entries = await crawl({ urls: opts.urls, log, fetchImpl: opts.fetchImpl, delayMs: opts.delayMs, retryDelayMs: opts.retryDelayMs });
   if (entries.length === 0) {
     log("crawl produced no pages; keeping existing catalogue");
-    return null;
+    return { entries: null, status: "failed", fetched: 0, total, message: "Site unreachable or no pages fetched; kept the previous catalogue" };
+  }
+  if (previous > 0 && entries.length < previous * MIN_CRAWL_SHARE) {
+    const message = `Partial: ${entries.length} of ${total} pages fetched (the catalogue has ${previous}); kept the previous catalogue`;
+    log(message);
+    return { entries: null, status: "partial", fetched: entries.length, total, message };
   }
   fs.mkdirSync(path.dirname(opts.outFile), { recursive: true });
   fs.writeFileSync(opts.outFile, JSON.stringify(entries, null, 2) + "\n");
   log(`wrote ${entries.length} entries to ${opts.outFile}`);
-  return entries;
+  return { entries, status: "ok", fetched: entries.length, total, message: `${entries.length} of ${total} pages` };
 }
