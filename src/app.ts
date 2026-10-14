@@ -1,18 +1,19 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import express, { type NextFunction, type Request, type Response } from "express";
-import { runTurn } from "./claude.js";
+import { runTurn, type TurnResult } from "./claude.js";
 import { config, paths } from "./config.js";
 import type { CatalogueEntry } from "./crawler.js";
 import type { ChatDb } from "./db.js";
 import { checkInput, RateLimiter } from "./guardrails.js";
 import type { SellerContext, SellerRegistry } from "./sellers.js";
-import type { SessionStore } from "./session.js";
+import type { Session, SessionStore } from "./session.js";
 import { mountAdmin } from "./admin.js";
 import { validateSystemTemplate } from "./prompts.js";
 import { activeVersionId, COMMON_SCOPE, recordStartupVersions, sellerScope } from "./promptVersions.js";
 import { maskMobile, noTracing, OTP_MASK, type Tracing } from "./tracing.js";
 import { shareMedia } from "./shareMedia.js";
+import type { EnquirySummary } from "./tools.js";
 import { aboutPage, categoryPage, contactPage, directoryPage, notFoundPage, productPage, productsPage, searchPage, sellerHomePage } from "./site/pages.js";
 
 export interface AppDeps {
@@ -104,6 +105,7 @@ export function createApp(deps: AppDeps) {
     res.json({
       ok: true,
       model: config.BOT_MODEL,
+      tracing: { state: tracing.status.state, host: tracing.status.host, exportErrors: tracing.status.exportErrors },
       sellers: sellers.list().map((s) => ({ slug: s.config.slug, catalogueEntries: s.catalogue.size, productCards: s.kb.productCards.length })),
     });
   });
@@ -226,23 +228,52 @@ export function createApp(deps: AppDeps) {
           { onText: (text) => send("text", { text }) },
           { pageUrl, pageEntry: pageEntryFor(seller, pageUrl) },
         );
+        const chat = addChatUsage(session, result);
         root.update({
-          output: { reply: result.text, chips: result.chips, cards: result.cards.map((c) => `${c.type}: ${c.title}`), askFor: result.askFor },
-          metadata: { leadStageAfter: session.lead.stage, usage: result.usage },
+          output: {
+            reply: result.text,
+            chips: result.chips,
+            cards: result.cards.map((c) => `${c.type}: ${c.title}`),
+            askFor: result.askFor,
+            ...(result.summary ? { summary: result.summary } : {}),
+          },
+          metadata: {
+            leadStageAfter: session.lead.stage,
+            usage: result.usage,
+            turnCostUsd: roundUsd(result.costUsd),
+            chatCostUsd: roundUsd(chat.costUsd),
+            chatTokens: chatTokens(chat),
+            chatTurns: chat.turns,
+            ...(chat.costKnown ? {} : { costIncomplete: "a model without a known price was used" }),
+          },
           ...(result.fallbackReply ? { level: "WARNING" as const, statusMessage: "Buyer got a canned fallback reply" } : {}),
         });
         if (tracing.enabled && root.traceId) {
           for (const e of result.leadEvents ?? []) tracing.score({ traceId: root.traceId, name: e === "captured" ? "lead_captured" : "lead_updated", value: 1, dataType: "BOOLEAN" });
           if (result.interventions.length) tracing.score({ traceId: root.traceId, name: "guardrail_fired", value: result.interventions.length, dataType: "NUMERIC" });
           if (result.fallbackReply) tracing.score({ traceId: root.traceId, name: "fallback_reply", value: 1, dataType: "BOOLEAN" });
+          if (result.summary) tracing.score({ traceId: root.traceId, name: "summary_shown", value: 1, dataType: "BOOLEAN" });
+        }
+        if (tracing.enabled) {
+          // One score per chat, replaced every message, so the Langfuse session shows the running total.
+          tracing.score({
+            sessionId: session.id,
+            id: chatCostScoreId(session.id),
+            name: "chat_cost_usd",
+            value: roundUsd(chat.costUsd),
+            dataType: "NUMERIC",
+            comment: `${chat.turns} buyer message${chat.turns === 1 ? "" : "s"}, ${chatTokens(chat).toLocaleString("en-US")} tokens${chat.costKnown ? "" : " (some calls unpriced)"}`,
+          });
         }
         return { result, traceId: root.traceId };
       });
       sessions.save(session);
       const sharedNote = result.cards.length ? `\n[Shared: ${result.cards.map((c) => `${c.type} "${c.title}"`).join(", ")}]` : "";
-      db.appendTranscript({ seller: slug, sessionId: session.id, role: "bot", text: result.text + sharedNote, guardrails: result.interventions.map((i) => i.rule), traceId: traceId || undefined });
+      const summaryNote = result.summary ? `\n[Summary: ${summaryLine(result.summary)}]` : "";
+      db.appendTranscript({ seller: slug, sessionId: session.id, role: "bot", text: result.text + sharedNote + summaryNote, guardrails: result.interventions.map((i) => i.rule), traceId: traceId || undefined });
       if (traceId) send("trace", { traceId });
       if (result.cards.length) send("cards", { cards: result.cards });
+      if (result.summary) send("summary", { summary: result.summary });
       send("ui", { askFor: result.askFor, leadStage: session.lead.stage, chips: result.chips });
       if (process.env.NODE_ENV !== "production") send("debug", { usage: result.usage, interventions: result.interventions.map((i) => i.rule) });
       send("done", {});
@@ -326,7 +357,7 @@ export function createApp(deps: AppDeps) {
   );
 
   // ---- Admin (team only) ----
-  mountAdmin(app, { sellers, db, adminPassword, recrawl: deps.recrawl, sameHost });
+  mountAdmin(app, { sellers, db, adminPassword, recrawl: deps.recrawl, sameHost, tracing: tracing.status });
 
   app.use(
     express.static(paths.public, {
@@ -343,5 +374,24 @@ export function createApp(deps: AppDeps) {
 
   return app;
 }
+
+/** Adds one turn's tokens and cost to the chat's running totals. */
+function addChatUsage(session: Session, result: TurnResult) {
+  const u = session.usage;
+  u.input += result.usage.input;
+  u.output += result.usage.output;
+  u.cacheRead += result.usage.cacheRead;
+  u.cacheWrite += result.usage.cacheWrite;
+  u.costUsd += result.costUsd;
+  u.turns++;
+  if (!result.costKnown) u.costKnown = false;
+  return u;
+}
+
+const roundUsd = (usd: number) => Math.round(usd * 1e6) / 1e6;
+const chatTokens = (u: Session["usage"]) => u.input + u.output + u.cacheRead + u.cacheWrite;
+/** A stable score id per chat, so each new value replaces the last. */
+const chatCostScoreId = (sessionId: string) => `chat-cost-${createHash("sha256").update(sessionId).digest("hex").slice(0, 32)}`;
+const summaryLine = (s: EnquirySummary) => s.rows.map((r) => `${r.label}: ${r.value}`).join("; ");
 
 export { csvCell, PERSONA_LIMITS } from "./admin.js";

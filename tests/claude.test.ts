@@ -298,3 +298,42 @@ describe("tracing", () => {
     expect(g.attrs).toMatchObject({ level: "WARNING", statusMessage: "G1_price" });
   });
 });
+
+describe("chat cost and enquiry summary", () => {
+  it("adds up the cost of every Claude call in the turn", async () => {
+    const session = new SessionStore().get("jayshree-machinetools", "s-cost-00001");
+    const { d } = deps([{ content: [{ type: "tool_use", id: "o1", name: "show_options", input: { options: ["MS", "SS"] } }], stop_reason: "tool_use" }, text("Which material?")]);
+    const r = await runTurn(session, "press brake", d);
+    // Each fake call: 100 input, 20 output, 80 cache-read tokens at $2 / $10 / $0.20 per million.
+    expect(r.costKnown).toBe(true);
+    expect(r.costUsd).toBeCloseTo(2 * 0.000416, 12);
+  });
+
+  it("flags a turn whose model has no known price", async () => {
+    const session = new SessionStore().get("jayshree-machinetools", "s-cost-00002");
+    const { d } = deps([text("Hello.")]);
+    const r = await runTurn(session, "hi", { ...d, model: "claude-unknown-9" });
+    expect(r).toMatchObject({ costUsd: 0, costKnown: false });
+  });
+
+  it("passes the summary card from save_lead through to the chat", async () => {
+    const session = new SessionStore().get("jayshree-machinetools", "s-sum-000001");
+    session.lead = { stage: "captured", mobile: "9876543210", name: "Ramesh", otpAttempts: 0, otpSends: 1 };
+    const leads: Lead[] = [];
+    const input = { name: "Ramesh", product: "CNC Press Brake", specs: [{ label: "Material", value: "Mild steel" }], requirements: "", quantity: "1", city: "Rajkot", complete: true };
+    const { d } = deps(
+      [
+        { content: [{ type: "tool_use", id: "s1", name: "save_lead", input }], stop_reason: "tool_use" },
+        { content: [{ type: "text", text: "Here's your enquiry; our team will contact you. Anything to change?" }, { type: "tool_use", id: "s2", name: "show_options", input: { options: ["All correct", "Change a detail"] } }], stop_reason: "tool_use" },
+        text(""),
+      ],
+      leads,
+    );
+    const r = await runTurn(session, "6 mm", d);
+    expect(r.summary?.rows[0]).toEqual({ label: "Machine", value: "CNC Press Brake" });
+    expect(r.summary?.note).toContain("xxxxxx3210");
+    expect(r.chips).toEqual(["All correct", "Change a detail"]);
+    expect(r.leadEvents).toEqual(["updated"]);
+    expect(leads[0]).toMatchObject({ update: true, requirements: "Material: Mild steel" });
+  });
+});

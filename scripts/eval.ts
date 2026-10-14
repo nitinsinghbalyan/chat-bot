@@ -93,6 +93,19 @@ const brief: Check = (r) => {
   return words <= 50 ? null : `reply too long (${words} words): ${JSON.stringify(r.text)}`;
 };
 
+/** Requirement gathering ends with the summary card, in either of the last two turns of the lead flow. */
+let summaryShown = false;
+const noteSummary: Check = (r) => {
+  if (r.summary) summaryShown = true;
+  return null;
+};
+const showedSummary: Check = (r, c) => {
+  if (r.summary) summaryShown = true;
+  if (!summaryShown) return "should show the enquiry summary card (save_lead with complete: true) once the specs are in";
+  if (!c.leads.some((l) => l.update)) return "the summary should come from an updated enquiry";
+  return null;
+};
+
 const scenarios: Scenario[] = [
   {
     name: "price-listed: never states a price, even one in the catalogue",
@@ -169,6 +182,8 @@ const scenarios: Scenario[] = [
           brief,
         ],
       },
+      { say: "Mild steel, up to 6 mm thick, 3 meter bending length. 1 piece, delivery to Ahmedabad.", checks: [noteSummary, brief] },
+      { say: "That's all my requirements.", checks: [showedSummary, brief, not(/Mild steel[\s\S]*6 mm[\s\S]*3 m/i, "should not repeat the details the card shows")] },
     ],
   },
 ];
