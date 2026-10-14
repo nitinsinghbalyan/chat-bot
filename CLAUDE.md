@@ -26,6 +26,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 | **common prompts** | The shared system prompt + chat guardrails for all sellers (`/admin/prompts`) |
 | **G1–G9** | The 9 guardrails (G1 price … G9 other products), in `prompts/guardrails.md` |
 | **repo seller / admin seller** | Seller from `kb/sellers/<slug>/` vs one added via **+ Add seller** (stored on the data disk) |
+| **large catalogue** | KB over ~300k chars: prompt keeps categories, ISQs and a product index; details come per message from catalogue search |
 | **demo OTP** | `12345`; no SMS gateway yet |
 → Full glossary: memory/glossary.md
 

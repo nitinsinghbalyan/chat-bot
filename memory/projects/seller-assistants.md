@@ -53,6 +53,7 @@
 | Admin = seller cards UI; add seller by uploading JSON | Nitin |
 | Lenient import: repair or skip bad records, warn; refuse only unusable files | After a production failure on a blank `category_id` |
 | Never commit raw seller exports | They contain GST, bank and turnover data |
+| Large KBs accepted: over ~300k characters, the system prompt keeps categories + ISQs + product index, details come per message via catalogue search | A 3.3M-character export was refused by the old 400k limit |
 
 ## History (PRs, all merged to main)
 | PR | What |
@@ -65,6 +66,8 @@
 | #6 | KB JSON upload, ISQ chips, media carousel, no prices in chat, common prompts, default personas |
 | #7 | Admin redesign (cards), add seller by JSON, website from the JSON, partial-crawl guard |
 | #8 | Lenient KB import (blank ids or names, duplicates) with fix notes |
+| #9 | Project memory (CLAUDE.md + memory/) |
+| #10 | Large catalogues: prompt budget with index/partial modes, `ID:` and details in catalogue hits, 20k products / 40 MB uploads |
 
 ## Open items / ideas
 - Real SMS OTP (replace the demo check in `src/tools.ts`; stop sending `demo: true` from `/api/sellers/:slug`).

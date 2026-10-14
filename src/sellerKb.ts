@@ -14,7 +14,14 @@ import type { CatalogueEntry } from "./crawler.js";
 import type { BusinessCard, KnowledgeBase, ProductCard } from "./kb.js";
 import { httpUrl, videoInfo, type MediaCard } from "./media.js";
 
-const MAX_PROMPT_CHARS = 400_000;
+/**
+ * How much KB text goes into the (cached) system prompt. A catalogue up to this size is included
+ * in full; a larger one gets a category guide with ISQs and a product index instead, and the
+ * matching products' details reach the bot per message through the SELLER CATALOGUE search.
+ */
+export const PROMPT_BUDGET = 300_000;
+/** Company pages beyond this are cut, so they can't crowd out the products. */
+const COMPANY_PAGES_BUDGET = 30_000;
 
 /** Text fields in the export are sometimes null, numbers, booleans or lists. */
 const str = z
@@ -119,7 +126,7 @@ export const sellerKbSchema = z.looseObject({
   company_pages: list(companyPage),
   photo_gallery: list(galleryItem),
   categories: list(category),
-  products: z.array(product).min(1, "must list at least one product").max(2000, "at most 2000 products"),
+  products: z.array(product).min(1, "must list at least one product").max(20_000, "at most 20,000 products"),
 });
 
 export type SellerKb = z.infer<typeof sellerKbSchema>;
@@ -228,9 +235,13 @@ export function validateSellerKb(input: unknown): KbValidation {
     if (missing.length) warnings.push(`categories[${i}] (${c.name}): ${missing.length} product id(s) not found in products, ignored`);
   }
   const view = new KbView(kb);
-  const size = view.systemText().length;
-  if (size > MAX_PROMPT_CHARS) {
-    return { ok: false, errors: [`The knowledge base is too large for the assistant (${size.toLocaleString()} characters of text; the limit is ${MAX_PROMPT_CHARS.toLocaleString()}).`] };
+  const plan = view.promptPlan();
+  if (plan.mode !== "full") {
+    warnings.unshift(
+      `Large catalogue (${plural(kb.products.length, "product")}, about ${plan.fullChars.toLocaleString()} characters): the assistant keeps ${
+        plan.mode === "index" ? "the categories, ISQs and a list of every product" : "the categories, ISQs and part of the product list"
+      } in memory and looks up each matching product's full details as buyers ask.`,
+    );
   }
   warnings.push("Prices, delivery and payment terms, turnover, staff numbers, year of establishment, GST, bank and rating details are not used by the bot (guardrails).");
   return { ok: true, kb, warnings, summary: view.summary() };
@@ -356,9 +367,10 @@ export class KbView {
     // A product's category: listed in the category's product_ids, else by category_id, else by taxonomy name.
     for (const c of kb.categories) for (const pid of c.product_ids) if (!this.categoryOfProduct.has(pid)) this.categoryOfProduct.set(pid, c);
     const byName = new Map(kb.categories.map((c) => [c.name.toLowerCase(), c]));
+    const byCategoryId = new Map(kb.categories.map((c) => [c.category_id, c]));
     for (const p of kb.products) {
       if (this.categoryOfProduct.has(p.product_id)) continue;
-      const c = (p.category_id && kb.categories.find((c) => c.category_id === p.category_id)) || byName.get((p.taxonomy?.category_name ?? "").toLowerCase());
+      const c = (p.category_id && byCategoryId.get(p.category_id)) || byName.get((p.taxonomy?.category_name ?? "").toLowerCase());
       if (c) this.categoryOfProduct.set(p.product_id, c);
     }
     for (const p of kb.products) {
@@ -392,7 +404,8 @@ export class KbView {
   /** The category's products: its product_ids in order, then any others linked to it by id or name. */
   productsIn(c: SellerKb["categories"][number]): KbProduct[] {
     const listed = c.product_ids.map((pid) => this.byId.get(pid)).filter((p): p is KbProduct => !!p);
-    const rest = (this.inCategory.get(c) ?? []).filter((p) => !listed.includes(p));
+    const listedSet = new Set(listed);
+    const rest = (this.inCategory.get(c) ?? []).filter((p) => !listedSet.has(p));
     return [...listed, ...rest];
   }
 
@@ -624,13 +637,18 @@ export class KbView {
     if (summary) lines.push(`Summary: ${summary}`);
     const seenParas = new Set<string>(summary ? [summary] : []);
     const pages: string[] = [];
+    let pagesChars = 0;
     for (const p of this.kb.company_pages) {
+      if (pagesChars > COMPANY_PAGES_BUDGET) break;
       if (!PAGES_ALLOWED.has(p.page_type)) continue;
       const paras = cleanText(p.text)
         .split("\n\n")
         .filter((para) => para.length > 20 && !seenParas.has(para));
       paras.forEach((para) => seenParas.add(para));
-      if (paras.length) pages.push(`${p.title.replace(/\s+-\s+.*$/, "") || p.page_type}:\n${paras.join("\n")}`);
+      if (!paras.length) continue;
+      const page = `${p.title.replace(/\s+-\s+.*$/, "") || p.page_type}:\n${paras.join("\n")}`.slice(0, COMPANY_PAGES_BUDGET - pagesChars + 1);
+      pages.push(page);
+      pagesChars += page.length;
     }
     if (pages.length) lines.push(`About the company (from our website):\n${pages.join("\n\n")}`);
     const m = this.companyMedia();
@@ -659,28 +677,80 @@ export class KbView {
     return lines.join("\n");
   }
 
+  private categoryGuide(c: SellerKb["categories"][number], maxProducts: number): string {
+    const products = this.productsIn(c);
+    const isqs = this.isqs(c);
+    const lines = [`### ${c.name}`];
+    const desc = cleanText(c.description);
+    if (desc) lines.push(maxProducts === Infinity ? desc : desc.slice(0, 300));
+    lines.push(`Products: ${this.productList(products, maxProducts)}`);
+    if (isqs.length) {
+      lines.push(`ISQs (ask one per message, in this order, offering the options with show_options):\n${isqs.map((q, i) => `${i + 1}. ${q.question}? Options: ${q.options.join(" / ")}`).join("\n")}`);
+    }
+    return lines.join("\n");
+  }
+
+  private productList(products: KbProduct[], max: number): string {
+    if (!products.length) return "none listed";
+    const shown = products.slice(0, max).map((p) => `${this.title(p)} (${this.slug(p)})`);
+    const more = products.length - shown.length;
+    if (!more) return shown.join("; ");
+    const note = `${shown.length ? `and ${more} more` : plural(more, "product")} (their details come up in the SELLER CATALOGUE when the buyer names them)`;
+    return shown.length ? `${shown.join("; ")}; ${note}` : note;
+  }
+
+  private guide(maxProducts: number): string {
+    const parts = this.kb.categories.map((c) => this.categoryGuide(c, maxProducts));
+    const loose = this.kb.products.filter((p) => !this.categoryOf(p));
+    if (loose.length) {
+      parts.push(`### Other products\nProducts: ${this.productList(loose, maxProducts)}`);
+    }
+    return parts.join("\n\n") || "No categories listed.";
+  }
+
+  private plan?: PromptPlan;
+
+  /**
+   * Fits the products into PROMPT_BUDGET: every product in full when it fits ("full"), else the
+   * category guide listing every product ("index"), else the guide with fewer products listed per
+   * category ("partial"). In the last two, product details come from the per-message catalogue search.
+   */
+  promptPlan(): PromptPlan {
+    if (this.plan) return this.plan;
+    const company = this.companyText();
+    const budget = PROMPT_BUDGET - company.length;
+    const fullGuide = this.guide(Infinity);
+    const full = `# Categories and their ISQs\n\n${fullGuide}\n\n# Products\n\n${this.kb.products.map((p) => this.productText(p)).join("\n\n---\n\n")}`;
+    const fullChars = company.length + full.length;
+    if (full.length <= budget) return (this.plan = { mode: "full", text: full, fullChars });
+    const note =
+      "This seller's catalogue is large, so only the categories, their ISQs and product names are listed here. The full details (specifications, description, media) of the products that match the buyer's message are given in <seller_catalogue> in each buyer turn. State specifications only from there; if the buyer's product isn't shown, ask for its name or model, or collect the requirement for our team.";
+    const compact = (guide: string) => `# Categories and their ISQs\n\n${note}\n\n${guide}`;
+    let text = compact(fullGuide);
+    if (text.length <= budget) return (this.plan = { mode: "index", text, fullChars });
+    for (const n of [500, 200, 100, 50, 20, 8, 3, 0]) {
+      text = compact(this.guide(n));
+      if (text.length <= budget) break;
+    }
+    // Very many categories: cut at a category boundary.
+    if (text.length > budget) text = `${text.slice(0, Math.max(0, budget - 200)).replace(/\n\n### [^]*$/, "")}\n\n(More categories are not listed here; they come up in the SELLER CATALOGUE.)`;
+    return (this.plan = { mode: "partial", text, fullChars });
+  }
+
   productCardsText(): string {
-    const guide = this.kb.categories
-      .map((c) => {
-        const products = this.productsIn(c);
-        const isqs = this.isqs(c);
-        const lines = [`### ${c.name}`];
-        const desc = cleanText(c.description);
-        if (desc) lines.push(desc);
-        lines.push(`Products: ${products.map((p) => `${this.title(p)} (${this.slug(p)})`).join("; ") || "none listed"}`);
-        if (isqs.length) {
-          lines.push(`ISQs (ask one per message, in this order, offering the options with show_options):\n${isqs.map((q, i) => `${i + 1}. ${q.question}? Options: ${q.options.join(" / ")}`).join("\n")}`);
-        }
-        return lines.join("\n");
-      })
-      .join("\n\n");
-    const products = this.kb.products.map((p) => this.productText(p)).join("\n\n---\n\n");
-    return `# Categories and their ISQs\n\n${guide || "No categories listed."}\n\n# Products\n\n${products}`;
+    return this.promptPlan().text;
   }
 
   systemText(): string {
     return this.companyText() + this.productCardsText();
   }
+}
+
+export interface PromptPlan {
+  mode: "full" | "index" | "partial";
+  text: string;
+  /** Size the KB would have in full, for the admin note. */
+  fullChars: number;
 }
 
 function dedupeVideos(items: Array<{ url: string; thumb: string; title: string }>, fallbackTitle: string): MediaCard[] {
