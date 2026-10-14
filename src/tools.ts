@@ -41,7 +41,7 @@ export const toolDefinitions: Anthropic.Beta.BetaTool[] = [
   {
     name: "save_lead",
     description:
-      "Pass the buyer's enquiry to our sales team. Only works after the mobile number is verified and the buyer has told you their name. Use an empty string for anything the buyer has not told you.",
+      "Pass the buyer's enquiry to our sales team. Call it as soon as the mobile number is verified and the buyer has told you their name, then call it again after the last qualification question with all the answers (the second call updates the same enquiry). Use an empty string for anything the buyer has not told you.",
     strict: true,
     eager_input_streaming: true,
     input_schema: {
@@ -145,6 +145,8 @@ export interface Lead {
   quantity: string;
   city: string;
   pageUrl?: string;
+  /** True when save_lead runs again after the ISQs: update this session's lead instead of adding one. */
+  update?: boolean;
 }
 
 export type LeadSink = (lead: Lead) => void;
@@ -165,9 +167,9 @@ export function describeLeadStatus(lead: LeadState): string {
     case "otp_sent":
       return `OTP sent to mobile ${maskMobile(lead.mobile!)}. Waiting for the buyer to type the OTP (${MAX_OTP_ATTEMPTS - lead.otpAttempts} attempts left).`;
     case "verified":
-      return `Mobile ${maskMobile(lead.mobile!)} verified. Ask for the buyer's name next, then call save_lead.`;
+      return `Mobile ${maskMobile(lead.mobile!)} verified. Ask for the buyer's name next, then call save_lead straight away.`;
     case "captured":
-      return `Enquiry already passed to our team for ${lead.name} (mobile ${maskMobile(lead.mobile!)}). Do not ask for contact details again.`;
+      return `Enquiry saved for ${lead.name} (mobile ${maskMobile(lead.mobile!)}). Do not ask for contact details again. Continue the qualification questions one at a time; after the last answer, call save_lead again with all the details to update the enquiry.`;
     case "locked":
       return lead.otpSends >= MAX_OTP_SENDS
         ? "OTP verification is locked for this chat after too many wrong attempts. Apologise and suggest the buyer tries again later."
@@ -246,7 +248,22 @@ export function executeTool(
 
     case "save_lead": {
       const input = parsed.data as z.infer<typeof inputSchemas.save_lead>;
-      if (lead.stage === "captured") return { content: "The enquiry was already saved. Confirm to the buyer that our team will contact them.", isError: true };
+      if (lead.stage === "captured" && lead.mobile && lead.name) {
+        opts.saveLead({
+          createdAt: new Date().toISOString(),
+          seller: session.seller,
+          sessionId: session.id,
+          mobile: lead.mobile,
+          name: lead.name,
+          product: input.product.trim(),
+          requirements: input.requirements.trim(),
+          quantity: input.quantity.trim(),
+          city: input.city.trim(),
+          pageUrl: opts.pageUrl,
+          update: true,
+        });
+        return { content: "Enquiry updated with these details. Tell the buyer in one short sentence that our team will contact them; do not promise a time.", isError: false };
+      }
       if (lead.stage !== "verified" || !lead.mobile) {
         return { content: `Cannot save yet: the mobile number must be verified with an OTP first. ${describeLeadStatus(lead)}`, isError: true };
       }
@@ -266,7 +283,11 @@ export function executeTool(
       });
       lead.stage = "captured";
       lead.name = name;
-      return { content: "Enquiry saved and passed to our team. Thank the buyer and confirm our team will contact them; do not promise a time.", isError: false };
+      return {
+        content:
+          "Enquiry saved. Thank the buyer in a few words, then ask the first qualification question you still need (with show_options). If none are left, confirm our team will contact them; do not promise a time.",
+        isError: false,
+      };
     }
   }
 }

@@ -93,9 +93,11 @@
     ".m a{color:inherit;text-decoration:underline}" +
     ".typing{display:inline-flex;gap:4px}.typing i{width:6px;height:6px;border-radius:50%;background:#9aa5b8;animation:b 1s infinite}.typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}" +
     "@keyframes b{0%,80%,100%{opacity:.3}40%{opacity:1}}" +
-    ".chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 10px;background:#f5f7fb}" +
-    ".chip{border:1px solid var(--c);color:var(--c);background:#fff;border-radius:999px;padding:6px 11px;font-size:13px;cursor:pointer}" +
-    ".chip:hover{background:var(--c);color:#fff}" +
+    ".chips{display:flex;flex-shrink:0;flex-wrap:wrap;gap:6px;align-self:flex-start;max-width:92%;margin-top:-2px}" +
+    ".chip{border:1px solid var(--c);color:var(--c);background:#fff;border-radius:999px;padding:6px 11px;font-size:13px;line-height:1.3;cursor:pointer;text-align:left}" +
+    ".chips.live .chip:hover{background:var(--c);color:#fff}" +
+    ".chips.used .chip{cursor:default;opacity:.45;border-color:#cfd6e2;color:#6b7588}" +
+    ".chips.used .chip.picked{opacity:1;border-color:var(--c);color:var(--c)}" +
     "form{display:flex;gap:8px;padding:10px;border-top:1px solid #e3e8f0;background:#fff}" +
     "input{flex:1;border:1px solid #cfd6e2;border-radius:10px;padding:10px 12px;font-size:15px;outline:none;min-width:0;color:#1d2433;background:#fff}" +
     "input:focus{border-color:var(--c)}" +
@@ -131,7 +133,6 @@
     '<button type="button" class="new" aria-label="Start a new chat" title="New chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></button>' +
     '<button type="button" class="x" aria-label="Close chat" title="Close">×</button></div>' +
     '<div class="log" aria-live="polite"></div>' +
-    '<div class="chips"></div>' +
     '<div class="hint" hidden></div>' +
     '<form><input aria-label="Type your message" autocomplete="off" maxlength="1000"/><button type="submit">Send</button></form>' +
     '<div class="foot">Virtual assistant · replies may be checked by our team</div>' +
@@ -141,7 +142,6 @@
   var bubble = root.querySelector(".bubble");
   var panel = root.querySelector(".panel");
   var log = root.querySelector(".log");
-  var chips = root.querySelector(".chips");
   var hint = root.querySelector(".hint");
   var form = root.querySelector("form");
   var input = root.querySelector("input");
@@ -283,19 +283,49 @@
     log.appendChild(wrap);
     log.scrollTop = log.scrollHeight;
   }
-  /** Reply buttons under the last bot message; tapping one sends it as the buyer's answer. */
-  function showChips(list, prefix) {
-    chips.innerHTML = "";
-    (list || []).forEach(function (label) {
+  /**
+   * Reply buttons inline in the conversation, right under the bot message that asked. Tapping one
+   * sends it as the buyer's answer. Once the buyer replies, the row stays as a greyed-out record
+   * with the chosen option highlighted (`picked`). Only the newest row is live.
+   */
+  function addChips(list, opts) {
+    opts = opts || {};
+    if (!list || !list.length) return null;
+    var row = document.createElement("div");
+    row.className = "chips " + (opts.live ? "live" : "used");
+    row.setAttribute("role", "group");
+    row.setAttribute("aria-label", "Suggested replies");
+    list.forEach(function (label) {
       var b = document.createElement("button");
-      b.className = "chip";
+      b.className = "chip" + (opts.picked === label ? " picked" : "");
       b.type = "button";
       b.textContent = label;
-      b.onclick = function () {
-        send(prefix ? prefix + label : label);
-      };
-      chips.appendChild(b);
+      if (opts.live) {
+        b.onclick = function () {
+          send(opts.prefix ? opts.prefix + label : label, label);
+        };
+      } else b.disabled = true;
+      row.appendChild(b);
     });
+    log.appendChild(row);
+    log.scrollTop = log.scrollHeight;
+    return row;
+  }
+  /** Retires the live chip row once the buyer answers; returns the option they tapped or typed, if any. */
+  function retireChips(text, tapped) {
+    var row = log.querySelector(".chips.live");
+    if (!row) return null;
+    row.className = "chips used";
+    var picked = null;
+    Array.prototype.forEach.call(row.querySelectorAll(".chip"), function (b) {
+      b.disabled = true;
+      b.onclick = null;
+      if (b.textContent === tapped || (!tapped && b.textContent.toLowerCase() === text.toLowerCase())) {
+        b.className = "chip picked";
+        picked = b.textContent;
+      }
+    });
+    return picked;
   }
 
   function greeting(c) {
@@ -341,12 +371,15 @@
     bubble.setAttribute("aria-label", "Chat with " + c.name);
     log.innerHTML = "";
     addMsg("bot", greeting(c));
-    state.history.forEach(function (h) {
+    var last = state.history.length - 1;
+    state.history.forEach(function (h, i) {
       if (h.text) addMsg(h.who, h.text);
       addCards(h.cards);
+      // Older saved chats kept the last options only in state.chips.
+      var rowChips = h.chips || (i === last && h.who === "bot" ? state.chips : null);
+      if (rowChips) addChips(rowChips, i === last && state.chips ? { live: true } : { picked: h.picked });
     });
-    if (state.history.length === 0) showChips(c.chips, "I'm looking for a ");
-    else showChips(state.chips);
+    if (state.history.length === 0) addChips(c.chips, { live: true, prefix: "I'm looking for a " });
     setAskFor(state.askFor);
   }
 
@@ -372,13 +405,15 @@
     bubble.setAttribute("aria-expanded", "false");
   }
 
-  function send(text) {
+  function send(text, tapped) {
     text = (text || "").trim();
     if (!text || sending || !current) return;
     sending = true;
     sendBtn.disabled = true;
     newBtn.disabled = true;
-    chips.innerHTML = "";
+    var picked = retireChips(text, tapped);
+    var prev = state.history[state.history.length - 1];
+    if (picked && prev && prev.who === "bot" && prev.chips) prev.picked = picked;
     state.chips = null;
     var seller = current;
     var display = state.askFor === "otp" ? "•".repeat(Math.min(text.length, 8)) : text;
@@ -454,9 +489,12 @@
         reply = reply.trim() || "Sorry, something went wrong. Please try again.";
         botEl.innerHTML = linkify(reply);
         addCards(replyCards);
-        state.history.push(replyCards ? { who: "bot", text: reply, cards: replyCards } : { who: "bot", text: reply });
+        var entry = { who: "bot", text: reply };
+        if (replyCards) entry.cards = replyCards;
+        if (replyChips) entry.chips = replyChips;
+        state.history.push(entry);
         state.chips = replyChips;
-        showChips(replyChips);
+        addChips(replyChips, { live: true });
         sending = false;
         sendBtn.disabled = false;
         newBtn.disabled = false;

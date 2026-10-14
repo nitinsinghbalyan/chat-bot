@@ -28,7 +28,7 @@
 Don't call them `CLAUDE_*`: the harness sets `CLAUDE_EFFORT`, which once clashed.
 
 ## Data on the Render disk (`/var/data`)
-- `chatbot.db`: sessions, transcript, leads, guardrail_events, seller_prompts (personas), platform_prompts (common prompts).
+- `chatbot.db`: sessions, transcript, leads, guardrail_events, seller_prompts (personas), platform_prompts (common prompts), prompt_versions (history of both).
 - `sellers/<slug>/catalogue.json`: runtime crawl.
 - `sellers/<slug>/seller_kb.json`: uploaded KB JSON.
 - Admin-added sellers: `sellers/<slug>/seller.json` + `seller_kb.json`.
@@ -41,4 +41,5 @@ Don't call them `CLAUDE_*`: the harness sets `CLAUDE_EFFORT`, which once clashed
 - Playwright is global: import `$(npm root -g)/playwright/index.mjs`, launch with `executablePath: "/opt/pw-browsers/chromium"`.
 - Branch workflow: after a PR merges, `git fetch origin main && git checkout -B claude/practical-clarke-0tbalp origin/main`, then push with `--force-with-lease`. Always fetch first: local `origin/main` goes stale after a merge done through the GitHub tools.
 - Testing big imports: copy a real export in the scratchpad and multiply its products (new ids and URLs); never commit it. Post it to the local server's `POST /admin/sellers` with `{config: {slug, name, siteUrl, color}, kb}`.
+- Chat flow checks: `e2e/flow.ts` in the scratchpad is a stateful fake model that walks machine → mobile → OTP → name → ISQ chips (recreate it if the scratchpad is gone).
 - Admin browser checks: add 3+ sellers through the API so the seller filter box shows (it appears above 3).

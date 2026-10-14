@@ -143,4 +143,14 @@ describe("seller prompts", () => {
     db.savePrompts("alpha", { system: " ", user: "" });
     expect(db.getPrompts("alpha").updatedAt).toBeNull();
   });
+
+  it("updates a session's lead when save_lead runs again after the ISQs", () => {
+    const db = new ChatDb(":memory:");
+    const lead = { createdAt: "2026-10-14T10:00:00Z", seller: "alpha", sessionId: "alpha:s1", mobile: "9876543210", name: "Ramesh", product: "Press Brake", requirements: "", quantity: "", city: "" };
+    db.insertLead(lead);
+    expect(db.updateLead("alpha", "alpha:s1", { product: "CNC Press Brake", requirements: "CNC, 3 m", quantity: "1", city: "Rajkot" })).toBe(true);
+    expect(db.updateLead("alpha", "alpha:other", { product: "", requirements: "", quantity: "", city: "" })).toBe(false);
+    expect(db.listLeads()).toHaveLength(1);
+    expect(db.listLeads()[0]).toMatchObject({ name: "Ramesh", product: "CNC Press Brake", requirements: "CNC, 3 m", city: "Rajkot" });
+  });
 });

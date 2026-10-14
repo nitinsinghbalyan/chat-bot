@@ -7,7 +7,9 @@ import { timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
-import type { ChatDb, SellerPersona } from "./db.js";
+import type { ChatDb, PromptVersion, SellerPersona } from "./db.js";
+import { diffLines } from "./diff.js";
+import { activeVersionId, COMMON_SCOPE, newerBuiltIn, recordVersion, sellerScope } from "./promptVersions.js";
 import { defaultSystemTemplate, REQUIRED_PLACEHOLDERS, sharedGuardrails, validateSystemTemplate } from "./prompts.js";
 import { SELLER_KB_TEMPLATE, validateSellerKb } from "./sellerKb.js";
 import { sellerConfigSchema, SLUG_RE, type SellerContext, type SellerRegistry } from "./sellers.js";
@@ -521,7 +523,146 @@ ${DROPZONE_SCRIPT}
     return `<script>document.querySelectorAll("textarea[data-count]").forEach(function (t) { var c = document.getElementById(t.getAttribute("data-count")); t.addEventListener("input", function () { c.textContent = t.value.length; }); });</script>`;
   }
 
-  function promptsForm(seller: SellerContext, values: SellerPersona, opts: { saved?: boolean; error?: string } = {}): string {
+  // ---- Prompt version history ----
+
+  const SOURCE_LABEL: Record<PromptVersion["source"], [string, "ok" | "info" | "warn" | ""]> = {
+    saved: ["Saved", ""],
+    reset: ["Reset to default", "warn"],
+    restored: ["Restored", "info"],
+    "built-in": ["Built-in default", "info"],
+  };
+  const noteField = `<div class="field note-field"><label for="note">What changed? <span class="muted small">(optional, kept in the version history)</span></label><input type="text" id="note" name="note" maxlength="200" placeholder="e.g. shorter replies, ask mobile number first"></div>`;
+  const versionLabel = (v: PromptVersion) => `v${v.number}`;
+
+  /** The Versions panel: newest first, the one in use badged Active, each with View and Restore. */
+  function versionsPanel(scope: string, current: { a: string; b: string }): string {
+    const versions = db.listPromptVersions(scope);
+    if (!versions.length) return "";
+    const active = activeVersionId(versions, current.a, current.b);
+    const rows = versions
+      .map((v) => {
+        const [label, tone] = SOURCE_LABEL[v.source];
+        return `<tr${v.id === active ? ' class="active"' : ""}>
+  <td><b>${versionLabel(v)}</b>${v.id === active ? ` ${badge("Active", "ok")}` : ""}</td>
+  <td class="nowrap">${esc(fmtIST(v.createdAt))}</td>
+  <td>${badge(label, tone)}</td>
+  <td class="muted">${esc(v.note)}</td>
+  <td class="nowrap actions"><a class="btn small" href="/admin/prompts/versions/${v.id}">View</a>${
+    v.id === active
+      ? ""
+      : `<form class="inline" method="post" action="/admin/prompts/versions/${v.id}/restore" onsubmit="return confirm('Restore ${versionLabel(v)}? It becomes the prompt in use straight away.')"><button class="btn small" type="submit">Restore</button></form>`
+  }</td>
+</tr>`;
+      })
+      .join("");
+    return `<section class="panel versions" id="versions"><h2>Versions</h2>
+<p class="muted small">Every save, reset, restore and shipped default is kept (the newest 50). View compares a version with what's in use now.</p>
+<div class="table-wrap"><table><thead><tr><th>Version</th><th>When</th><th>Type</th><th>Note</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+  }
+
+  /** Changed lines with 2 lines of context; longer unchanged stretches fold into one "… N unchanged lines" row. */
+  function diffHtml(lines: ReturnType<typeof diffLines>): string {
+    const near = lines.map((_, i) => lines.slice(Math.max(0, i - 2), i + 3).some((l) => l.op !== "same"));
+    const out: string[] = [];
+    let skipped = 0;
+    const flush = () => {
+      if (skipped) out.push(`<span class="d skip">… ${skipped} unchanged line${skipped === 1 ? "" : "s"}</span>`);
+      skipped = 0;
+    };
+    lines.forEach((l, i) => {
+      if (!near[i]) return void skipped++;
+      flush();
+      out.push(`<span class="d ${l.op}">${l.op === "add" ? "+ " : l.op === "del" ? "− " : "  "}${esc(l.text) || " "}</span>`);
+    });
+    flush();
+    return out.join("");
+  }
+
+  function diffBlock(title: string, from: string, to: string): string {
+    if (from.trim() === to.trim()) return `<div class="field"><label>${esc(title)}</label><p class="muted small">Same as the version in use.</p></div>`;
+    const lines = diffLines(to, from);
+    const added = lines.filter((l) => l.op === "add").length;
+    const removed = lines.filter((l) => l.op === "del").length;
+    return `<div class="field"><label>${esc(title)} <span class="muted small">compared with the version in use: <span class="d-add">+${added}</span> <span class="d-del">−${removed}</span> lines</span></label>
+<pre class="diff">${diffHtml(lines)}</pre></div>`;
+  }
+
+  /** Scope "seller:<slug>" → that seller (or null if it was deleted). */
+  const sellerOfScope = (scope: string) => (scope.startsWith("seller:") ? (sellers.get(scope.slice(7)) ?? null) : null);
+
+  function currentOf(scope: string): { a: string; b: string } | null {
+    if (scope === COMMON_SCOPE) return { a: sellers.common.system, b: sellers.common.guardrails };
+    const s = sellerOfScope(scope);
+    return s ? { a: s.persona.system, b: s.persona.user } : null;
+  }
+
+  app.get("/admin/prompts/versions/:id", requireAdmin, (req, res) => {
+    const v = db.getPromptVersion(Number(req.params.id));
+    const current = v && currentOf(v.scope);
+    if (!v || !current) return void notFound(res);
+    const seller = sellerOfScope(v.scope);
+    const labels = seller ? ["System prompt: brand persona", "User prompt: added to every buyer message"] : ["System prompt (common)", "Chat guardrails (common)"];
+    const back = seller ? `/admin/sellers/${encodeURIComponent(seller.config.slug)}/prompts#versions` : "/admin/prompts#versions";
+    const isActive = activeVersionId(db.listPromptVersions(v.scope), current.a, current.b) === v.id;
+    const [label, tone] = SOURCE_LABEL[v.source];
+    res.send(
+      shell(
+        `${versionLabel(v)}: ${seller ? seller.config.name : "Common prompts"}`,
+        `<div class="crumb"><a href="${back}">← ${seller ? `Brand persona: ${esc(seller.config.name)}` : "Common prompts"}</a></div>
+<div class="page-head"><div><h1>${versionLabel(v)} ${isActive ? badge("Active", "ok") : ""}</h1><p class="muted">${esc(seller ? `Brand persona for ${seller.config.name}` : "Common system prompt and guardrails")} · ${esc(fmtIST(v.createdAt))} · ${badge(label, tone)}${v.note ? ` · ${esc(v.note)}` : ""}</p></div>
+${isActive ? "" : `<form method="post" action="/admin/prompts/versions/${v.id}/restore" onsubmit="return confirm('Restore ${versionLabel(v)}? It becomes the prompt in use straight away.')"><button class="btn primary" type="submit">Restore this version</button></form>`}</div>
+<div class="panel">${diffBlock(labels[0], v.a, current.a)}${diffBlock(labels[1], v.b, current.b)}</div>
+<details class="panel preview"><summary>Full text of ${versionLabel(v)}</summary><h3>${esc(labels[0])}</h3><pre>${esc(v.a) || "<i>(empty)</i>"}</pre><h3>${esc(labels[1])}</h3><pre>${esc(v.b) || "<i>(empty)</i>"}</pre></details>`,
+        seller ? "sellers" : "prompts",
+      ),
+    );
+  });
+
+  app.post("/admin/prompts/versions/:id/restore", requireAdmin, sameOriginPost, (req, res) => {
+    const v = db.getPromptVersion(Number(req.params.id));
+    if (!v || !currentOf(v.scope)) return void notFound(res);
+    const note = `Restored ${versionLabel(v)}`;
+    if (v.scope === COMMON_SCOPE) {
+      const errors = validateSystemTemplate(v.a);
+      if (!v.b.trim()) errors.push("The guardrails must not be empty.");
+      if (errors.length) {
+        res.status(400).send(commonForm({ system: v.a, guardrails: v.b }, { errors }));
+        return;
+      }
+      applyCommon(v.a, v.b.trim());
+      recordVersion(db, COMMON_SCOPE, sellers.common.system, sellers.common.guardrails, "restored", note);
+      res.redirect(303, `/admin/prompts?restored=${v.number}`);
+      return;
+    }
+    const seller = sellerOfScope(v.scope)!;
+    const values: SellerPersona = { system: v.a.trim(), user: v.b.trim() };
+    const tooLong = (["system", "user"] as const).find((k) => values[k].length > PERSONA_LIMITS[k]);
+    if (tooLong) {
+      res.status(400).send(promptsForm(seller, values, { error: `The ${tooLong} prompt is too long to restore (${values[tooLong].length} of ${PERSONA_LIMITS[tooLong]} characters).` }));
+      return;
+    }
+    applyPersona(seller, values);
+    recordVersion(db, v.scope, seller.persona.system, seller.persona.user, "restored", note);
+    res.redirect(303, `/admin/sellers/${encodeURIComponent(seller.config.slug)}/prompts?restored=${v.number}`);
+  });
+
+  /** Saves a persona; the seller's own default (persona.json) is stored as "no override". */
+  function applyPersona(seller: SellerContext, values: SellerPersona) {
+    const d = seller.defaultPersona;
+    const isDefault = values.system === d.system.trim() && values.user === d.user.trim();
+    db.savePrompts(seller.config.slug, isDefault ? { system: "", user: "" } : values);
+    // Clearing (or saving both empty) goes back to the seller's default persona from persona.json.
+    sellers.setPersona(seller.config.slug, isDefault || !(values.system || values.user) ? d : values);
+  }
+
+  /** Saves the common prompts, storing only what differs from the defaults so later edits to prompts/ still apply. */
+  function applyCommon(system: string, guardrails: string) {
+    db.setPlatformPrompt("system", system.trim() === defaultSystemTemplate().trim() ? null : system);
+    db.setPlatformPrompt("guardrails", guardrails === sharedGuardrails() ? null : guardrails);
+    sellers.setCommonPrompts({ system, guardrails });
+  }
+
+  function promptsForm(seller: SellerContext, values: SellerPersona, opts: { saved?: boolean; error?: string; restored?: string } = {}): string {
     const slug = esc(seller.config.slug);
     const updated = db.getPrompts(seller.config.slug).updatedAt;
     const box = (name: "system" | "user", label: string, help: string, placeholder: string, rows: number) => `
@@ -538,6 +679,7 @@ ${DROPZONE_SCRIPT}
 <div class="page-head"><div><h1>Brand persona</h1><p class="muted">${esc(seller.config.name)} · added on top of the <a href="/admin/prompts">common system prompt and guardrails</a>, which always win if anything conflicts.</p></div>
 <a class="btn" href="/s/${slug}/" target="_blank" rel="noopener">View site ↗</a></div>
 ${opts.saved ? '<div class="flash ok">✓ Saved. New chat turns use these prompts straight away.</div>' : ""}
+${opts.restored ? `<div class="flash ok">✓ Restored v${esc(opts.restored)}. New chat turns use it straight away.</div>` : ""}
 ${opts.error ? `<div class="flash err">${esc(opts.error)}</div>` : ""}
 <form method="post" action="/admin/sellers/${slug}/prompts" class="panel">
 ${box(
@@ -554,8 +696,10 @@ ${box(
   "Example: Always ask which material and thickness the buyer works with before suggesting a machine.",
   5,
 )}
+${noteField}
 <div class="btn-row"><button class="btn primary" type="submit">Save</button><button class="btn" type="submit" name="clear" value="1" onclick="return confirm('Reset both prompts to this seller\\'s default?')">Reset to default</button><span class="muted small">${updated ? `Last saved ${esc(fmtIST(updated))}` : hasDefault ? `Using the default from <code>persona.json</code>` : "Not saved yet"}</span></div>
 </form>
+${versionsPanel(sellerScope(seller.config.slug), { a: seller.persona.system, b: seller.persona.user })}
 <details class="panel preview"><summary>Full system prompt preview (as the assistant sees it)</summary><pre>${esc(seller.systemPrompt)}</pre></details>
 ${counterScript()}`,
       "sellers",
@@ -565,7 +709,8 @@ ${counterScript()}`,
   app.get("/admin/sellers/:seller/prompts", requireAdmin, (req, res) => {
     const seller = sellerParam(req);
     if (!seller) return void notFound(res);
-    res.send(promptsForm(seller, seller.persona, { saved: req.query.saved === "1" }));
+    const restored = typeof req.query.restored === "string" && /^\d+$/.test(req.query.restored) ? req.query.restored : undefined;
+    res.send(promptsForm(seller, seller.persona, { saved: req.query.saved === "1", restored }));
   });
 
   app.post("/admin/sellers/:seller/prompts", requireAdmin, sameOriginPost, express.urlencoded({ extended: false, limit: "64kb" }), (req, res) => {
@@ -580,15 +725,14 @@ ${counterScript()}`,
       res.status(400).send(promptsForm(seller, values, { error: `The ${tooLong} prompt is too long (${values[tooLong].length} of ${PERSONA_LIMITS[tooLong]} characters).` }));
       return;
     }
-    db.savePrompts(seller.config.slug, values);
-    // Clearing (or saving both empty) goes back to the seller's default persona from persona.json.
-    sellers.setPersona(seller.config.slug, values.system || values.user ? values : seller.defaultPersona);
+    applyPersona(seller, values);
+    recordVersion(db, sellerScope(seller.config.slug), seller.persona.system, seller.persona.user, clear ? "reset" : "saved", String(req.body?.note ?? "").trim());
     res.redirect(303, `/admin/sellers/${encodeURIComponent(seller.config.slug)}/prompts?saved=1`);
   });
 
   // ---- Common system prompt and guardrails (every seller) ----
 
-  function commonForm(values: { system: string; guardrails: string }, opts: { saved?: boolean; errors?: string[] } = {}): string {
+  function commonForm(values: { system: string; guardrails: string }, opts: { saved?: boolean; errors?: string[]; restored?: string } = {}): string {
     const sys = db.getPlatformPrompt("system");
     const gr = db.getPlatformPrompt("guardrails");
     const own = sellers.list().filter((s) => s.ownGuardrails !== null);
@@ -597,6 +741,8 @@ ${counterScript()}`,
       "Common prompts",
       `<div class="page-head"><div><h1>Common system prompt and guardrails</h1><p class="muted">These apply to <b>${sellers.size === 1 ? "the 1 seller" : `all ${sellers.size} sellers`}</b>. Each seller adds its own knowledge base and brand persona on top.${own.length ? ` Sellers with their own <code>guardrails.md</code> keep it: ${own.map((s) => esc(s.config.name)).join(", ")}.` : ""}</p></div></div>
 ${opts.saved ? '<div class="flash ok">✓ Saved. Every seller uses these from the next chat turn.</div>' : ""}
+${opts.restored ? `<div class="flash ok">✓ Restored v${esc(opts.restored)}. Every seller uses it from the next chat turn.</div>` : ""}
+${builtInBanner()}
 ${opts.errors?.length ? `<div class="flash err">Not saved:<ul>${opts.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
 <form method="post" action="/admin/prompts" class="panel">
 <div class="field">
@@ -609,15 +755,26 @@ ${opts.errors?.length ? `<div class="flash err">Not saved:<ul>${opts.errors.map(
   <span class="hint">Inserted at <code>{{GUARDRAILS}}</code>. Code-level checks (prices, freight, contacts, stock, payment and ID, delivery, GST) run on every reply whatever this text says.</span>
   <textarea id="guardrails" name="guardrails" rows="18">${esc(values.guardrails)}</textarea>
 </div>
+${noteField}
 <div class="btn-row"><button class="btn primary" type="submit">Save for all sellers</button><button class="btn" type="submit" name="reset" value="1" onclick="return confirm('Reset both to the defaults in prompts/?')">Reset to defaults</button></div>
 </form>
+${versionsPanel(COMMON_SCOPE, { a: sellers.common.system, b: sellers.common.guardrails })}
 ${preview ? `<details class="panel preview"><summary>Preview: full system prompt for ${esc(preview.config.name)}</summary><pre>${esc(preview.systemPrompt)}</pre></details>` : ""}`,
       "prompts",
     );
   }
 
+  /** Shown when an edited common prompt is in use but a deploy has shipped a newer built-in default. */
+  function builtInBanner(): string {
+    const v = newerBuiltIn(db, sellers);
+    if (!v) return "";
+    return `<div class="flash warn"><b>A newer built-in prompt was deployed on ${esc(fmtIST(v.createdAt))}.</b> You're using an edited version, so the bot isn't using the new default yet.
+<div class="btn-row" style="margin-top:8px"><a class="btn small" href="/admin/prompts/versions/${v.id}">Compare</a><form class="inline" method="post" action="/admin/prompts/versions/${v.id}/restore" onsubmit="return confirm('Use the new built-in prompt for all sellers? Your edited version stays in the history.')"><button class="btn small primary" type="submit">Use the new built-in</button></form></div></div>`;
+  }
+
   app.get("/admin/prompts", requireAdmin, (req, res) => {
-    res.send(commonForm(sellers.common, { saved: req.query.saved === "1" }));
+    const restored = typeof req.query.restored === "string" && /^\d+$/.test(req.query.restored) ? req.query.restored : undefined;
+    res.send(commonForm(sellers.common, { saved: req.query.saved === "1", restored }));
   });
 
   app.post("/admin/prompts", requireAdmin, sameOriginPost, express.urlencoded({ extended: false, limit: "256kb" }), (req, res) => {
@@ -625,6 +782,7 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
       db.setPlatformPrompt("system", null);
       db.setPlatformPrompt("guardrails", null);
       sellers.setCommonPrompts({ system: null, guardrails: null });
+      recordVersion(db, COMMON_SCOPE, sellers.common.system, sellers.common.guardrails, "reset", String(req.body?.note ?? "").trim());
       res.redirect(303, "/admin/prompts?saved=1");
       return;
     }
@@ -637,10 +795,8 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
       res.status(400).send(commonForm({ system, guardrails }, { errors }));
       return;
     }
-    // Store only what differs from the defaults, so later edits to prompts/ still apply.
-    db.setPlatformPrompt("system", system.trim() === defaultSystemTemplate().trim() ? null : system);
-    db.setPlatformPrompt("guardrails", guardrails === sharedGuardrails() ? null : guardrails);
-    sellers.setCommonPrompts({ system, guardrails });
+    applyCommon(system, guardrails);
+    recordVersion(db, COMMON_SCOPE, sellers.common.system, sellers.common.guardrails, "saved", String(req.body?.note ?? "").trim());
     res.redirect(303, "/admin/prompts?saved=1");
   });
 

@@ -93,6 +93,17 @@ CREATE TABLE IF NOT EXISTS platform_prompts (
   updated_at  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS prompt_versions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope       TEXT NOT NULL,
+  a           TEXT NOT NULL,
+  b           TEXT NOT NULL,
+  source      TEXT NOT NULL,
+  note        TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS prompt_versions_scope ON prompt_versions (scope, id);
+
 CREATE TABLE IF NOT EXISTS seller_prompts (
   seller          TEXT PRIMARY KEY,
   system_persona  TEXT NOT NULL DEFAULT '',
@@ -192,8 +203,29 @@ export class ChatDb {
           `INSERT INTO leads (created_at, seller, session_id, mobile, name, product, requirements, quantity, city, page_url)
            VALUES (@createdAt, @seller, @sessionId, @mobile, @name, @product, @requirements, @quantity, @city, @pageUrl)`,
         )
-        .run({ ...lead, pageUrl: lead.pageUrl ?? null }).lastInsertRowid,
+        .run({
+          createdAt: lead.createdAt,
+          seller: lead.seller,
+          sessionId: lead.sessionId,
+          mobile: lead.mobile,
+          name: lead.name,
+          product: lead.product,
+          requirements: lead.requirements,
+          quantity: lead.quantity,
+          city: lead.city,
+          pageUrl: lead.pageUrl ?? null,
+        }).lastInsertRowid,
     );
+  }
+
+  /** Updates the requirement details of a session's lead (save_lead called again after the ISQs). */
+  updateLead(seller: string, sessionId: string, fields: Pick<Lead, "product" | "requirements" | "quantity" | "city">): boolean {
+    const row = this.db.prepare("SELECT id FROM leads WHERE seller = ? AND session_id = ? ORDER BY id DESC LIMIT 1").get(seller, sessionId) as { id: number } | undefined;
+    if (!row) return false;
+    this.db
+      .prepare("UPDATE leads SET product = @product, requirements = @requirements, quantity = @quantity, city = @city WHERE id = @id")
+      .run({ ...fields, id: row.id });
+    return true;
   }
 
   listLeads(limit = 500, seller?: string): StoredLead[] {
@@ -271,7 +303,72 @@ export class ChatDb {
       .run(seller, p.system, p.user, new Date().toISOString());
   }
 
+  /**
+   * Prompt history. Scope "common" holds the system prompt (a) and guardrails (b); scope
+   * "seller:<slug>" holds a brand persona's system (a) and user (b) parts. The newest 50 per scope are kept.
+   */
+  addPromptVersion(v: { scope: string; a: string; b: string; source: PromptVersionSource; note?: string }): number {
+    const id = Number(
+      this.db
+        .prepare("INSERT INTO prompt_versions (scope, a, b, source, note, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(v.scope, v.a, v.b, v.source, (v.note ?? "").slice(0, 200), new Date().toISOString()).lastInsertRowid,
+    );
+    this.db
+      .prepare("DELETE FROM prompt_versions WHERE scope = ? AND id NOT IN (SELECT id FROM prompt_versions WHERE scope = ? ORDER BY id DESC LIMIT 50)")
+      .run(v.scope, v.scope);
+    return id;
+  }
+
+  /** Newest first, each with its version number within the scope (v1 = oldest kept). */
+  listPromptVersions(scope: string): PromptVersion[] {
+    const rows = this.db.prepare("SELECT * FROM prompt_versions WHERE scope = ? ORDER BY id DESC").all(scope) as Record<string, any>[];
+    const first = (this.db.prepare("SELECT COUNT(*) AS n FROM prompt_versions WHERE scope = ?").get(scope) as { n: number }).n;
+    return rows.map((r, i) => toVersion(r, first - i));
+  }
+
+  getPromptVersion(id: number): PromptVersion | null {
+    const r = this.db.prepare("SELECT * FROM prompt_versions WHERE id = ?").get(id) as Record<string, any> | undefined;
+    if (!r) return null;
+    const n = (this.db.prepare("SELECT COUNT(*) AS n FROM prompt_versions WHERE scope = ? AND id <= ?").get(r.scope, r.id) as { n: number }).n;
+    return toVersion(r, n);
+  }
+
+  /** The newest version of a scope from a given source (e.g. the last built-in default recorded). */
+  latestPromptVersion(scope: string, source?: PromptVersionSource): PromptVersion | null {
+    const r = (
+      source
+        ? this.db.prepare("SELECT id FROM prompt_versions WHERE scope = ? AND source = ? ORDER BY id DESC LIMIT 1").get(scope, source)
+        : this.db.prepare("SELECT id FROM prompt_versions WHERE scope = ? ORDER BY id DESC LIMIT 1").get(scope)
+    ) as { id: number } | undefined;
+    return r ? this.getPromptVersion(r.id) : null;
+  }
+
   close() {
     this.db.close();
   }
 }
+
+export type PromptVersionSource = "saved" | "reset" | "restored" | "built-in";
+
+export interface PromptVersion {
+  id: number;
+  /** Position within its scope, 1 = oldest kept. */
+  number: number;
+  scope: string;
+  a: string;
+  b: string;
+  source: PromptVersionSource;
+  note: string;
+  createdAt: string;
+}
+
+const toVersion = (r: Record<string, any>, number: number): PromptVersion => ({
+  id: r.id,
+  number,
+  scope: r.scope,
+  a: r.a,
+  b: r.b,
+  source: r.source,
+  note: r.note ?? "",
+  createdAt: r.created_at,
+});
