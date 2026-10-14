@@ -41,7 +41,7 @@ export const toolDefinitions: Anthropic.Beta.BetaTool[] = [
   {
     name: "save_lead",
     description:
-      "Pass the buyer's enquiry to our sales team. Call it as soon as the mobile number is verified and the buyer has told you their name, then call it again after the last qualification question with all the answers (the second call updates the same enquiry). Use an empty string for anything the buyer has not told you.",
+      "Pass the buyer's enquiry to our sales team. Call it as soon as the mobile number is verified and the buyer has told you their name, then call it again after the last qualification question with all the answers and complete set to true (later calls update the same enquiry). When complete is true the buyer sees a summary card of the enquiry. Use an empty string or empty list for anything the buyer has not told you.",
     strict: true,
     eager_input_streaming: true,
     input_schema: {
@@ -49,14 +49,31 @@ export const toolDefinitions: Anthropic.Beta.BetaTool[] = [
       properties: {
         name: { type: "string", description: "The buyer's name as they typed it." },
         product: { type: "string", description: "The machine the buyer is enquiring about." },
+        specs: {
+          type: "array",
+          description: "The buyer's answers to the qualification questions, one item per question, in the order asked, e.g. {label: \"Material\", value: \"Mild steel\"}. Empty list if none yet.",
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string", description: "Short name of the specification, e.g. Material, Sheet thickness, Bed length." },
+              value: { type: "string", description: "The buyer's answer, with unit." },
+            },
+            required: ["label", "value"],
+            additionalProperties: false,
+          },
+        },
         requirements: {
           type: "string",
-          description: "The requirement details the buyer shared, e.g. qualification answers such as sheet thickness, length, capacity, material. Empty string if none.",
+          description: "Any other requirement details the buyer shared that are not in specs. Empty string if none.",
         },
         quantity: { type: "string", description: "Quantity the buyer mentioned, with unit. Empty string if not mentioned." },
         city: { type: "string", description: "Buyer's city or delivery location if mentioned. Empty string if not mentioned." },
+        complete: {
+          type: "boolean",
+          description: "True once every qualification question is answered (or none apply), and when saving a correction the buyer made afterwards. False on the first save before the qualification questions.",
+        },
       },
-      required: ["name", "product", "requirements", "quantity", "city"],
+      required: ["name", "product", "specs", "requirements", "quantity", "city", "complete"],
       additionalProperties: false,
     },
   },
@@ -105,9 +122,14 @@ const inputSchemas = {
     .object({
       name: z.string().max(100),
       product: z.string().max(200),
+      specs: z
+        .array(z.object({ label: z.string().trim().max(60), value: z.string().trim().max(200) }).strict())
+        .max(20, "give at most 20 specs")
+        .default([]),
       requirements: z.string().max(1500),
       quantity: z.string().max(100),
       city: z.string().max(100),
+      complete: z.boolean().default(false),
     })
     .strict(),
   show_options: z
@@ -124,11 +146,17 @@ const inputSchemas = {
 
 export type ToolName = keyof typeof inputSchemas;
 
+/** The enquiry summary card shown to the buyer once requirement gathering is complete. */
+export interface EnquirySummary {
+  rows: Array<{ label: string; value: string }>;
+  note: string;
+}
+
 export interface ToolResult {
   content: string;
   isError: boolean;
-  /** What the chat window should show: reply buttons or media cards. */
-  ui?: { chips?: string[]; cards?: MediaCard[] };
+  /** What the chat window should show: reply buttons, media cards or the enquiry summary. */
+  ui?: { chips?: string[]; cards?: MediaCard[]; summary?: EnquirySummary };
 }
 
 /** Resolves share_media requests against the seller's KB and catalogue (see shareMedia.ts). */
@@ -160,6 +188,33 @@ export function normalizeMobile(raw: string): string | null {
 
 const maskMobile = (m: string) => `${"x".repeat(6)}${m.slice(-4)}`;
 
+type SaveLeadInput = z.infer<typeof inputSchemas.save_lead>;
+
+/** The specs that have an answer, with tidy labels. */
+const answeredSpecs = (input: SaveLeadInput) => input.specs.filter((s) => s.label && s.value);
+
+/** What goes in the lead's requirements column: "Material: Mild steel; Thickness: 6 mm; <other notes>". */
+export function requirementsText(input: SaveLeadInput): string {
+  return [...answeredSpecs(input).map((s) => `${s.label}: ${s.value}`), input.requirements.trim()].filter(Boolean).join("; ");
+}
+
+/** The summary card: the machine, each spec, quantity, city, name and the masked mobile; empty rows left out. */
+export function enquirySummary(input: SaveLeadInput, name: string, mobile: string): EnquirySummary {
+  const rows = [
+    { label: "Machine", value: input.product.trim() },
+    ...answeredSpecs(input),
+    { label: "Other details", value: input.requirements.trim() },
+    { label: "Quantity", value: input.quantity.trim() },
+    { label: "City", value: input.city.trim() },
+    { label: "Name", value: name },
+    { label: "Mobile", value: maskMobile(mobile) },
+  ].filter((r) => r.value);
+  return { rows, note: `Our team will contact you on ${maskMobile(mobile)}.` };
+}
+
+const SUMMARY_SHOWN =
+  "The buyer now sees a summary card with all these details. In one short sentence, say our team will contact them and ask if anything needs changing, then call show_options with \"All correct\" and \"Change a detail\". Do not repeat the details or promise a time.";
+
 export function describeLeadStatus(lead: LeadState): string {
   switch (lead.stage) {
     case "none":
@@ -169,7 +224,9 @@ export function describeLeadStatus(lead: LeadState): string {
     case "verified":
       return `Mobile ${maskMobile(lead.mobile!)} verified. Ask for the buyer's name next, then call save_lead straight away.`;
     case "captured":
-      return `Enquiry saved for ${lead.name} (mobile ${maskMobile(lead.mobile!)}). Do not ask for contact details again. Continue the qualification questions one at a time; after the last answer, call save_lead again with all the details to update the enquiry.`;
+      return lead.summarized
+        ? `Enquiry saved for ${lead.name} (mobile ${maskMobile(lead.mobile!)}) and the buyer has seen the summary card. Do not ask for contact details again. If the buyer corrects or adds a detail, call save_lead again with all the details and complete set to true; this updates the enquiry and shows a new summary.`
+        : `Enquiry saved for ${lead.name} (mobile ${maskMobile(lead.mobile!)}). Do not ask for contact details again. Continue the qualification questions one at a time; after the last answer, call save_lead again with all the details and complete set to true.`;
     case "locked":
       return lead.otpSends >= MAX_OTP_SENDS
         ? "OTP verification is locked for this chat after too many wrong attempts. Apologise and suggest the buyer tries again later."
@@ -247,45 +304,37 @@ export function executeTool(
     }
 
     case "save_lead": {
-      const input = parsed.data as z.infer<typeof inputSchemas.save_lead>;
+      const input = parsed.data as SaveLeadInput;
+      const fields = {
+        product: input.product.trim(),
+        requirements: requirementsText(input),
+        quantity: input.quantity.trim(),
+        city: input.city.trim(),
+        pageUrl: opts.pageUrl,
+      };
       if (lead.stage === "captured" && lead.mobile && lead.name) {
-        opts.saveLead({
-          createdAt: new Date().toISOString(),
-          seller: session.seller,
-          sessionId: session.id,
-          mobile: lead.mobile,
-          name: lead.name,
-          product: input.product.trim(),
-          requirements: input.requirements.trim(),
-          quantity: input.quantity.trim(),
-          city: input.city.trim(),
-          pageUrl: opts.pageUrl,
-          update: true,
-        });
-        return { content: "Enquiry updated with these details. Tell the buyer in one short sentence that our team will contact them; do not promise a time.", isError: false };
+        opts.saveLead({ createdAt: new Date().toISOString(), seller: session.seller, sessionId: session.id, mobile: lead.mobile, name: lead.name, ...fields, update: true });
+        if (!input.complete) {
+          return { content: "Enquiry updated. Continue with the next qualification question; after the last one, call save_lead again with complete set to true.", isError: false };
+        }
+        lead.summarized = true;
+        return { content: `Enquiry updated. ${SUMMARY_SHOWN}`, isError: false, ui: { summary: enquirySummary(input, lead.name, lead.mobile) } };
       }
       if (lead.stage !== "verified" || !lead.mobile) {
         return { content: `Cannot save yet: the mobile number must be verified with an OTP first. ${describeLeadStatus(lead)}`, isError: true };
       }
       const name = input.name.trim();
       if (name.length < 2) return { content: "Missing the buyer's name. Ask for it first.", isError: true };
-      opts.saveLead({
-        createdAt: new Date().toISOString(),
-        seller: session.seller,
-        sessionId: session.id,
-        mobile: lead.mobile,
-        name,
-        product: input.product.trim(),
-        requirements: input.requirements.trim(),
-        quantity: input.quantity.trim(),
-        city: input.city.trim(),
-        pageUrl: opts.pageUrl,
-      });
+      opts.saveLead({ createdAt: new Date().toISOString(), seller: session.seller, sessionId: session.id, mobile: lead.mobile, name, ...fields });
       lead.stage = "captured";
       lead.name = name;
+      if (input.complete) {
+        lead.summarized = true;
+        return { content: `Enquiry saved. ${SUMMARY_SHOWN}`, isError: false, ui: { summary: enquirySummary(input, name, lead.mobile) } };
+      }
       return {
         content:
-          "Enquiry saved. Thank the buyer in a few words, then ask the first qualification question you still need (with show_options). If none are left, confirm our team will contact them; do not promise a time.",
+          "Enquiry saved. Thank the buyer in a few words, then ask the first qualification question you still need (with show_options). After the last answer, call save_lead again with complete set to true.",
         isError: false,
       };
     }

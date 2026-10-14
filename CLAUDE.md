@@ -28,7 +28,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 | **repo seller / admin seller** | Seller from `kb/sellers/<slug>/` vs one added via **+ Add seller** (stored on the data disk) |
 | **large catalogue** | KB over ~300k chars: prompt keeps categories, ISQs and a product index; details come per message from catalogue search |
 | **prompt versions** | Every save/reset/restore of common prompts and personas, plus each shipped default, kept with View (diff) and Restore |
-| **traces** | Langfuse: one per buyer message, chats as Sessions; mobiles masked, OTPs never sent; off without `LANGFUSE_*` keys |
+| **traces** | Langfuse: one per buyer message, chats as Sessions; mobiles masked, OTPs never sent; per-chat cost = `chat_cost_usd` session score; off without `LANGFUSE_*` keys; status on `/health` + `/admin` |
 | **seller row / Manage** | `/admin` lists sellers as one-line rows; **Manage** expands the controls |
 | **model** | `claude-sonnet-5-5`, effort low, 1M context; system prompt ~43k tokens (Jayshree), cached |
 | **demo OTP** | `12345`; no SMS gateway yet |
@@ -45,7 +45,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 - **The bot never states, confirms or estimates a price**; it says the seller's team confirms prices. The **website still shows** listed starting prices.
 - The bot is grounded only in the seller's KB (business card, product cards, crawled catalogue). Guardrails win over the persona and seller notes.
 - **Never feed the bot** the export's prices, delivery or payment terms, turnover, staff, year of establishment, GST, bank or rating data. Never commit a seller's raw export to git: it holds GST, bank and turnover details. Upload it on `/admin`.
-- Enquiry order: machine → mobile → OTP → name (lead saved) → ISQ chips → lead updated. OTP and save rules enforced on the server. Replies short (1–2 sentences).
+- Enquiry order: machine → mobile → OTP → name (lead saved) → ISQ chips → lead updated + **summary card** (buyer can correct). OTP and save rules enforced on the server. Replies short (1–2 sentences).
 - Chat widget sits **bottom-right**. The public directory `/` is **visit-only** (no chat there).
 
 ## How we work

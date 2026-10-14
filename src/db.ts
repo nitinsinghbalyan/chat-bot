@@ -18,6 +18,8 @@ export interface StoredSession {
   turns: number;
   createdAt: number;
   lastSeen: number;
+  /** Running token and cost totals for the chat (see ChatUsage in session.ts). */
+  usage?: unknown;
 }
 
 export interface StoredLead extends Lead {
@@ -129,6 +131,9 @@ export class ChatDb {
     if (!(this.db.prepare("PRAGMA table_info(transcript)").all() as Array<{ name: string }>).some((c) => c.name === "trace_id")) {
       this.db.exec("ALTER TABLE transcript ADD COLUMN trace_id TEXT");
     }
+    if (!(this.db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>).some((c) => c.name === "usage")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN usage TEXT");
+    }
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS leads_seller ON leads(seller, id);
       CREATE INDEX IF NOT EXISTS guardrail_events_seller ON guardrail_events(seller, id);
@@ -167,16 +172,18 @@ export class ChatDb {
       turns: row.turns,
       createdAt: row.created_at,
       lastSeen: row.last_seen,
+      usage: row.usage ? JSON.parse(row.usage) : undefined,
     };
   }
 
   saveSession(s: StoredSession) {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, seller, messages, lead, seen_catalogue, pending_notes, last_query, turns, created_at, last_seen)
-         VALUES (@id, @seller, @messages, @lead, @seenCatalogue, @pendingNotes, @lastQuery, @turns, @createdAt, @lastSeen)
+        `INSERT INTO sessions (id, seller, messages, lead, seen_catalogue, pending_notes, last_query, turns, created_at, last_seen, usage)
+         VALUES (@id, @seller, @messages, @lead, @seenCatalogue, @pendingNotes, @lastQuery, @turns, @createdAt, @lastSeen, @usage)
          ON CONFLICT(id) DO UPDATE SET messages = excluded.messages, lead = excluded.lead, seen_catalogue = excluded.seen_catalogue,
-           pending_notes = excluded.pending_notes, last_query = excluded.last_query, turns = excluded.turns, last_seen = excluded.last_seen`,
+           pending_notes = excluded.pending_notes, last_query = excluded.last_query, turns = excluded.turns, last_seen = excluded.last_seen,
+           usage = excluded.usage`,
       )
       .run({
         ...s,
@@ -184,6 +191,7 @@ export class ChatDb {
         lead: JSON.stringify(s.lead),
         seenCatalogue: JSON.stringify(s.seenCatalogue),
         pendingNotes: JSON.stringify(s.pendingNotes),
+        usage: s.usage === undefined ? null : JSON.stringify(s.usage),
       });
   }
 

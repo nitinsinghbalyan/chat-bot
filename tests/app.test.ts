@@ -123,6 +123,25 @@ describe("chat API", () => {
     expect(db.transcript(`${ALPHA}:app-test-session`).map((t) => t.role)).toEqual(["buyer", "bot", "buyer", "bot", "buyer", "bot"]);
   });
 
+  it("sends the enquiry summary card once the specs are in, and keeps the chat's running cost", async () => {
+    const input = { name: "Ramesh", product: "Press Brake", specs: [{ label: "Material", value: "Mild steel" }], requirements: "", quantity: "1 piece", city: "Rajkot", complete: true };
+    script.push(
+      { content: [{ type: "tool_use", id: "d", name: "save_lead", input }], stop_reason: "tool_use" },
+      { content: [{ type: "text", text: "Our team will contact you. Anything to change?" }], stop_reason: "end_turn" },
+    );
+    const { body } = await chat(ALPHA, "Mild steel");
+    const summary = JSON.parse(body.match(/event: summary\ndata: (.*)\n/)![1]).summary;
+    expect(summary.rows).toContainEqual({ label: "Material", value: "Mild steel" });
+    expect(summary.note).toBe("Our team will contact you on xxxxxx3210.");
+    expect(body).not.toContain("9876543210");
+    // Still one lead, now with the specs; admin's transcript shows what the buyer saw.
+    expect(db.listLeads(10, ALPHA)).toHaveLength(1);
+    expect(db.listLeads(10, ALPHA)[0]).toMatchObject({ requirements: "Material: Mild steel", city: "Rajkot" });
+    expect(db.transcript(`${ALPHA}:app-test-session`).at(-1)!.text).toContain("[Summary: Machine: Press Brake; Material: Mild steel; Quantity: 1 piece; City: Rajkot; Name: =Ramesh; Mobile: xxxxxx3210]");
+    // 4 buyer messages, 2 Claude calls each at 1 + 1 tokens, kept across restarts.
+    expect(db.loadSession(`${ALPHA}:app-test-session`)?.usage).toMatchObject({ turns: 4, input: 8, output: 8, costKnown: true });
+  });
+
   it("uses each seller's own system prompt", async () => {
     requests.length = 0;
     await chat(BETA, "hello", { origin: base, sessionId: "beta-session-1", pageUrl: `${base}/s/${BETA}/` });

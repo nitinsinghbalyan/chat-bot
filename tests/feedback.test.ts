@@ -110,4 +110,28 @@ describe("tracing on", () => {
     expect((await feedback(s.base, { seller: ALPHA, sessionId: "on-session-1", traceId: own, value: 5 })).status).toBe(400);
     expect((await feedback(s.base, { seller: ALPHA, sessionId: "on-session-1", traceId: "nothex", value: 1 })).status).toBe(400);
   });
+
+  it("keeps a running chat cost as one Langfuse session score", async () => {
+    const before = t.scores.length;
+    await chat(s.base, "cost-session-1", "hello");
+    await chat(s.base, "cost-session-1", "need a press brake");
+    const costs = t.scores.slice(before).filter((x) => x.name === "chat_cost_usd");
+    expect(costs).toHaveLength(2);
+    // Scored on the session (not a trace), with the same id each time so the value is replaced.
+    expect(costs[0]).toMatchObject({ sessionId: `${ALPHA}:cost-session-1`, dataType: "NUMERIC" });
+    expect(costs[0].traceId).toBeUndefined();
+    expect(costs[1].id).toBe(costs[0].id);
+    expect(costs[0].id).toMatch(/^chat-cost-[0-9a-f]{32}$/);
+    // The fake model uses 1 input + 1 output token per call at the default model's price.
+    expect(costs[0].value).toBeCloseTo(0.000012, 9);
+    expect(costs[1].value).toBeCloseTo(0.000024, 9);
+    expect(costs[1].comment).toBe("2 buyer messages, 4 tokens");
+    const last = t.traces.at(-1)!.root.attrs.metadata;
+    expect(last).toMatchObject({ chatTurns: 2, chatTokens: 4 });
+    expect(last.turnCostUsd).toBeCloseTo(0.000012, 9);
+    expect(last.chatCostUsd).toBeCloseTo(0.000024, 9);
+    // Another chat starts from zero.
+    await chat(s.base, "cost-session-2", "hello");
+    expect(t.scores.filter((x) => x.name === "chat_cost_usd").at(-1)).toMatchObject({ sessionId: `${ALPHA}:cost-session-2`, comment: "1 buyer message, 2 tokens" });
+  });
 });

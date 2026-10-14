@@ -8,7 +8,7 @@ import type { KnowledgeBase } from "./kb.js";
 import { renderUserPrompt } from "./prompts.js";
 import type { Session } from "./session.js";
 import type { MediaCard } from "./media.js";
-import { describeLeadStatus, executeTool, toolDefinitions, type LeadSink, type MediaSharer } from "./tools.js";
+import { describeLeadStatus, executeTool, toolDefinitions, type EnquirySummary, type LeadSink, type MediaSharer } from "./tools.js";
 import { costDetails, noTracing, OTP_MASK, usageDetails, type Observation, type TraceSink } from "./tracing.js";
 
 export type AskFor = "mobile" | "otp" | "name" | null;
@@ -44,6 +44,12 @@ export interface TurnResult {
   cards: MediaCard[];
   interventions: Intervention[];
   usage: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  /** What this turn's Claude calls cost in USD (all rounds, failed ones included). */
+  costUsd: number;
+  /** False when a call used a model without a known price; costUsd then leaves it out. */
+  costKnown: boolean;
+  /** The enquiry summary card to show (from save_lead with complete set). */
+  summary?: EnquirySummary;
   /** save_lead outcomes this turn, for trace scores. */
   leadEvents?: Array<"captured" | "updated">;
   /** True when the buyer got a canned reply (API error, refusal or empty answer). */
@@ -125,9 +131,10 @@ export async function runTurn(
   opts: { pageUrl?: string; pageEntry?: CatalogueEntry | null } = {},
 ): Promise<TurnResult> {
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const cost = { costUsd: 0, costKnown: true };
   if (session.turns >= MAX_HISTORY_TURNS) {
     cb.onText?.(LIMIT_REPLY);
-    return { text: LIMIT_REPLY, askFor: "mobile", chips: [], cards: [], interventions: [], usage };
+    return { text: LIMIT_REPLY, askFor: "mobile", chips: [], cards: [], interventions: [], usage, ...cost };
   }
 
   const trace = deps.trace ?? noTracing;
@@ -156,6 +163,7 @@ export async function runTurn(
 
   let shown = "";
   let chips: string[] = [];
+  let summary: EnquirySummary | undefined;
   const leadEvents: Array<"captured" | "updated"> = [];
   let gen: Observation | null = null;
   let roundInput: unknown = [{ role: "user", content: traceText(userContent) }];
@@ -216,11 +224,14 @@ export async function runTurn(
       // final.model is the model that actually answered (a server-side fallback can switch it).
       const served = final.model || model;
       const fellBack = final.content.some((b) => (b as { type: string }).type === "fallback");
+      const callCost = costDetails(served, callUsage);
+      if (callCost) cost.costUsd += callCost.total;
+      else cost.costKnown = false;
       gen.update({
         model: served,
         output: traceOutput(final.content),
         usageDetails: usageDetails(callUsage),
-        costDetails: costDetails(served, callUsage),
+        costDetails: callCost,
         metadata: { stop_reason: final.stop_reason, requestedModel: model, fallback: fellBack || served !== model },
         ...(final.stop_reason === "refusal" ? { level: "WARNING" as const, statusMessage: "Claude declined (refusal)" } : {}),
       });
@@ -231,7 +242,7 @@ export async function runTurn(
         // Never run tools from a refused turn, and don't keep it in history.
         const canned = !shown.trim();
         if (canned) emit(REFUSAL_REPLY);
-        return { text: shown, askFor: null, chips: [], cards: [], interventions: filter.interventions, usage, leadEvents, fallbackReply: canned };
+        return { text: shown, askFor: null, chips: [], cards: [], interventions: filter.interventions, usage, ...cost, leadEvents, fallbackReply: canned };
       }
 
       // Append-only: keep the model's content exactly as returned (thinking blocks included).
@@ -249,10 +260,11 @@ export async function runTurn(
         const tool = trace.start(tu.name, "tool", { input: tu.name === "verify_otp" ? { otp: OTP_MASK } : tu.input });
         const r = executeTool(session, tu.name, tu.input, { saveLead: deps.saveLead, pageUrl: opts.pageUrl, shareMedia: deps.shareMedia });
         if (r.ui?.chips) chips = r.ui.chips;
+        if (r.ui?.summary) summary = r.ui.summary;
         if (r.ui?.cards) for (const c of r.ui.cards) if (cards.length < 12 && !cards.some((x) => x.url === c.url && x.type === c.type)) cards.push(c);
         if (tu.name === "save_lead" && !r.isError) leadEvents.push(stageBefore === "captured" ? "updated" : "captured");
         tool.update({
-          output: { result: r.content, ...(r.ui?.chips ? { chips: r.ui.chips } : {}), ...(r.ui?.cards ? { cards: r.ui.cards.map((c) => `${c.type}: ${c.title}`) } : {}) },
+          output: { result: r.content, ...(r.ui?.chips ? { chips: r.ui.chips } : {}), ...(r.ui?.cards ? { cards: r.ui.cards.map((c) => `${c.type}: ${c.title}`) } : {}), ...(r.ui?.summary ? { summary: r.ui.summary } : {}) },
           metadata: { leadStage: session.lead.stage },
           ...(r.isError ? { level: "ERROR" as const, statusMessage: r.content.slice(0, 200) } : {}),
         });
@@ -268,7 +280,8 @@ export async function runTurn(
     gen?.end();
     const canned = !shown.trim();
     if (canned) emit(FALLBACK_REPLY);
-    return { text: shown, askFor: "mobile", chips: [], cards: [], interventions: filter.interventions, usage, leadEvents, fallbackReply: canned };
+    // A save_lead that already ran still shows its summary.
+    return { text: shown, askFor: "mobile", chips: [], cards: [], interventions: filter.interventions, usage, ...cost, leadEvents, fallbackReply: canned, summary };
   }
 
   const canned = !shown.trim();
@@ -289,7 +302,7 @@ export async function runTurn(
   }
   const askFor = askForAfterTurn(session, shown);
   // Buttons only make sense when the buyer isn't being asked for a mobile number, OTP or name.
-  return { text: shown, askFor, chips: askFor ? [] : chips, cards, interventions: filter.interventions, usage, leadEvents, fallbackReply: canned };
+  return { text: shown, askFor, chips: askFor ? [] : chips, cards, interventions: filter.interventions, usage, ...cost, leadEvents, fallbackReply: canned, summary };
 }
 
 function apiErrorMessage(err: unknown): string {

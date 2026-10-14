@@ -5,13 +5,14 @@
 
 ## What it does
 - Answers buyers' discovery and enquiry questions **on the seller's behalf**, grounded in the seller's KB, within 9 guardrails.
-- Enquiry order: machine named → mobile → OTP (demo `12345`) → name (lead saved) → ISQs one at a time as tap-to-reply chips **inline in the chat** → lead updated with the answers. A buyer who won't share a number isn't blocked.
+- Enquiry order: machine named → mobile → OTP (demo `12345`) → name (lead saved) → ISQs one at a time as tap-to-reply chips **inline in the chat** → lead updated with the answers → **enquiry summary card** ("Your enquiry": machine, each spec, quantity, city, name, masked mobile) + "Anything to change?" with All correct / Change a detail chips; a correction updates the lead and shows a new card. A buyer who won't share a number isn't blocked.
 - Replies are brief: 1–2 short sentences (~40 words), answer first, no filler, options only as chips.
 - Shares photos, videos, PDFs and related products as a carousel.
 - Handles large catalogues: over ~300k characters the system prompt keeps categories, ISQs and a product index; details come per message from the catalogue search.
 - Generates a full website per seller from the KB JSON (with crawled pages as a fallback).
 - Admin for the team: seller rows (Manage), KB upload and add seller, crawls, personas, common prompts with **version history** (View diff, Restore, newer built-in banner), leads and transcripts.
-- Langfuse tracing (when keys are set): a trace per buyer message, chats as Sessions, mobiles masked, OTPs never sent; scores plus 👍/👎 buyer feedback.
+- Langfuse tracing (when keys are set): a trace per buyer message, chats as Sessions, mobiles masked, OTPs never sent; scores plus 👍/👎 buyer feedback; **per-chat cost** as a `chat_cost_usd` session score (running total, replaced each message).
+- Tracing health is visible: startup key check (EU then US cloud auto-detect), `/health` `tracing.state`, red banner on `/admin` when keys are rejected, `[tracing] export failed` in logs.
 
 ## Architecture (where things live)
 | Area | Files |
@@ -38,7 +39,7 @@
 - rough cost per message: under 1¢ for Jayshree once cached, ~2¢ for a large catalogue, ~11¢ for the first message after 5 idle minutes (cache rewrite)
 - each Claude round is one `generation` in Langfuse, with the served model, tokens and cost
 
-**Tools:** `send_otp`, `verify_otp`, `save_lead`, `show_options`, `share_media`.
+**Tools:** `send_otp`, `verify_otp`, `save_lead` (fields incl. `specs[{label,value}]` and `complete`; `complete: true` → summary card), `show_options`, `share_media`.
 
 ## Decisions (and why)
 | Decision | Reason / who decided |
@@ -50,6 +51,8 @@
 | Chips inline in the chat log (not a bar above the input) | Nitin |
 | Prompt version history for common prompts and personas, with diff, restore and built-in banner | Nitin |
 | Langfuse tracing (v6 `@langfuse/tracing` + `@langfuse/otel`): one trace per buyer message, Sessions per chat; mask mobiles/OTPs, system prompt by version reference only, 👍/👎 buyer feedback + automatic scores. Off without keys | Nitin |
+| Detailed summary after requirement gathering = server-built card from the saved enquiry (not bot-written text), buyer can correct it | Nitin (Oct 2026) |
+| Per-chat cost in Langfuse only (session score + trace metadata), not in admin | Nitin |
 | Catalogue from crawling the sitemap; MCAT specs file not used | Nitin |
 | SQLite on a Render disk; Render hosting | Nitin |
 | Multi-seller; KB supplied per seller | Nitin |
@@ -84,11 +87,14 @@
 | #11 | Admin sellers list as expandable rows (Manage), filter box, row opens after upload/crawl/add |
 | #12 | Prompt versions (common + personas), lead-first flow, inline chips, brief replies |
 | #13 | Langfuse tracing, scores and buyer feedback |
+| #14 | Project memory refresh |
+| #15 | Enquiry summary card, per-chat cost score, Langfuse key check / region auto-detect / visible tracing status |
 
 ## Open items / ideas
 - Real SMS OTP (replace the demo check in `src/tools.ts`; stop sending `demo: true` from `/api/sellers/:slug`).
 - Run `npm run eval` (live-model scenarios) where an API key is available. The price scenario now expects no price.
-- Add the Langfuse keys on Render to turn tracing on; check the first traces (masking, costs, sessions).
+- Traces "not getting logged" (reported Oct 14): #15 adds the key check. After deploy, read `/health` → `tracing.state` or the `/admin` banner: `off` = keys not set on Render; `auth_failed` = wrong/swapped keys or region; `ok` but nothing in Langfuse = look for `[tracing] export failed` in Render logs.
+- After deploying #15: if production has a saved common-prompt edit, click **Use the new built-in** on `/admin/prompts`, or the summary flow won't apply.
 - After deploying #12: if production has a saved edit of the common prompt, click **Use the new built-in** on `/admin/prompts` or the new flow/style won't apply. Check tone and order with the live model.
 - Large-catalogue answers (index/partial modes, details via per-message search) are untested with the live model; check on production with questions that name specific models.
 - Check on production that seller photos (imimg.com) load; they can't be seen from cloud sessions.

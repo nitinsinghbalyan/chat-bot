@@ -61,6 +61,15 @@ describe("ChatDb", () => {
     expect(db.guardrailEvents()[0]).toMatchObject({ seller: "alpha", session_id: "alpha:s1", rule: "G1_price" });
   });
 
+  it("keeps a chat's running cost with its session", () => {
+    const db = new ChatDb(":memory:");
+    const store = new SessionStore(db);
+    const s = store.get("alpha", "cost-browser");
+    Object.assign(s.usage, { input: 120, output: 30, cacheRead: 9000, costUsd: 0.0025, turns: 2 });
+    store.save(s);
+    expect(new SessionStore(db).get("alpha", "cost-browser").usage).toEqual({ input: 120, output: 30, cacheRead: 9000, cacheWrite: 0, costUsd: 0.0025, turns: 2, costKnown: true });
+  });
+
   it("prunes idle sessions but keeps leads", () => {
     const db = new ChatDb(":memory:");
     const now = Date.now();
@@ -104,6 +113,8 @@ describe("migration from the single-seller database", () => {
     const session = new SessionStore(db).get("jayshree-machinetools", "browser-1");
     expect(session.turns).toBe(3);
     expect(session.lead.stage).toBe("captured");
+    // Sessions from before chat costs start from zero.
+    expect(session.usage).toMatchObject({ costUsd: 0, turns: 0, costKnown: true });
     expect(db.listLeads(10, "jayshree-machinetools")).toEqual([expect.objectContaining({ seller: "jayshree-machinetools", sessionId: "jayshree-machinetools:browser-1" })]);
     expect(db.transcript("jayshree-machinetools:browser-1")).toHaveLength(1);
     expect(db.guardrailEvents(10, "jayshree-machinetools")[0]).toMatchObject({ session_id: "jayshree-machinetools:browser-1" });

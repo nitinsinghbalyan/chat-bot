@@ -192,12 +192,15 @@ A replaced sentence becomes a short hand-off line. The model is told about the c
 - `send_otp` checks the number is a valid Indian mobile (`+91` optional). No SMS is sent: this is demo mode, the OTP is **`12345`** (`DEMO_OTP`), and the widget shows that hint. The OTP is checked on the server and never appears in the prompt.
 - `verify_otp` allows 3 attempts per OTP and 3 OTPs per chat.
 - `save_lead` is refused until the number is verified. The bot calls it as soon as it has the name, so a buyer who leaves mid-way is still a lead, and again after the last ISQ, which updates the same lead with the answers. Each lead is stored under its seller.
+- **Enquiry summary:** the last `save_lead` call carries each ISQ answer as a `specs` item and `complete: true`. The chat then shows a **Your enquiry** card built by the server from what was saved: machine, each spec, other details, quantity, city, name and masked mobile. The bot adds one line asking if anything needs changing, with **All correct** / **Change a detail** buttons. A correction calls `save_lead` again, which updates the same lead and shows a new card. The lead's `requirements` column stores the specs as `Label: value; …`, and the admin transcript shows a `[Summary: …]` line.
 
 To send real OTPs, replace the demo check in `src/tools.ts` with your SMS provider's calls, and stop returning `demo: true` from `/api/sellers/:slug` in `src/app.ts`.
 
 ## Tracing (Langfuse)
 
-Set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL` (EU `https://cloud.langfuse.com`, US `https://us.cloud.langfuse.com`, or self-hosted) to send traces to Langfuse. Without the keys nothing is sent. On Render, add them under Environment and redeploy. The release is the deployed git commit (`RENDER_GIT_COMMIT`), and the environment is `LANGFUSE_ENVIRONMENT`, else `NODE_ENV`.
+Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to send traces to Langfuse, plus `LANGFUSE_BASE_URL` (or `LANGFUSE_HOST`) for a self-hosted Langfuse. Without the keys nothing is sent. On Render, add them under Environment and redeploy. The release is the deployed git commit (`RENDER_GIT_COMMIT`), and the environment is `LANGFUSE_ENVIRONMENT`, else `NODE_ENV`.
+
+**Startup check:** at startup the server asks Langfuse whether it accepts the keys. Without `LANGFUSE_BASE_URL` it tries the EU cloud (`https://cloud.langfuse.com`), then the US cloud (`https://us.cloud.langfuse.com`), and uses whichever accepts them. Keys are trimmed, since a pasted space makes Langfuse reject them. The result appears in the startup log (`[tracing] …`), on `/health` (`tracing.state`: `off`, `ok`, `auth_failed`, `unreachable`) and on `/admin`. `/admin` shows a red banner when the keys are rejected and a warning when exports fail. Export failures are also logged as `[tracing] export failed: …`.
 
 **One trace per buyer message** (`chat-turn`), grouped in Langfuse **Sessions** by chat (`<seller>:<browser id>`), tagged with the seller and `on-platform` or `embedded`. User id is the buyer's masked mobile once verified. Each trace holds:
 
@@ -210,7 +213,11 @@ Set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL` (EU `ht
 
 Trace metadata has the page URL, lead stage before and after, and the prompts in use: the common prompt version (`v12`), the persona version, the knowledge base mode (KB folder or JSON full / index / partial) and the system prompt length. The system prompt itself isn't copied into traces; its text is in the admin version history.
 
-**Scores:** `lead_captured`, `lead_updated`, `guardrail_fired` (count), `fallback_reply` (the buyer got a canned reply), and `buyer_feedback`: when tracing is on, the widget shows 👍 / 👎 under each reply (+1 / −1; changing the vote replaces the score). Buyers can only rate replies from their own chat.
+Trace metadata also has `turnCostUsd`, and the chat's running `chatCostUsd`, `chatTokens` and `chatTurns`.
+
+**Per-chat cost:** each Langfuse session (chat) has a `chat_cost_usd` score, the total USD cost of every Claude call in the chat so far. It is replaced after every buyer message, with a comment such as "6 buyer messages, 575,120 tokens". The running totals are kept with the chat in the `sessions` table, so they survive restarts. Costs come from the price table in `src/tracing.ts`. A call to a model missing from that table counts as zero and is flagged "some calls unpriced". Langfuse's Sessions view also adds up the per-call costs.
+
+**Scores:** `lead_captured`, `lead_updated`, `summary_shown`, `guardrail_fired` (count), `fallback_reply` (the buyer got a canned reply), `chat_cost_usd` (per session, above), and `buyer_feedback`: when tracing is on, the widget shows 👍 / 👎 under each reply (+1 / −1; changing the vote replaces the score). Buyers can only rate replies from their own chat.
 
 **Privacy:** mobile numbers are masked as `xxxxxx3210` everywhere in a trace (also by the exporter as a last check), OTPs are never recorded, and payment or ID details are already removed from buyer messages before the bot sees them. Names are kept.
 
@@ -220,7 +227,7 @@ Everything is kept in one SQLite file, `DATA_DIR/chatbot.db`. Every table has a 
 
 | Table | Holds |
 |---|---|
-| `sessions` | Chat state (history, OTP progress, catalogue hits), keyed by seller and browser. One browser chatting with two sellers has two chats. Idle chats are pruned after 30 days. |
+| `sessions` | Chat state (history, OTP progress, catalogue hits, running token and cost totals), keyed by seller and browser. One browser chatting with two sellers has two chats. Idle chats are pruned after 30 days. |
 | `transcript` | What buyers typed (payment and ID details already redacted) and what they were shown |
 | `leads` | Verified leads |
 | `prompt_versions` | Version history of the common prompts and each brand persona |

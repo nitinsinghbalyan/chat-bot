@@ -7,6 +7,7 @@
  * never recorded, and the system prompt is referenced by version instead of being copied.
  */
 import { LangfuseClient } from "@langfuse/client";
+import { diag, DiagLogLevel } from "@opentelemetry/api";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { propagateAttributes, startActiveObservation, startObservation } from "@langfuse/tracing";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
@@ -47,15 +48,31 @@ export interface TraceContext {
 export interface Score {
   /** Re-sending a score with the same id replaces it (e.g. a buyer changing their vote). */
   id?: string;
-  traceId: string;
+  /** Scores one trace (one buyer message) ... */
+  traceId?: string;
+  /** ... or a whole Langfuse session (one chat), e.g. the running chat cost. */
+  sessionId?: string;
   name: string;
   value: number;
   dataType?: "NUMERIC" | "BOOLEAN";
   comment?: string;
 }
 
+/** Whether traces are reaching Langfuse, for /health, the admin page and the startup log. */
+export interface TracingStatus {
+  /** off: no keys. ok: Langfuse accepted the keys. auth_failed: it rejected them. unreachable: no answer (traces still try). */
+  state: "off" | "ok" | "auth_failed" | "unreachable";
+  /** The Langfuse host traces go to, e.g. cloud.langfuse.com. */
+  host: string | null;
+  message: string;
+  /** Failed exports since startup, and the last error (from the OpenTelemetry exporter). */
+  exportErrors: number;
+  lastExportError?: string;
+}
+
 export interface Tracing extends TraceSink {
   enabled: boolean;
+  status: TracingStatus;
   /** Runs `fn` inside a new trace; `root` is the trace's top observation and carries its id. */
   trace<T>(name: string, ctx: TraceContext, fn: (root: Observation & { traceId: string }) => Promise<T>): Promise<T>;
   score(s: Score): void;
@@ -67,6 +84,7 @@ const noObservation: Observation = { update() {}, end() {} };
 
 export const noTracing: Tracing = {
   enabled: false,
+  status: { state: "off", host: null, message: "Langfuse is off: LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are not set.", exportErrors: 0 },
   start: () => noObservation,
   trace: (_name, _ctx, fn) => fn({ ...noObservation, traceId: "" }),
   score() {},
@@ -141,12 +159,94 @@ export function costDetails(model: string, u: TokenUsage): Record<string, number
 
 // ---- Langfuse ----
 
+export const LANGFUSE_EU = "https://cloud.langfuse.com";
+export const LANGFUSE_US = "https://us.cloud.langfuse.com";
+
+type LangfuseEnv = Pick<typeof config, "LANGFUSE_PUBLIC_KEY" | "LANGFUSE_SECRET_KEY" | "LANGFUSE_BASE_URL" | "LANGFUSE_ENVIRONMENT">;
+
+/** Asks Langfuse whether it accepts the keys (GET /api/public/projects). */
+async function probe(baseUrl: string, publicKey: string, secretKey: string, fetchImpl: typeof fetch): Promise<"ok" | "auth_failed" | "unreachable"> {
+  try {
+    const r = await fetchImpl(`${baseUrl}/api/public/projects`, {
+      headers: { Authorization: `Basic ${Buffer.from(`${publicKey}:${secretKey}`).toString("base64")}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (r.ok) return "ok";
+    return r.status === 401 || r.status === 403 ? "auth_failed" : "unreachable";
+  } catch {
+    return "unreachable";
+  }
+}
+
+/**
+ * Works out where traces should go and whether Langfuse accepts the keys. With no
+ * LANGFUSE_BASE_URL, keys rejected by the EU cloud are tried on the US cloud, since keys from a
+ * US project otherwise fail silently.
+ */
+export async function resolveLangfuse(env: LangfuseEnv, fetchImpl: typeof fetch = fetch): Promise<{ baseUrl: string; state: TracingStatus["state"]; message: string }> {
+  const pk = env.LANGFUSE_PUBLIC_KEY ?? "";
+  const sk = env.LANGFUSE_SECRET_KEY ?? "";
+  const hints: string[] = [];
+  if (pk.startsWith("sk-lf-") && sk.startsWith("pk-lf-")) hints.push("the public and secret keys look swapped");
+  else {
+    if (!pk.startsWith("pk-lf-")) hints.push("LANGFUSE_PUBLIC_KEY should start with pk-lf-");
+    if (!sk.startsWith("sk-lf-")) hints.push("LANGFUSE_SECRET_KEY should start with sk-lf-");
+  }
+  const tried = env.LANGFUSE_BASE_URL ? [env.LANGFUSE_BASE_URL.replace(/\/+$/, "")] : [LANGFUSE_EU, LANGFUSE_US];
+  let first: "ok" | "auth_failed" | "unreachable" | null = null;
+  for (const baseUrl of tried) {
+    const state = await probe(baseUrl, pk, sk, fetchImpl);
+    first ??= state;
+    if (state === "ok") {
+      const moved = baseUrl !== tried[0] ? ` The keys belong to ${host(baseUrl)}; set LANGFUSE_BASE_URL=${baseUrl} to skip this check.` : "";
+      return { baseUrl, state, message: `Langfuse accepted the keys.${moved}` };
+    }
+    if (state === "unreachable") break;
+  }
+  const baseUrl = tried[0];
+  if (first === "unreachable") return { baseUrl, state: "unreachable", message: `Could not reach ${host(baseUrl)} to check the keys; traces will still be sent.` };
+  return {
+    baseUrl,
+    state: "auth_failed",
+    message: `Langfuse rejected the keys at ${tried.map(host).join(" and ")}, so no traces are recorded. Copy both keys again from Langfuse (Settings > API keys, same project)${
+      env.LANGFUSE_BASE_URL ? " and check LANGFUSE_BASE_URL is that project's region" : ""
+    }${hints.length ? `; ${hints.join("; ")}` : ""}.`,
+  };
+}
+
+const host = (url: string) => url.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+
 /** Starts Langfuse tracing when the keys are configured; otherwise returns `noTracing`. */
-export function initTracing(env = config): Tracing {
-  if (!env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) return noTracing;
-  const baseUrl = env.LANGFUSE_BASE_URL ?? "https://cloud.langfuse.com";
+export async function initTracing(env: LangfuseEnv = config, fetchImpl: typeof fetch = fetch): Promise<Tracing> {
+  if (!env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) {
+    console.log("[tracing] Langfuse off (set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY to turn it on)");
+    return noTracing;
+  }
+  const { baseUrl, state, message } = await resolveLangfuse(env, fetchImpl);
   const environment = env.LANGFUSE_ENVIRONMENT ?? (process.env.NODE_ENV || "development").toLowerCase();
   const release = process.env.RENDER_GIT_COMMIT?.slice(0, 12);
+  const status: TracingStatus = { state, host: host(baseUrl), message, exportErrors: 0 };
+  // Export failures are otherwise silent: log them and show them on /health and the admin page.
+  const exportError = (msg: unknown, ...args: unknown[]) => {
+    status.exportErrors++;
+    // OpenTelemetry passes errors as JSON strings with a stack; keep the first line ("OTLPExporterError: Unauthorized").
+    const describe = (a: unknown): string => {
+      if (typeof a === "string") {
+        try {
+          const parsed = JSON.parse(a);
+          if (parsed && typeof parsed === "object") return describe(parsed);
+        } catch {}
+        return a.split("\n")[0];
+      }
+      if (a instanceof Error) return `${a.name}: ${a.message}`;
+      const o = a as { message?: unknown; stack?: unknown } | null;
+      return String(o?.stack || o?.message || JSON.stringify(a)).split("\n")[0];
+    };
+    status.lastExportError = [msg, ...args].map(describe).join(" ").slice(0, 300);
+    console.error("[tracing] export failed:", status.lastExportError);
+  };
+  diag.setLogger({ error: exportError, warn: (m, ...a) => console.warn("[tracing]", m, ...a), info() {}, debug() {}, verbose() {} }, DiagLogLevel.WARN);
+
   const processor = new LangfuseSpanProcessor({
     publicKey: env.LANGFUSE_PUBLIC_KEY,
     secretKey: env.LANGFUSE_SECRET_KEY,
@@ -165,9 +265,12 @@ export function initTracing(env = config): Tracing {
     end: () => o.end(),
   });
 
-  console.log(`[tracing] Langfuse on (${baseUrl}, environment ${environment}${release ? `, release ${release}` : ""})`);
+  const line = `[tracing] Langfuse on (${baseUrl}, environment ${environment}${release ? `, release ${release}` : ""}): ${message}`;
+  if (state === "auth_failed") console.error(line);
+  else console.log(line);
   return {
     enabled: true,
+    status,
     start: (name, type, attrs = {}) => wrap(startObservation(name, attrs as any, { asType: type as any }) as any),
     trace: (name, ctx, fn) =>
       propagateAttributes({ traceName: name, sessionId: ctx.sessionId, userId: ctx.userId, tags: ctx.tags }, () =>

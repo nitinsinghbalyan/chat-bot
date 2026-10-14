@@ -42,13 +42,22 @@ const schema = z.object({
   /** Langfuse tracing: on when both keys are set. */
   LANGFUSE_PUBLIC_KEY: optional(z.string()),
   LANGFUSE_SECRET_KEY: optional(z.string()),
-  /** EU: https://cloud.langfuse.com, US: https://us.cloud.langfuse.com, or a self-hosted URL. */
+  /** EU: https://cloud.langfuse.com, US: https://us.cloud.langfuse.com, or a self-hosted URL. Unset: EU, else US if the keys are from there. Also read from LANGFUSE_HOST. */
   LANGFUSE_BASE_URL: optional(z.string().url()),
   /** Shown as the trace environment in Langfuse. Default: NODE_ENV, else "development". */
   LANGFUSE_ENVIRONMENT: optional(z.string().regex(/^[a-z0-9_-]{1,40}$/, "use lowercase letters, digits, - or _")),
 });
 
-export const config = schema.parse(process.env);
+/** Keys pasted with a stray space or newline are rejected by Langfuse, so trim them. */
+const trimmed = (v: string | undefined) => v?.trim() || undefined;
+
+export const config = schema.parse({
+  ...process.env,
+  LANGFUSE_PUBLIC_KEY: trimmed(process.env.LANGFUSE_PUBLIC_KEY),
+  LANGFUSE_SECRET_KEY: trimmed(process.env.LANGFUSE_SECRET_KEY),
+  // Langfuse's own docs also use LANGFUSE_HOST and LANGFUSE_BASEURL for this.
+  LANGFUSE_BASE_URL: trimmed(process.env.LANGFUSE_BASE_URL) ?? trimmed(process.env.LANGFUSE_HOST) ?? trimmed(process.env.LANGFUSE_BASEURL),
+});
 
 const dataDir = config.DATA_DIR ? path.resolve(config.DATA_DIR) : path.join(ROOT, "data");
 

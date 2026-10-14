@@ -10,7 +10,24 @@ export interface LeadState {
   name?: string;
   otpAttempts: number;
   otpSends: number;
+  /** True once the buyer has been shown the enquiry summary card. */
+  summarized?: boolean;
 }
+
+/** Running totals for one chat: every Claude call's tokens and cost, for the Langfuse chat cost score. */
+export interface ChatUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  costUsd: number;
+  /** Buyer messages counted. */
+  turns: number;
+  /** False once a call used a model without a known price, so costUsd is a lower bound. */
+  costKnown: boolean;
+}
+
+export const emptyUsage = (): ChatUsage => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0, turns: 0, costKnown: true });
 
 export interface Session {
   /** "<seller>:<browser session id>", so one browser chatting with two sellers has two chats. */
@@ -26,6 +43,7 @@ export interface Session {
   createdAt: number;
   lastSeen: number;
   turns: number;
+  usage: ChatUsage;
 }
 
 const TTL_MS = 2 * 60 * 60 * 1000;
@@ -47,6 +65,7 @@ function newSession(id: string, seller: string): Session {
     createdAt: Date.now(),
     lastSeen: Date.now(),
     turns: 0,
+    usage: emptyUsage(),
   };
 }
 
@@ -62,6 +81,7 @@ function fromStored(s: StoredSession): Session {
     createdAt: s.createdAt,
     lastSeen: s.lastSeen,
     turns: s.turns,
+    usage: { ...emptyUsage(), ...(s.usage as Partial<ChatUsage> | undefined) },
   };
 }
 
@@ -107,6 +127,7 @@ export class SessionStore {
       turns: s.turns,
       createdAt: s.createdAt,
       lastSeen: s.lastSeen,
+      usage: s.usage,
     });
   }
 

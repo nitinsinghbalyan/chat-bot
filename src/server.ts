@@ -35,7 +35,7 @@ async function recrawlAll() {
   for (const seller of sellers.list()) await recrawl(seller);
 }
 
-const tracing = initTracing();
+const tracing = await initTracing();
 const app = createApp({ client: new Anthropic(), sellers, sessions, db, recrawl, tracing });
 
 function prune() {

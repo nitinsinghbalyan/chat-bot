@@ -36,6 +36,9 @@ Shorthand and internal language for the Seller assistants project.
 | trace / observation / score | Langfuse: a trace per buyer message (`chat-turn`) with observations (catalogue-search retriever, `claude round N` generations, tool calls, output-guardrails) and scores (lead_captured, lead_updated, guardrail_fired, fallback_reply, buyer_feedback). Sessions = whole chats | `src/tracing.ts` |
 | canned / fallback reply | `FALLBACK_REPLY` (API error or empty answer) and `REFUSAL_REPLY` (model declined); scored `fallback_reply` in Langfuse | `src/claude.ts` |
 | buyer feedback | 👍/👎 under each widget reply when tracing is on → `buyer_feedback` score (+1/−1, a changed vote replaces it); only for replies in the buyer's own chat | `/api/feedback` in `src/app.ts` |
+| enquiry summary / summary card | "Your enquiry" card shown once ISQs are done (`save_lead` with `complete: true`): machine, specs, quantity, city, name, masked mobile; scored `summary_shown` | `src/tools.ts` `enquirySummary`, `public/widget.js` `addSummary` |
+| chat cost | `chat_cost_usd` Langfuse **session** score: running USD total of a chat's Claude calls, same score id so it's replaced each message; totals kept in `sessions.usage` | `src/app.ts` |
+| tracing status | `off` / `ok` / `auth_failed` / `unreachable` from the startup key check; on `/health` and `/admin` | `src/tracing.ts` `resolveLangfuse` |
 | served model | `final.model` of a Claude response: the model that actually answered (shows server-side fallbacks) | `src/claude.ts` |
 | inline chips | ISQ buttons drawn in the chat log under the asking message; after the reply they stay greyed with the pick highlighted | `addChips`/`retireChips` in `public/widget.js` |
 | demo OTP | `12345` (`DEMO_OTP`); no SMS is sent yet | `src/tools.ts` |

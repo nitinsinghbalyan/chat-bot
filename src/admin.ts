@@ -14,6 +14,7 @@ import { defaultSystemTemplate, REQUIRED_PLACEHOLDERS, sharedGuardrails, validat
 import { SELLER_KB_TEMPLATE, validateSellerKb } from "./sellerKb.js";
 import { sellerConfigSchema, SLUG_RE, type SellerContext, type SellerRegistry } from "./sellers.js";
 import { esc } from "./site/html.js";
+import type { TracingStatus } from "./tracing.js";
 
 /** Maximum characters for each brand persona prompt. */
 export const PERSONA_LIMITS = { system: 4000, user: 2000 } as const;
@@ -25,6 +26,8 @@ export interface AdminDeps {
   recrawl?: (seller: SellerContext) => Promise<void>;
   /** True when `url` points at this server (same host as the request). */
   sameHost: (req: Request, url: string | undefined) => boolean;
+  /** Langfuse status, shown on the dashboard when traces are not getting through. */
+  tracing?: TracingStatus;
 }
 
 /** Quotes a CSV cell and defuses spreadsheet formulas (a buyer could type "=HYPERLINK(...)"). */
@@ -146,6 +149,18 @@ const DROPZONE_SCRIPT = `<script>
   });
 })();
 </script>`;
+
+/** A dashboard line about Langfuse: a warning while traces are not getting through, else a quiet note. */
+function tracingNote(t: TracingStatus | undefined): string {
+  if (!t) return "";
+  if (t.state === "off") return `<p class="muted small">Langfuse tracing is off: add LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY on Render to turn it on.</p>`;
+  if (t.state === "auth_failed") return `<div class="flash err"><b>Langfuse traces are not being recorded.</b> ${esc(t.message)}</div>`;
+  if (t.exportErrors) {
+    return `<div class="flash warn"><b>Some traces failed to reach Langfuse</b> (${t.exportErrors} failed export${t.exportErrors === 1 ? "" : "s"} since the last deploy). Last error: ${esc(t.lastExportError ?? "unknown")}</div>`;
+  }
+  if (t.state === "unreachable") return `<div class="flash warn">${esc(t.message)}</div>`;
+  return `<p class="muted small">Langfuse tracing is on (${esc(t.host ?? "")}).</p>`;
+}
 
 export function mountAdmin(app: Express, d: AdminDeps) {
   const { sellers, db, adminPassword } = d;
@@ -305,6 +320,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
         `<div class="page-head"><div><h1>Sellers</h1><p class="muted">${plural(list.length, "seller")} · ${plural(totalLeads, "lead")}</p></div>
 <div class="btn-row"><a class="btn" href="/admin/kb-template.json">Download JSON template</a><a class="btn primary" href="/admin/sellers/new">+ Add seller</a></div></div>
 ${flash}
+${tracingNote(d.tracing)}
 ${
   list.length
     ? `${list.length > 3 ? `<input id="seller-filter" class="filter" type="search" placeholder="Filter sellers by name or slug" aria-label="Filter sellers">` : ""}

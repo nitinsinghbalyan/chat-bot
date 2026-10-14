@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costDetails, maskMobile, maskPII, noTracing, usageDetails } from "../src/tracing.js";
+import { costDetails, initTracing, LANGFUSE_EU, LANGFUSE_US, maskMobile, maskPII, noTracing, resolveLangfuse, usageDetails } from "../src/tracing.js";
 
 describe("maskPII", () => {
   it.each([
@@ -41,5 +41,58 @@ describe("noTracing", () => {
   it("runs the callback and records nothing", async () => {
     expect(noTracing.enabled).toBe(false);
     expect(await noTracing.trace("t", { sessionId: "s" }, async (root) => root.traceId)).toBe("");
+  });
+});
+
+describe("resolveLangfuse (startup key check)", () => {
+  const keys = { LANGFUSE_PUBLIC_KEY: "pk-lf-1", LANGFUSE_SECRET_KEY: "sk-lf-1", LANGFUSE_BASE_URL: undefined, LANGFUSE_ENVIRONMENT: undefined };
+  /** Answers each host with the given status (or throws for "down"). */
+  const fakeFetch = (byHost: Record<string, number | "down">) => {
+    const calls: string[] = [];
+    const auth: string[] = [];
+    const f = (async (url: string, init: any) => {
+      calls.push(url);
+      auth.push(init.headers.Authorization);
+      const s = byHost[new URL(url).host];
+      if (s === "down" || s === undefined) throw new Error("ECONNREFUSED");
+      return new Response("{}", { status: s });
+    }) as unknown as typeof fetch;
+    return { f, calls, auth };
+  };
+
+  it("uses the EU cloud when it accepts the keys", async () => {
+    const { f, calls, auth } = fakeFetch({ "cloud.langfuse.com": 200 });
+    expect(await resolveLangfuse(keys, f)).toMatchObject({ baseUrl: LANGFUSE_EU, state: "ok" });
+    expect(calls).toEqual([`${LANGFUSE_EU}/api/public/projects`]);
+    expect(auth).toEqual([`Basic ${Buffer.from("pk-lf-1:sk-lf-1").toString("base64")}`]);
+  });
+
+  it("switches to the US cloud when the keys belong there", async () => {
+    const { f } = fakeFetch({ "cloud.langfuse.com": 401, "us.cloud.langfuse.com": 200 });
+    const r = await resolveLangfuse(keys, f);
+    expect(r).toMatchObject({ baseUrl: LANGFUSE_US, state: "ok" });
+    expect(r.message).toContain("LANGFUSE_BASE_URL=https://us.cloud.langfuse.com");
+  });
+
+  it("reports rejected keys, with hints for swapped keys", async () => {
+    const { f } = fakeFetch({ "cloud.langfuse.com": 401, "us.cloud.langfuse.com": 401 });
+    const swapped = { ...keys, LANGFUSE_PUBLIC_KEY: "sk-lf-1", LANGFUSE_SECRET_KEY: "pk-lf-1" };
+    const r = await resolveLangfuse(swapped, f);
+    expect(r.state).toBe("auth_failed");
+    expect(r.message).toMatch(/rejected the keys at cloud\.langfuse\.com and us\.cloud\.langfuse\.com/);
+    expect(r.message).toMatch(/look swapped/);
+  });
+
+  it("only checks the configured host, and keeps tracing on when it can't be reached", async () => {
+    const { f, calls } = fakeFetch({ "langfuse.example.com": "down" });
+    const r = await resolveLangfuse({ ...keys, LANGFUSE_BASE_URL: "https://langfuse.example.com/" }, f);
+    expect(r).toMatchObject({ baseUrl: "https://langfuse.example.com", state: "unreachable" });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("stays off without keys", async () => {
+    const t = await initTracing({ ...keys, LANGFUSE_SECRET_KEY: undefined });
+    expect(t).toBe(noTracing);
+    expect(t.status.state).toBe("off");
   });
 });

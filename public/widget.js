@@ -120,6 +120,11 @@
     ".card .ct{font-size:12.5px;font-weight:600;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}" +
     ".card .cs{font-size:11px;color:#6b7588;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
     ".card .ca{font-size:11.5px;color:var(--c);font-weight:600;margin-top:2px}" +
+    ".sum{flex-shrink:0;align-self:stretch;background:#fff;border:1px solid #e3e8f0;border-top:3px solid var(--c);border-radius:12px;padding:10px 12px;font-size:13px;color:#1d2433}" +
+    ".sum h4{margin:0 0 6px;font-size:13px;font-weight:700;color:var(--c)}" +
+    ".sum dl{display:grid;grid-template-columns:minmax(80px,auto) 1fr;gap:4px 12px;margin:0}" +
+    ".sum dt{color:#6b7588;overflow-wrap:anywhere}.sum dd{margin:0;font-weight:600;overflow-wrap:anywhere}" +
+    ".sum .n{margin-top:8px;padding-top:7px;border-top:1px solid #eef1f5;font-size:12px;color:#4a5466}" +
     ".lb{position:fixed;inset:0;z-index:2147483001;background:rgba(10,14,20,.88);display:none;align-items:center;justify-content:center;padding:48px 16px 16px}" +
     ".lb.open{display:flex}.lb .lbx{position:absolute;top:10px;right:14px;background:transparent;border:0;color:#fff;font-size:30px;cursor:pointer;line-height:1}" +
     ".lb .lbc{max-width:min(960px,100%);max-height:100%;width:100%;display:flex;flex-direction:column;align-items:center;gap:10px}" +
@@ -286,6 +291,23 @@
     log.appendChild(wrap);
     log.scrollTop = log.scrollHeight;
   }
+  /** The enquiry summary card (built by the server from the saved enquiry); text only, never HTML. */
+  function addSummary(summary) {
+    if (!summary || !summary.rows || !summary.rows.length) return;
+    var box = el("div", "sum");
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-label", "Your enquiry");
+    box.appendChild(el("h4", "", "Your enquiry"));
+    var dl = el("dl");
+    summary.rows.forEach(function (r) {
+      dl.appendChild(el("dt", "", String(r.label || "")));
+      dl.appendChild(el("dd", "", String(r.value || "")));
+    });
+    box.appendChild(dl);
+    if (summary.note) box.appendChild(el("div", "n", String(summary.note)));
+    log.appendChild(box);
+    log.scrollTop = log.scrollHeight;
+  }
   /** 👍 / 👎 under a bot reply (only when the server records feedback); the vote is kept in history. */
   function addFeedback(entry, after) {
     var c = configs[current];
@@ -420,6 +442,7 @@
       if (h.text) addMsg(h.who, h.text);
       if (h.who === "bot") addFeedback(h);
       addCards(h.cards);
+      addSummary(h.summary);
       // Older saved chats kept the last options only in state.chips.
       var rowChips = h.chips || (i === last && h.who === "bot" ? state.chips : null);
       if (rowChips) addChips(rowChips, i === last && state.chips ? { live: true } : { picked: h.picked });
@@ -471,6 +494,7 @@
     var replyCards = null;
     var replyChips = null;
     var replyTrace = null;
+    var replySummary = null;
 
     fetch(API + "/api/chat", {
       method: "POST",
@@ -521,6 +545,7 @@
             log.scrollTop = log.scrollHeight;
           } else if (ev === "cards") replyCards = payload.cards || null;
           else if (ev === "trace") replyTrace = payload.traceId || null;
+          else if (ev === "summary") replySummary = payload.summary || null;
           else if (ev === "ui") {
             state.askFor = payload.askFor || null;
             replyChips = payload.chips && payload.chips.length ? payload.chips : null;
@@ -536,8 +561,10 @@
         reply = reply.trim() || "Sorry, something went wrong. Please try again.";
         botEl.innerHTML = linkify(reply);
         addCards(replyCards);
+        addSummary(replySummary);
         var entry = { who: "bot", text: reply };
         if (replyCards) entry.cards = replyCards;
+        if (replySummary) entry.summary = replySummary;
         if (replyChips) entry.chips = replyChips;
         if (replyTrace) entry.traceId = replyTrace;
         state.history.push(entry);
