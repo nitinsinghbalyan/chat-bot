@@ -8,6 +8,7 @@ import { z } from "zod";
 import { Catalogue } from "./catalogue.js";
 import { paths } from "./config.js";
 import { loadKnowledgeBase, sitemapUrls, type KnowledgeBase } from "./kb.js";
+import type { SellerPersona } from "./db.js";
 import { renderSystemPrompt, sharedGuardrails } from "./prompts.js";
 
 export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,58}[a-z0-9])?$/;
@@ -60,6 +61,10 @@ export interface SellerContext {
   runtimeCatalogueFile: string;
   /** Catalogue committed in the KB folder, used until the first runtime crawl. */
   bundledCatalogueFile: string;
+  /** Guardrails text in force for this seller (shared or their own override). */
+  guardrails: string;
+  /** Brand persona set in admin: `system` goes into the system prompt, `user` into every buyer turn. */
+  persona: SellerPersona;
   /** Number of URLs in the sitemap. */
   sitemapPages: number;
   lastCrawl: CrawlStatus | null;
@@ -139,6 +144,8 @@ export class SellerRegistry {
         kb,
         catalogue: Catalogue.fromDisk([runtimeCatalogueFile, bundledCatalogueFile]),
         systemPrompt: renderSystemPrompt(kb, guardrails),
+        guardrails,
+        persona: { system: "", user: "" },
         sitemapFile,
         runtimeCatalogueFile,
         bundledCatalogueFile,
@@ -147,6 +154,14 @@ export class SellerRegistry {
       });
     }
     return reg;
+  }
+
+  /** Applies a brand persona and re-renders that seller's system prompt. */
+  setPersona(slug: string, persona: SellerPersona) {
+    const s = this.sellers.get(slug);
+    if (!s) return;
+    s.persona = { system: persona.system.trim(), user: persona.user.trim() };
+    s.systemPrompt = renderSystemPrompt(s.kb, s.guardrails, s.persona.system);
   }
 
   get(slug: string): SellerContext | undefined {

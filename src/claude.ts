@@ -16,6 +16,8 @@ export interface ChatDeps {
   kb: KnowledgeBase;
   catalogue: Catalogue;
   systemPrompt: string;
+  /** The seller's per-turn persona instruction, added to every buyer turn. */
+  sellerInstructions?: string;
   /** Where verified leads go (the database in production). */
   saveLead: LeadSink;
   /** Records sentences the output guardrails replaced. */
@@ -98,6 +100,7 @@ export async function runTurn(
     catalogue: formatCatalogueHits(hits),
     buyerMessage: buyerText,
     operatorNotes: session.pendingNotes,
+    sellerInstructions: deps.sellerInstructions,
   });
 
   // Work on a copy so a failed or refused turn leaves the stored history untouched.

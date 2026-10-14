@@ -24,6 +24,12 @@ export interface StoredLead extends Lead {
   id: number;
 }
 
+/** A seller's brand persona: added to the system prompt, and to every buyer turn. */
+export interface SellerPersona {
+  system: string;
+  user: string;
+}
+
 export interface TranscriptLine {
   seller: string;
   sessionId: string;
@@ -79,6 +85,13 @@ CREATE TABLE IF NOT EXISTS guardrail_events (
   session_id  TEXT NOT NULL,
   rule        TEXT NOT NULL,
   original    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS seller_prompts (
+  seller          TEXT PRIMARY KEY,
+  system_persona  TEXT NOT NULL DEFAULT '',
+  user_persona    TEXT NOT NULL DEFAULT '',
+  updated_at      TEXT NOT NULL
 );
 `;
 
@@ -215,6 +228,27 @@ export class ChatDb {
   guardrailEvents(limit = 200, seller?: string): Array<{ at: string; seller: string; session_id: string; rule: string; original: string }> {
     const sql = `SELECT at, seller, session_id, rule, original FROM guardrail_events ${seller ? "WHERE seller = ?" : ""} ORDER BY id DESC LIMIT ?`;
     return (seller ? this.db.prepare(sql).all(seller, limit) : this.db.prepare(sql).all(limit)) as any[];
+  }
+
+  getPrompts(seller: string): SellerPersona & { updatedAt: string | null } {
+    const row = this.db.prepare("SELECT system_persona, user_persona, updated_at FROM seller_prompts WHERE seller = ?").get(seller) as
+      | { system_persona: string; user_persona: string; updated_at: string }
+      | undefined;
+    return { system: row?.system_persona ?? "", user: row?.user_persona ?? "", updatedAt: row?.updated_at ?? null };
+  }
+
+  /** Saving two empty prompts removes the seller's row. */
+  savePrompts(seller: string, p: SellerPersona) {
+    if (!p.system.trim() && !p.user.trim()) {
+      this.db.prepare("DELETE FROM seller_prompts WHERE seller = ?").run(seller);
+      return;
+    }
+    this.db
+      .prepare(
+        `INSERT INTO seller_prompts (seller, system_persona, user_persona, updated_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(seller) DO UPDATE SET system_persona = excluded.system_persona, user_persona = excluded.user_persona, updated_at = excluded.updated_at`,
+      )
+      .run(seller, p.system, p.user, new Date().toISOString());
   }
 
   close() {

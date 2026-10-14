@@ -131,3 +131,16 @@ describe("migration from the single-seller database", () => {
     expect(db.leadCounts()).toEqual({ alpha: 1, beta: 1 });
   });
 });
+
+describe("seller prompts", () => {
+  it("round-trips a seller's brand persona and deletes it when both are cleared", () => {
+    const db = new ChatDb(":memory:");
+    expect(db.getPrompts("alpha")).toEqual({ system: "", user: "", updatedAt: null });
+    db.savePrompts("alpha", { system: "Be Jay.", user: "Ask thickness." });
+    db.savePrompts("alpha", { system: "Be Jay, briefly.", user: "Ask thickness." });
+    expect(db.getPrompts("alpha")).toMatchObject({ system: "Be Jay, briefly.", user: "Ask thickness." });
+    expect(db.getPrompts("beta").system).toBe("");
+    db.savePrompts("alpha", { system: " ", user: "" });
+    expect(db.getPrompts("alpha").updatedAt).toBeNull();
+  });
+});

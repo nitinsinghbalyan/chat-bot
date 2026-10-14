@@ -281,7 +281,7 @@ function productCardTiles(seller: SellerContext): string {
 
 // ---- Directory ----------------------------------------------------------------------------
 
-export function directoryPage(sellers: SellerContext[]): string {
+export function directoryPage(sellers: SellerContext[], opts: { adminEnabled?: boolean } = {}): string {
   const cards = sellers.map((s) => {
     const bc = s.kb.businessCard;
     const products = s.catalogue.list("product").length;
@@ -294,10 +294,11 @@ export function directoryPage(sellers: SellerContext[]): string {
     <div class="stats"><span><b>${categories}</b> categories</span><span><b>${products}</b> products</span><span><b>${s.kb.productCards.length}</b> product cards</span></div>
     <div class="muted small">${s.catalogue.updatedAt ? `Catalogue updated ${esc(relative(s.catalogue.updatedAt))}` : "Catalogue not crawled yet"} · ${s.sitemapPages} page${s.sitemapPages === 1 ? "" : "s"} in sitemap</div>
     ${bc.deals_in?.length ? `<div class="tags">${bc.deals_in.slice(0, 6).map((d) => `<span class="tag">${esc(d)}</span>`).join("")}${bc.deals_in.length > 6 ? `<span class="tag muted">+${bc.deals_in.length - 6} more</span>` : ""}</div>` : ""}
+    ${opts.adminEnabled && (s.persona.system || s.persona.user) ? '<div class="small persona-set">✓ Brand persona set</div>' : ""}
   </div>
   <div class="card-actions">
-    <a class="btn ghost" href="/s/${esc(s.config.slug)}/">Visit site</a>
-    ${chatButton(s, "Chat")}
+    <a class="btn" href="/s/${esc(s.config.slug)}/">Visit site</a>
+    ${opts.adminEnabled ? `<a class="btn ghost" href="/admin/sellers/${esc(s.config.slug)}/prompts">Edit prompts</a>` : ""}
   </div>
 </article>`;
   });
@@ -305,7 +306,7 @@ export function directoryPage(sellers: SellerContext[]): string {
 <input id="filter" class="filter" type="search" placeholder="Filter sellers" aria-label="Filter sellers"></div></header>
 <main class="wrap">
   <h1>Sellers</h1>
-  <p class="muted">${sellers.length} seller${sellers.length === 1 ? "" : "s"}. Open a seller's site, or chat with their assistant right here.</p>
+  <p class="muted">${sellers.length} seller${sellers.length === 1 ? "" : "s"}. Open a seller's site to browse their machines and talk to their assistant.</p>
   ${sellers.length ? `<div class="grid sellers" id="sellers">${cards.join("")}</div>` : `<p>No sellers yet. Add a folder under <code>kb/sellers/</code>.</p>`}
 </main>
 <script>
@@ -313,10 +314,8 @@ document.getElementById("filter").addEventListener("input", function (e) {
   var q = e.target.value.toLowerCase().trim();
   document.querySelectorAll("#sellers .seller").forEach(function (c) { c.hidden = q && c.getAttribute("data-search").indexOf(q) < 0; });
 });
-</script>
-${PAGE_SCRIPT}`;
-  // The widget loads without a default seller; "Chat" picks one.
-  return layout({ title: "Seller assistants", body, widget: {} });
+</script>`;
+  return layout({ title: "Seller assistants", body });
 }
 
 // ---- Seller website -----------------------------------------------------------------------

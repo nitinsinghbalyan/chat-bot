@@ -2,9 +2,10 @@
 
 A website that hosts an AI chat assistant for many sellers. For each seller it shows:
 
-- **a directory** (`/`) listing every seller, with **Visit site** and **Chat** buttons
+- **a directory** (`/`) listing every seller, with a **Visit site** button (and **Edit prompts** for your team)
 - **a website per seller** (`/s/<seller>/`) built from the seller's crawled web pages and business card: Home, About Us, Products, category pages, product pages (photo gallery, starting price, specifications, description, features, related machines), Contact Us and search
-- **the seller's chatbot** in the **bottom-right corner** on every page of that site (set `"widgetPosition": "left"` to move it). Every "Get quote" and "Send an enquiry" button opens it, and the **Chat** button opens it right on the directory too.
+- **the seller's chatbot** in the **bottom-right corner** on every page of that site (set `"widgetPosition": "left"` to move it). Every "Get quote" and "Send an enquiry" button opens it.
+- **a brand persona per seller**: a system prompt and a user prompt you write in a web form, layered on top of the built-in assistant
 
 Each bot answers buyers' discovery and enquiry questions on its seller's behalf. It uses only that seller's knowledge base and follows the guardrails. When a buyer wants a quote, a price that isn't listed, or a callback, the bot captures a verified lead: **mobile number → OTP → name**. Sellers can also embed their bot on their own website with one script tag.
 
@@ -95,6 +96,20 @@ On Render, the push redeploys. The server then crawls every seller's sitemap on 
 | `/s/<slug>/contact` | Address, listed phone, Google Maps link, enquiry button |
 | `/s/<slug>/search?q=` | Catalogue search |
 
+## Brand persona prompts
+
+Each seller's assistant can have its own voice. On the directory, click **Edit prompts** (or **Set prompts** on `/admin`). The browser asks for the admin login: any username, with `ADMIN_PASSWORD`.
+
+| Box | Goes into | Use it for |
+|---|---|---|
+| **System prompt: brand persona** (up to 4,000 characters) | The system prompt, as a `# Brand persona` section before the sources | The assistant's name, tone, greeting style, what to emphasise about the brand |
+| **User prompt: added to every buyer message** (up to 2,000 characters) | Each buyer turn, as `<seller_instructions>` | A short standing instruction to keep in mind on every reply |
+
+- Both are **added on top of** the built-in prompt. The 9 guardrails, the knowledge-source rules and the OTP enquiry steps always apply, and the prompt tells the model they win if anything conflicts. The code-level output guardrails also still check every sentence.
+- Saving takes effect on the next chat turn; there's no redeploy. The prompts are stored in the SQLite database (`seller_prompts` table), so they survive restarts and redeploys on the Render disk.
+- **Clear** removes both. The form also shows a preview of the full system prompt.
+- Tags such as `<business_card>` or `<seller_instructions>` are stripped from both the prompts and buyer messages, so neither can break out of its block.
+
 ## Guardrails
 
 The 9 shared guardrails are in `prompts/guardrails.md`, word for word. The high-risk ones are also enforced in code (`src/guardrails.ts`), for every seller:
@@ -131,6 +146,7 @@ Everything is kept in one SQLite file, `DATA_DIR/chatbot.db`. Every table has a 
 | `transcript` | What buyers typed (payment and ID details already redacted) and what they were shown |
 | `leads` | Verified leads |
 | `guardrail_events` | Each sentence the output guardrails replaced |
+| `seller_prompts` | Each seller's brand persona (system and user prompt) |
 
 A database from the earlier single-seller version is migrated automatically on start. Its rows are assigned to `jayshree-machinetools`.
 
@@ -138,7 +154,8 @@ A database from the earlier single-seller version is migrated automatically on s
 
 Set `ADMIN_PASSWORD` (at least 8 characters). The browser asks for a login: any username, with that password. If `ADMIN_PASSWORD` isn't set, the admin pages return 404.
 
-- `/admin`: every seller with lead count, catalogue size, last crawl result and a **Re-crawl now** button
+- `/admin`: every seller with lead count, catalogue size, last crawl result, a link to their brand persona prompts and a **Re-crawl now** button
+- `/admin/sellers/<slug>/prompts`: edit that seller's system and user prompts
 - `/admin/leads`, filtered by seller with `?seller=<slug>`: leads, newest first, each linking to its chat
 - `/admin/leads.csv` (also takes `?seller=`): a CSV that opens in Excel
 - `/admin/transcript/<session>`: one full chat
