@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { Catalogue } from "./catalogue.js";
+import type { CatalogueEntry } from "./crawler.js";
 import { paths } from "./config.js";
 import { loadKnowledgeBase, sitemapUrls, type KnowledgeBase } from "./kb.js";
 import type { SellerPersona } from "./db.js";
@@ -14,7 +15,7 @@ import { KbView, knowledgeFromKb, validateSellerKb, type KbSummary, type SellerK
 
 export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,58}[a-z0-9])?$/;
 
-const sellerConfigSchema = z
+export const sellerConfigSchema = z
   .object({
     name: z.string().min(2).max(120),
     slug: z.string().regex(SLUG_RE, "use lowercase letters, digits and dashes"),
@@ -52,6 +53,8 @@ const productCardsSchema = z.array(
 
 export interface CrawlStatus {
   at: string;
+  /** ok: catalogue replaced; partial: too few pages fetched, previous kept; failed: nothing fetched or an error. */
+  status: "ok" | "partial" | "failed";
   ok: boolean;
   entries: number;
   message: string;
@@ -65,29 +68,39 @@ export interface UploadedKb {
 
 export interface SellerContext {
   config: SellerConfig;
+  /** repo: a folder under kb/sellers/ (committed). admin: added on /admin, stored on the data disk. */
+  source: "repo" | "admin";
+  /** The seller's folder: kb/sellers/<slug> for repo sellers, DATA_DIR/sellers/<slug> for admin ones. */
   dir: string;
+  /** This seller's folder on the data disk (crawls, uploaded KB; everything for admin sellers). */
+  dataDir: string;
   /** The knowledge the bot uses: the uploaded KB JSON when there is one, else the KB folder's files. */
   kb: KnowledgeBase;
   /** The KB folder's business card and product cards (used when no JSON is uploaded). */
   fileKb: KnowledgeBase;
-  /** The uploaded seller KB JSON, if any. */
+  /** The uploaded seller KB JSON, if any. Admin-added sellers always have one. */
   uploaded: UploadedKb | null;
   /** Where an uploaded KB JSON is stored (persistent disk). */
   uploadedKbFile: string;
+  /** Website and retrieval catalogue: the KB JSON's products and categories first, crawled pages filling gaps. */
   catalogue: Catalogue;
+  /** Pages from the last good crawl (runtime file, else the committed one). */
+  crawled: CatalogueEntry[];
+  crawledAt: Date | null;
   systemPrompt: string;
-  sitemapFile: string;
+  /** URLs from the KB folder's sitemap.xml (empty for admin-added sellers). */
+  sitemapList: string[];
   /** Catalogue written by runtime crawls (persistent disk). */
   runtimeCatalogueFile: string;
-  /** Catalogue committed in the KB folder, used until the first runtime crawl. */
-  bundledCatalogueFile: string;
+  /** Catalogue committed in the KB folder, used until the first runtime crawl (repo sellers only). */
+  bundledCatalogueFile: string | null;
   /** The seller's own guardrails.md, which replaces the common guardrails; null = use the common ones. */
   ownGuardrails: string | null;
   /** Default brand persona from the KB folder's persona.json (used until one is saved in admin). */
   defaultPersona: SellerPersona;
   /** Brand persona set in admin: `system` goes into the system prompt, `user` into every buyer turn. */
   persona: SellerPersona;
-  /** Number of URLs in the sitemap. */
+  /** Number of pages the crawler visits: the sitemap's, else the KB JSON's product and category pages. */
   sitemapPages: number;
   lastCrawl: CrawlStatus | null;
 }
@@ -149,57 +162,131 @@ export function sellerDirs(root: string): string[] {
 
 export class SellerRegistry {
   private sellers = new Map<string, SellerContext>();
+  private dataRoot = paths.sellerData;
 
-  /** Loads all sellers. Throws with every problem listed if any folder is invalid. */
+  /**
+   * Loads all sellers: every KB folder under `root`, plus sellers added on /admin (folders under
+   * `dataRoot` with their own seller.json). Throws with every problem listed if a KB folder is invalid.
+   */
   static load(root = paths.sellers, dataRoot = paths.sellerData): SellerRegistry {
     const dirs = sellerDirs(root);
     const problems = dirs.flatMap(validateSellerDir);
     if (problems.length) throw new Error(`Invalid seller KB:\n  - ${problems.join("\n  - ")}`);
     const reg = new SellerRegistry();
+    reg.dataRoot = dataRoot;
     for (const dir of dirs) {
       const config = sellerConfigSchema.parse(JSON.parse(fs.readFileSync(path.join(dir, "seller.json"), "utf8")));
       const kb = loadKnowledgeBase(dir, config.siteUrl);
       const override = path.join(dir, "guardrails.md");
-      const ownGuardrails = fs.existsSync(override) ? fs.readFileSync(override, "utf8") : null;
       const personaFile = path.join(dir, "persona.json");
-      const defaultPersona = fs.existsSync(personaFile) ? personaSchema.parse(JSON.parse(fs.readFileSync(personaFile, "utf8"))) : { system: "", user: "" };
-      const runtimeCatalogueFile = path.join(dataRoot, config.slug, "catalogue.json");
-      const bundledCatalogueFile = path.join(dir, "catalogue.json");
-      const sitemapFile = path.join(dir, "sitemap.xml");
-      const uploadedKbFile = path.join(dataRoot, config.slug, "seller_kb.json");
-      reg.sellers.set(config.slug, {
-        config,
-        dir,
-        kb,
-        fileKb: kb,
-        uploaded: null,
-        uploadedKbFile,
-        catalogue: Catalogue.fromDisk([runtimeCatalogueFile, bundledCatalogueFile]),
-        systemPrompt: "",
-        ownGuardrails,
-        defaultPersona,
-        persona: defaultPersona,
-        sitemapFile,
-        runtimeCatalogueFile,
-        bundledCatalogueFile,
-        sitemapPages: sitemapUrls(fs.readFileSync(sitemapFile, "utf8")).length,
-        lastCrawl: null,
+      const sitemapList = sitemapUrls(fs.readFileSync(path.join(dir, "sitemap.xml"), "utf8"));
+      const s = reg.context(config, "repo", dir, kb, {
+        ownGuardrails: fs.existsSync(override) ? fs.readFileSync(override, "utf8") : null,
+        defaultPersona: fs.existsSync(personaFile) ? personaSchema.parse(JSON.parse(fs.readFileSync(personaFile, "utf8"))) : { system: "", user: "" },
+        sitemapList,
+        bundledCatalogueFile: path.join(dir, "catalogue.json"),
       });
-      reg.render(reg.sellers.get(config.slug)!);
       // An uploaded KB on the persistent disk wins; a seller_kb.json committed in the KB folder is the fallback.
-      for (const file of [uploadedKbFile, path.join(dir, "seller_kb.json")]) {
-        if (!fs.existsSync(file)) continue;
-        try {
-          const result = validateSellerKb(JSON.parse(fs.readFileSync(file, "utf8")));
-          if (!result.ok) throw new Error(result.errors.slice(0, 5).join("; "));
-          reg.setUploadedKb(config.slug, result.kb, fs.statSync(file).mtime.toISOString());
+      for (const file of [s.uploadedKbFile, path.join(dir, "seller_kb.json")]) {
+        const kbJson = readKbFile(file, config.slug);
+        if (kbJson) {
+          reg.setUploadedKb(config.slug, kbJson, fs.statSync(file).mtime.toISOString());
           break;
-        } catch (err) {
-          console.error(`[kb:${config.slug}] ignoring ${file}: ${(err as Error).message}`);
         }
       }
     }
+    // Sellers added on /admin: their whole folder lives on the data disk.
+    for (const dir of sellerDirs(dataRoot)) {
+      const cfgFile = path.join(dir, "seller.json");
+      if (!fs.existsSync(cfgFile)) continue;
+      try {
+        const config = sellerConfigSchema.parse(JSON.parse(fs.readFileSync(cfgFile, "utf8")));
+        if (config.slug !== path.basename(dir)) throw new Error(`slug "${config.slug}" does not match the folder`);
+        if (reg.sellers.has(config.slug)) continue; // a KB folder in the repo wins
+        const kbFile = path.join(dir, "seller_kb.json");
+        const kbJson = readKbFile(kbFile, config.slug);
+        if (!kbJson) throw new Error("no valid seller_kb.json");
+        reg.addSeller(config, kbJson, fs.statSync(kbFile).mtime.toISOString());
+      } catch (err) {
+        console.error(`[sellers] skipping ${dir}: ${(err as Error).message}`);
+      }
+    }
     return reg;
+  }
+
+  private context(
+    config: SellerConfig,
+    source: SellerContext["source"],
+    dir: string,
+    kb: KnowledgeBase,
+    extra: { ownGuardrails: string | null; defaultPersona: SellerPersona; sitemapList: string[]; bundledCatalogueFile: string | null },
+  ): SellerContext {
+    const dataDir = path.join(this.dataRoot, config.slug);
+    const runtimeCatalogueFile = path.join(dataDir, "catalogue.json");
+    const crawled = readCatalogueFiles([runtimeCatalogueFile, ...(extra.bundledCatalogueFile ? [extra.bundledCatalogueFile] : [])]);
+    const s: SellerContext = {
+      config,
+      source,
+      dir,
+      dataDir,
+      kb,
+      fileKb: kb,
+      uploaded: null,
+      uploadedKbFile: path.join(dataDir, "seller_kb.json"),
+      catalogue: new Catalogue(),
+      crawled: crawled.entries,
+      crawledAt: crawled.at,
+      systemPrompt: "",
+      sitemapList: extra.sitemapList,
+      runtimeCatalogueFile,
+      bundledCatalogueFile: extra.bundledCatalogueFile,
+      ownGuardrails: extra.ownGuardrails,
+      defaultPersona: extra.defaultPersona,
+      persona: extra.defaultPersona,
+      sitemapPages: extra.sitemapList.length,
+      lastCrawl: null,
+    };
+    this.sellers.set(config.slug, s);
+    this.rebuildCatalogue(s);
+    this.render(s);
+    return s;
+  }
+
+  /**
+   * Adds (or replaces) a seller defined only by its settings and KB JSON, as created on /admin.
+   * The caller stores seller.json and seller_kb.json in DATA_DIR/sellers/<slug>/.
+   */
+  addSeller(config: SellerConfig, kb: SellerKb, uploadedAt = new Date().toISOString()): SellerContext {
+    const view = new KbView(kb);
+    const host = (() => {
+      try {
+        return new URL(config.siteUrl).hostname.replace(/^www\./, "");
+      } catch {
+        return null;
+      }
+    })();
+    const base: KnowledgeBase = {
+      businessCard: { name: config.name },
+      productCards: [],
+      businessCardText: `Name: ${config.name}`,
+      productCardsText: "",
+      allowedPhones: [],
+      allowedDomains: host ? [host] : [],
+    };
+    const fileKb = knowledgeFromKb(view, base);
+    const s = this.context(config, "admin", path.join(this.dataRoot, config.slug), fileKb, { ownGuardrails: null, defaultPersona: { system: "", user: "" }, sitemapList: [], bundledCatalogueFile: null });
+    this.setUploadedKb(config.slug, kb, uploadedAt);
+    return s;
+  }
+
+  /** DATA_DIR/sellers: where admin-added sellers and runtime files live. */
+  dataRootDir(): string {
+    return this.dataRoot;
+  }
+
+  /** Forgets a seller (the caller removes its files). */
+  removeSeller(slug: string) {
+    this.sellers.delete(slug);
   }
 
   /** Makes an uploaded KB (or, with null, the KB folder's files) the seller's knowledge, and re-renders the prompt. */
@@ -210,11 +297,36 @@ export class SellerRegistry {
       const view = new KbView(kb);
       s.uploaded = { view, uploadedAt, summary: view.summary() };
       s.kb = knowledgeFromKb(view, s.fileKb);
+      s.sitemapPages = s.sitemapList.length || view.pageUrls().length;
     } else {
       s.uploaded = null;
       s.kb = s.fileKb;
+      s.sitemapPages = s.sitemapList.length;
     }
+    this.rebuildCatalogue(s);
     this.render(s);
+  }
+
+  /** Swaps in a fresh crawl and rebuilds the website catalogue. */
+  setCrawled(slug: string, entries: CatalogueEntry[], at = new Date()) {
+    const s = this.sellers.get(slug);
+    if (!s) return;
+    s.crawled = entries;
+    s.crawledAt = at;
+    this.rebuildCatalogue(s);
+  }
+
+  /** Pages the crawler should visit: the sitemap, else the KB JSON's product and category pages. */
+  crawlUrls(s: SellerContext): string[] {
+    return s.sitemapList.length ? s.sitemapList : (s.uploaded?.view.pageUrls() ?? []);
+  }
+
+  private rebuildCatalogue(s: SellerContext) {
+    const fromKb = s.uploaded?.view.catalogueEntries() ?? [];
+    const kbAt = s.uploaded ? new Date(s.uploaded.uploadedAt) : null;
+    const times = [kbAt, s.crawledAt].filter((d): d is Date => !!d && !isNaN(d.getTime()));
+    const updatedAt = times.length ? new Date(Math.max(...times.map((d) => d.getTime()))) : null;
+    s.catalogue.load(mergeCatalogue(fromKb, s.crawled), updatedAt);
   }
 
   /** The common system prompt template and guardrails, shared by every seller. */
@@ -248,6 +360,10 @@ export class SellerRegistry {
     return this.sellers.get(slug);
   }
 
+  has(slug: string): boolean {
+    return this.sellers.has(slug);
+  }
+
   list(): SellerContext[] {
     return [...this.sellers.values()].sort((a, b) => a.config.name.localeCompare(b.config.name));
   }
@@ -255,4 +371,73 @@ export class SellerRegistry {
   get size() {
     return this.sellers.size;
   }
+}
+
+function readKbFile(file: string, slug: string): SellerKb | null {
+  if (!fs.existsSync(file)) return null;
+  try {
+    const result = validateSellerKb(JSON.parse(fs.readFileSync(file, "utf8")));
+    if (!result.ok) throw new Error(result.errors.slice(0, 5).join("; "));
+    return result.kb;
+  } catch (err) {
+    console.error(`[kb:${slug}] ignoring ${file}: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+/** The first non-empty catalogue file (runtime crawl first, then the committed one). */
+function readCatalogueFiles(files: string[]): { entries: CatalogueEntry[]; at: Date | null } {
+  for (const file of files) {
+    if (!fs.existsSync(file)) continue;
+    try {
+      const entries = JSON.parse(fs.readFileSync(file, "utf8")) as CatalogueEntry[];
+      if (entries.length) return { entries, at: fs.statSync(file).mtime };
+    } catch (err) {
+      console.error(`[catalogue] ignoring ${file}: ${(err as Error).message}`);
+    }
+  }
+  return { entries: [], at: null };
+}
+
+/** Same page regardless of http/https, www. or a trailing slash. */
+export function pageKey(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.hostname.replace(/^www\./, "").toLowerCase()}${u.pathname.replace(/\/+$/, "").toLowerCase()}`;
+  } catch {
+    return url;
+  }
+}
+
+const unionBy = <T>(a: T[], b: T[], key: (x: T) => string) => {
+  const seen = new Set(a.map(key));
+  return [...a, ...b.filter((x) => !seen.has(key(x)) && seen.add(key(x)))];
+};
+
+/**
+ * KB JSON entries first; for the same page, empty fields are filled from the crawl. Crawled pages
+ * the JSON doesn't have are added after.
+ */
+export function mergeCatalogue(fromKb: CatalogueEntry[], crawled: CatalogueEntry[]): CatalogueEntry[] {
+  const byKey = new Map(crawled.map((e) => [pageKey(e.url), e]));
+  const merged = fromKb.map((k) => {
+    const c = byKey.get(pageKey(k.url));
+    if (!c) return k;
+    byKey.delete(pageKey(k.url));
+    return {
+      ...k,
+      price_text: k.price_text ?? c.price_text,
+      specs: Object.keys(k.specs).length ? k.specs : c.specs,
+      description: k.description || c.description,
+      details: k.details || c.details,
+      features: k.features.length ? k.features : c.features,
+      image: k.image ?? c.image,
+      images: unionBy(k.images, c.images ?? [], (x) => x),
+      videos: unionBy(k.videos, c.videos ?? [], (x) => x.url),
+      documents: unionBy(k.documents, c.documents ?? [], (x) => x.url),
+      breadcrumbs: k.breadcrumbs.length ? k.breadcrumbs : c.breadcrumbs,
+      products: unionBy(k.products, c.products ?? [], (x) => pageKey(x.url)),
+    };
+  });
+  return [...merged, ...byKey.values()];
 }

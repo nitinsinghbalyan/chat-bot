@@ -11,24 +11,19 @@ const db = new ChatDb(paths.db);
 const sessions = new SessionStore(db);
 const crawling = new Set<string>();
 
-/** Crawls one seller's sitemap into DATA_DIR and swaps the new catalogue in. */
+/** Crawls one seller's pages (sitemap, else the KB JSON's page URLs) into DATA_DIR and swaps the new catalogue in. */
 async function recrawl(seller: SellerContext) {
   const slug = seller.config.slug;
-  if (crawling.has(slug)) return;
+  if (crawling.has(slug) || sellers.crawlUrls(seller).length === 0) return;
   crawling.add(slug);
   const log = (m: string) => console.log(`[crawl:${slug}] ${m}`);
   try {
-    const entries = await refreshCatalogue({ sitemapFile: seller.sitemapFile, outFile: seller.runtimeCatalogueFile, log });
-    if (entries) seller.catalogue.load(entries);
-    seller.lastCrawl = {
-      at: new Date().toISOString(),
-      ok: !!entries,
-      entries: entries?.length ?? 0,
-      message: entries ? `${entries.length} pages` : "Site unreachable or no pages fetched; kept the previous catalogue",
-    };
+    const r = await refreshCatalogue({ urls: sellers.crawlUrls(seller), outFile: seller.runtimeCatalogueFile, previous: seller.crawled.length, log });
+    if (r.entries) sellers.setCrawled(slug, r.entries);
+    seller.lastCrawl = { at: new Date().toISOString(), status: r.status, ok: r.status === "ok", entries: r.fetched, message: r.message };
   } catch (err) {
     console.error(`[crawl:${slug}] failed`, err);
-    seller.lastCrawl = { at: new Date().toISOString(), ok: false, entries: 0, message: (err as Error).message };
+    seller.lastCrawl = { at: new Date().toISOString(), status: "failed", ok: false, entries: 0, message: (err as Error).message };
   } finally {
     crawling.delete(slug);
   }

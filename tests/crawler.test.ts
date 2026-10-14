@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { crawl, extractPage, parseSitemap, shouldCrawl, slugFromUrl, titleFromSlug } from "../src/crawler.js";
+import os from "node:os";
+import { crawl, extractPage, parseSitemap, refreshCatalogue, shouldCrawl, slugFromUrl, titleFromSlug } from "../src/crawler.js";
 
 const fx = (name: string) => fs.readFileSync(path.join(__dirname, "fixtures", name), "utf8");
 const BASE = "https://www.jayshreemachinetools.in";
@@ -138,5 +139,28 @@ describe("crawl when the site is unreachable", () => {
     const entries = await crawl({ urls, fetchImpl: failingFetch, delayMs: 0, retryDelayMs: 0, concurrency: 1 });
     expect(entries).toEqual([]);
     expect(calls).toBe(5 * 3); // 5 pages x 3 attempts
+  });
+});
+
+describe("refreshCatalogue", () => {
+  const urls = Array.from({ length: 10 }, (_, i) => `${BASE}/product/item-${i}abc123.html`);
+  const page = (u: string) => `<html><head><title>${u}</title></head><body><h1>Item</h1></body></html>`;
+  const fetchOnly = (n: number) => (async (u: string) => {
+    const i = Number(String(u).match(/item-(\d+)/)![1]);
+    return i < n ? new Response(page(String(u))) : new Response("blocked", { status: 503 });
+  }) as unknown as typeof fetch;
+  const opts = { delayMs: 0, retryDelayMs: 0 };
+
+  it("writes a full crawl, then keeps it when a later crawl only gets a few pages", async () => {
+    const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "crawl-")), "catalogue.json");
+    const full = await refreshCatalogue({ urls, outFile: out, fetchImpl: fetchOnly(10), log: () => {}, ...opts });
+    expect(full).toMatchObject({ status: "ok", fetched: 10 });
+    const partial = await refreshCatalogue({ urls, outFile: out, fetchImpl: fetchOnly(2), log: () => {}, ...opts });
+    expect(partial.status).toBe("partial");
+    expect(partial.entries).toBeNull();
+    expect(partial.message).toContain("Partial: 2 of 10 pages fetched");
+    expect(JSON.parse(fs.readFileSync(out, "utf8"))).toHaveLength(10);
+    const none = await refreshCatalogue({ urls, outFile: out, fetchImpl: fetchOnly(0), log: () => {}, ...opts });
+    expect(none.status).toBe("failed");
   });
 });

@@ -10,6 +10,7 @@
  */
 import { z } from "zod";
 import { FORBIDDEN_SPEC_KEYS, slugFromUrl, splitSentences, stripForbidden } from "./crawler.js";
+import type { CatalogueEntry } from "./crawler.js";
 import type { BusinessCard, KnowledgeBase, ProductCard } from "./kb.js";
 import { httpUrl, videoInfo, type MediaCard } from "./media.js";
 
@@ -436,6 +437,76 @@ export class KbView {
       documents += this.documents(p).length;
     }
     return { company: this.kb.seller.company_name, products: this.kb.products.length, categories: this.kb.categories.length, images, videos, documents };
+  }
+
+  // ---- the website catalogue ----
+
+  /** Product and category page URLs, for crawling sellers that have no sitemap. */
+  pageUrls(): string[] {
+    const urls = [...this.kb.categories.map((c) => c.url), ...this.kb.products.map((p) => p.product_url)].map((u) => httpUrl(u)).filter((u): u is string => !!u);
+    return [...new Set(urls)];
+  }
+
+  /**
+   * The JSON as website catalogue entries. Unlike the bot's view, these keep the listed starting
+   * price (the website shows it); forbidden spec rows and sentences are still removed.
+   */
+  catalogueEntries(): CatalogueEntry[] {
+    const entries: CatalogueEntry[] = [];
+    for (const c of this.kb.categories) {
+      const url = httpUrl(c.url);
+      if (!url) continue;
+      const products = this.productsIn(c).flatMap((p) => {
+        const u = httpUrl(p.product_url);
+        return u ? [{ url: u, title: this.title(p), image: this.images(p)[0]?.url ?? null }] : [];
+      });
+      const desc = cleanText(c.description);
+      entries.push({
+        url,
+        kind: "category",
+        slug: slugFromUrl(url) || `c-${c.category_id}`,
+        title: c.name,
+        category: c.name,
+        price_text: null,
+        specs: {},
+        description: desc,
+        image: httpUrl(c.image_url) ?? products.find((p) => p.image)?.image ?? null,
+        images: [],
+        details: desc,
+        features: [],
+        videos: [],
+        documents: [],
+        breadcrumbs: [],
+        products,
+      });
+    }
+    for (const p of this.kb.products) {
+      const url = httpUrl(p.product_url);
+      if (!url) continue;
+      const c = this.categoryOf(p);
+      const cUrl = httpUrl(c?.url);
+      const images = this.images(p).map((i) => i.url);
+      const details = cleanText(p.description);
+      entries.push({
+        url,
+        kind: "product",
+        slug: this.slug(p),
+        title: this.title(p),
+        category: c?.name || p.taxonomy?.category_name || "",
+        price_text: typeof p.price_text === "string" && p.price_text.trim() ? p.price_text.trim() : null,
+        specs: Object.fromEntries(this.specs(p)),
+        description: details.split("\n\n")[0].slice(0, 300),
+        image: images[0] ?? null,
+        images,
+        details,
+        features: [],
+        videos: this.videos(p).map((v) => ({ url: v.url, title: v.title })),
+        documents: this.documents(p).map((d) => ({ url: d.url, title: d.title })),
+        breadcrumbs: c && cUrl ? [{ title: c.name, url: cUrl }] : [],
+        products: [],
+      });
+    }
+    return entries;
   }
 
   // ---- rendering for the system prompt ----

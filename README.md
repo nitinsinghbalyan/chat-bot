@@ -26,7 +26,9 @@ The website and the bot use **the same crawled catalogue**, so the bot never con
 
 ## Adding a seller
 
-Create a folder `kb/sellers/<slug>/`, where `<slug>` uses lowercase letters, digits and dashes (e.g. `alpha-presses`). Put these files in it:
+**The quick way: upload their JSON.** On `/admin`, click **+ Add seller** and drop in the seller's knowledge base JSON. The form fills in the name, web address (slug), website and embed origins from the file; pick a brand colour and click **Add seller**. The seller's website (`/s/<slug>/`), chat assistant and lead capture go live straight away, with no repo change or deploy. Their files are kept on the data disk (`DATA_DIR/sellers/<slug>/seller.json` and `seller_kb.json`), so they survive redeploys. Sellers added this way can be deleted from their card; their leads and chats are kept.
+
+**The repo way: a KB folder.** Create a folder `kb/sellers/<slug>/`, where `<slug>` uses lowercase letters, digits and dashes (e.g. `alpha-presses`). Put these files in it:
 
 | File | Required | What it holds |
 |---|---|---|
@@ -77,7 +79,11 @@ On Render, the push redeploys. The server then crawls every seller's sitemap on 
 
 On `/admin`, each seller row has **Upload JSON**. The file is the seller export (`_version` 3.0, with `seller`, `company_pages`, `photo_gallery`, `categories` and `products`). **Download a template** on the same page gives a small example. The upload is checked first, and any problem is listed by field (for example `products[2].name: must not be empty`); nothing changes until the file is valid.
 
-Once uploaded, the JSON is the bot's **main source**: it replaces `business_card.json` and `product_cards.json` for that seller. Crawled website pages remain an extra source. The file is kept on the Render disk (`DATA_DIR/sellers/<slug>/seller_kb.json`), so it survives redeploys. **Download** returns it and **Remove** goes back to the KB folder files.
+Once uploaded, the JSON is the **main source** for both the bot and the seller's website:
+- **The bot:** it replaces `business_card.json` and `product_cards.json` for that seller.
+- **The website:** every product and category page is built from it (photos, specifications, description, videos, PDFs and the listed starting price). Crawled pages only fill gaps and add pages the JSON doesn't have.
+
+The site keeps working even when the seller's own website blocks the crawler. The file is kept on the Render disk (`DATA_DIR/sellers/<slug>/seller_kb.json`), so it survives redeploys. **Download** returns it and **Remove** goes back to the KB folder files.
 
 What the bot is given from it:
 
@@ -204,7 +210,14 @@ A database from the earlier single-seller version is migrated automatically on s
 
 Set `ADMIN_PASSWORD` (at least 8 characters). The browser asks for a login: any username, with that password. If `ADMIN_PASSWORD` isn't set, the admin pages return 404.
 
-- `/admin`: every seller with lead count, catalogue size, last crawl result, **Upload JSON** (knowledge base), a link to their brand persona prompts and a **Re-crawl now** button
+- `/admin`: one card per seller. Each card shows:
+  - status badges: knowledge base, crawl (OK, partial or failed) and persona
+  - stats: leads, products, categories, photos, videos and PDFs
+  - a drag-and-drop JSON upload, with download and remove
+  - the website catalogue and **Re-crawl now**
+  - the brand persona
+  - for sellers added in admin, **Delete seller**
+- `/admin/sellers/new`: add a seller by uploading their JSON
 - `/admin/prompts`: the common system prompt and chat guardrails for all sellers
 - `/admin/kb-template.json`: a template for the knowledge base JSON
 - `/admin/sellers/<slug>/prompts`: edit that seller's system and user prompts
@@ -236,7 +249,7 @@ Without a crawled catalogue, a seller's site shows the business card and product
 | `DATA_DIR` | `./data` | Holds `chatbot.db` and each seller's runtime `catalogue.json` |
 | `SELLERS_DIR` | `kb/sellers` | Where the seller folders are |
 | `ALLOWED_ORIGINS` | (none) | Extra websites allowed to embed **any** seller's bot. Each seller's own site goes in `seller.json` |
-| `CRAWL_ON_START` / `CRAWL_INTERVAL_HOURS` | `false` / `24` | Re-crawls every seller, one after another |
+| `CRAWL_ON_START` / `CRAWL_INTERVAL_HOURS` | `false` / `24` | Re-crawls every seller, one after another. A crawl that fetches fewer than 80% of the pages already in the catalogue (the site blocking or rate-limiting part-way) doesn't replace it, and shows as **Crawl partial** on `/admin` |
 | `DEMO_OTP` | `12345` | Demo OTP |
 
 ## Deploying on Render
@@ -300,10 +313,10 @@ npm run eval      # live scenarios against the real model for Jayshree, one or m
 ```
 kb/sellers/<slug>/   KB you supply per seller (+ optional persona.json, seller_kb.json, catalogue)
 prompts/             system.md, user.md, guardrails.md (common defaults; editable at /admin/prompts)
-src/                 app.ts (HTTP: chat API, website, admin), server.ts, sellers.ts (registry), claude.ts (chat loop),
+src/                 app.ts (HTTP: chat API, website), admin.ts (admin pages), server.ts, sellers.ts (registry), claude.ts (chat loop),
                      tools.ts (OTP, lead, show_options, share_media), sellerKb.ts (JSON upload), shareMedia.ts,
                      media.ts, guardrails.ts, crawler.ts, catalogue.ts, db.ts (SQLite), site/ (page templates)
-public/              widget.js (embeddable chat), site.css, demo.html
+public/              widget.js (embeddable chat), site.css, admin.css, demo.html
 scripts/             crawl.ts, kb-check.ts, eval.ts
 tests/               vitest tests + fixtures (HTML pages, two sample sellers, a sample KB JSON)
 render.yaml          Render Blueprint (web service + persistent disk)

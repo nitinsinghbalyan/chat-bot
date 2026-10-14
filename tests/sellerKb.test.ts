@@ -112,3 +112,43 @@ describe("registry and share_media", () => {
     expect(bad.content).toContain("Unknown id: no-such-thing");
   });
 });
+
+describe("admin-added sellers and the website catalogue", () => {
+  it("reloads an admin-added seller from the data folder after a restart", () => {
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), "kb-admin-"));
+    const dir = path.join(data, "gamma-machines");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "seller.json"), JSON.stringify({ name: "Gamma Machines", slug: "gamma-machines", siteUrl: "https://www.gamma.example/" }));
+    fs.writeFileSync(path.join(dir, "seller_kb.json"), JSON.stringify(raw()));
+    const reg = SellerRegistry.load(FIXTURE_SELLERS, data);
+    const g = reg.get("gamma-machines")!;
+    expect(g.source).toBe("admin");
+    expect(g.catalogue.get("product", "cnc-press-brake-a1b2c3d")?.price_text).toBe("₹ 4,50,000/Piece");
+    expect(g.systemPrompt).toContain("Product id: nc-press-brake-z9y8x7w");
+    expect(reg.crawlUrls(g)).toContain("https://www.alphapresses.example/product/cnc-press-brake-a1b2c3d.html");
+    // Repo sellers are still there, and a broken admin folder is skipped rather than failing startup.
+    fs.mkdirSync(path.join(data, "broken"));
+    fs.writeFileSync(path.join(data, "broken", "seller.json"), "{");
+    expect(SellerRegistry.load(FIXTURE_SELLERS, data).list().map((s) => s.config.slug)).toEqual(["alpha-presses", "beta-pumps", "gamma-machines"]);
+  });
+
+  it("builds the website from the JSON first and fills gaps from the crawl", () => {
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), "kb-merge-"));
+    const reg = SellerRegistry.load(FIXTURE_SELLERS, data);
+    const alpha = reg.get("alpha-presses")!;
+    // Without a JSON: only the committed crawl (1 category, 1 product).
+    expect(alpha.catalogue.list("product").map((p) => p.slug)).toEqual(["cnc-press-brake-a1b2c3d"]);
+    reg.setUploadedKb("alpha-presses", loaded().kb);
+    const products = alpha.catalogue.list("product");
+    expect(products.map((p) => p.slug).sort()).toEqual(["cnc-press-brake-a1b2c3d", "nc-press-brake-z9y8x7w"]);
+    const cnc = alpha.catalogue.get("product", "cnc-press-brake-a1b2c3d")!;
+    expect(cnc.title).toBe("CNC Press Brake 100 Ton"); // from the JSON
+    expect(cnc.images).toContain("https://img.alphapresses.example/cnc-side.jpg");
+    expect(alpha.catalogue.categoryOf(cnc)?.title).toBe("Press Brakes");
+    // A crawled page the JSON doesn't have is kept.
+    reg.setCrawled("alpha-presses", [...alpha.crawled, { ...alpha.crawled[1], url: "https://www.alphapresses.example/product/extra-q1q1q1q.html", slug: "extra-q1q1q1q", title: "Extra Machine" }]);
+    expect(alpha.catalogue.get("product", "extra-q1q1q1q")?.title).toBe("Extra Machine");
+    reg.setUploadedKb("alpha-presses", null);
+    expect(alpha.catalogue.get("product", "nc-press-brake-z9y8x7w")).toBeNull();
+  });
+});

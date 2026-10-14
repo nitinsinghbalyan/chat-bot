@@ -282,7 +282,7 @@ describe("knowledge base upload", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, summary: { products: 2, categories: 1, videos: 3 } });
     const adminPage = await (await fetch(`${base}/admin`, { headers: auth(PASSWORD) })).text();
-    expect(adminPage).toContain("Uploaded JSON");
+    expect(adminPage).toContain("JSON knowledge base");
     expect(adminPage).toContain(`href="/admin/sellers/${ALPHA}/kb.json"`);
     expect((await fetch(`${base}/admin/kb-template.json`, { headers: auth(PASSWORD) })).status).toBe(200);
     expect((await fetch(`${base}/admin/sellers/${ALPHA}/kb.json`, { headers: auth(PASSWORD) })).status).toBe(200);
@@ -298,8 +298,8 @@ describe("knowledge base upload", () => {
     expect(requests[0].system[0].text).not.toContain("4,50,000");
     expect(body).toContain("event: cards");
     expect(body).toContain('"url":"https://img.alphapresses.example/cnc.jpg"');
-    // Buyer is on this site, so the related product card links to the generated page when it exists, else the seller's page.
-    expect(body).toContain('"type":"product","title":"NC Press Brake","url":"https://www.alphapresses.example/product/nc-press-brake-z9y8x7w.html"');
+    // Buyer is on this site, and the KB gives every product a generated page, so related cards link there.
+    expect(body).toContain(`"type":"product","title":"NC Press Brake","url":"${base}/s/${ALPHA}/p/nc-press-brake-z9y8x7w"`);
     expect(body).toContain('"chips":["CNC","NC"]');
     expect(db.transcript(`${ALPHA}:kb-upload-1`).at(-1)?.text).toContain('[Shared: image "CNC Press Brake 100 Ton"');
   });
@@ -308,6 +308,56 @@ describe("knowledge base upload", () => {
     const res = await fetch(`${base}/admin/sellers/${ALPHA}/kb/delete`, { method: "POST", headers: { ...auth(PASSWORD), Origin: base }, redirect: "manual" });
     expect(res.status).toBe(303);
     expect((await fetch(`${base}/admin/sellers/${ALPHA}/kb.json`, { headers: auth(PASSWORD) })).status).toBe(404);
+  });
+});
+
+describe("adding a seller from a KB JSON", () => {
+  const kb = () => JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "kb", "alpha-kb.json"), "utf8"));
+  const config = { name: "Gamma Machines", slug: "gamma-machines", siteUrl: "https://www.gamma.example/", color: "#2266aa", allowedOrigins: ["https://www.gamma.example"] };
+  const add = (body: unknown, origin = base) =>
+    fetch(`${base}/admin/sellers`, { method: "POST", headers: { ...auth(PASSWORD), Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+  it("is admin-only, same-site only, and rejects bad details by field", async () => {
+    expect((await fetch(`${base}/admin/sellers/new`)).status).toBe(401);
+    expect((await fetch(`${base}/admin/sellers/new`, { headers: auth(PASSWORD) })).status).toBe(200);
+    expect((await add({ config, kb: kb() }, "https://evil.example")).status).toBe(403);
+    const dup = await add({ config: { ...config, slug: ALPHA }, kb: kb() });
+    expect(dup.status).toBe(400);
+    expect((await dup.json()).errors).toContain(`slug: "${ALPHA}" is already used by another seller`);
+    const bad = await add({ config: { ...config, slug: "Bad Slug" }, kb: { seller: {}, products: [] } });
+    const errs = (await bad.json()).errors as string[];
+    expect(errs.some((e) => e.startsWith("slug:"))).toBe(true);
+    expect(errs).toContain("seller.company_name: Invalid input: expected string, received undefined");
+  });
+
+  it("creates the seller live: directory, website from the JSON, bot grounded in it", async () => {
+    const res = await add({ config, kb: kb() });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, slug: "gamma-machines" });
+    expect((await page_("/")).body).toContain("Gamma Machines");
+    const home = await page_("/s/gamma-machines/");
+    expect(home.status).toBe(200);
+    // A product page built from the JSON alone, with its listed starting price and gallery.
+    const product = await page_("/s/gamma-machines/p/cnc-press-brake-a1b2c3d");
+    expect(product.status).toBe(200);
+    expect(product.body).toContain("CNC Press Brake 100 Ton");
+    expect(product.body).toContain("Starting price ₹ 4,50,000/Piece");
+    expect(product.body).toContain('data-gallery-src="https://img.alphapresses.example/cnc-side.jpg"');
+    expect(product.body).not.toMatch(/GST Rate|9876543210/);
+    expect((await page_("/s/gamma-machines/c/press-brakes")).body).toContain("NC Press Brake");
+    requests.length = 0;
+    await chat("gamma-machines", "hello", { origin: base, sessionId: "gamma-chat-1", pageUrl: `${base}/s/gamma-machines/` });
+    expect(requests[0].system[0].text).toContain("Product id: cnc-press-brake-a1b2c3d");
+    const admin = await (await fetch(`${base}/admin`, { headers: auth(PASSWORD) })).text();
+    expect(admin).toContain('id="seller-gamma-machines"');
+    expect(admin).toContain("added in admin");
+  });
+
+  it("deletes an admin-added seller but not a repo seller", async () => {
+    const post = (p: string) => fetch(`${base}${p}`, { method: "POST", headers: { ...auth(PASSWORD), Origin: base }, redirect: "manual" });
+    expect((await post(`/admin/sellers/${ALPHA}/delete`)).status).toBe(400);
+    expect((await post("/admin/sellers/gamma-machines/delete")).status).toBe(303);
+    expect((await page_("/s/gamma-machines/")).status).toBe(404);
   });
 });
 
