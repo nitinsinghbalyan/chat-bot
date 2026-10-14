@@ -234,6 +234,24 @@ describe("admin", () => {
     expect(body).toContain("Re-crawl now");
   });
 
+  it("lists sellers as rows whose Manage section holds the controls", async () => {
+    const body = await (await fetch(`${base}/admin`, { headers: auth(PASSWORD) })).text();
+    const rows = body.split('<details class="srow"').slice(1);
+    expect(rows.length).toBe(2);
+    const alpha = rows.find((r) => r.includes(`id="seller-${ALPHA}"`)) ?? "";
+    const [summary, manage] = alpha.split("</summary>");
+    expect(summary).toContain("Alpha Presses");
+    expect(summary).toContain(`href="/admin/leads?seller=${ALPHA}"`);
+    expect(summary).toContain(`href="/s/${ALPHA}/"`);
+    expect(summary).toContain("Manage");
+    expect(manage).toContain(`data-upload="/admin/sellers/${ALPHA}/kb"`);
+    expect(manage).toContain(`action="/admin/sellers/${ALPHA}/recrawl"`);
+    expect(manage).toContain(`href="/admin/sellers/${ALPHA}/prompts"`);
+    // Repo sellers can't be deleted from admin.
+    expect(manage).not.toContain("Delete seller");
+    expect(body).not.toContain('id="seller-filter"');
+  });
+
   it("filters leads by seller and exports CSV with formulas defused", async () => {
     const page = await (await fetch(`${base}/admin/leads?seller=${ALPHA}`, { headers: auth(PASSWORD) })).text();
     expect(page).toContain("9876543210");
@@ -351,6 +369,7 @@ describe("adding a seller from a KB JSON", () => {
     const admin = await (await fetch(`${base}/admin`, { headers: auth(PASSWORD) })).text();
     expect(admin).toContain('id="seller-gamma-machines"');
     expect(admin).toContain("added in admin");
+    expect(admin.split('id="seller-gamma-machines"')[1].split("</details>")[0]).toContain("Delete seller");
   });
 
   it("adds a seller whose export has blank ids, with notes about the fixes", async () => {

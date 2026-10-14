@@ -13,6 +13,7 @@
 - Prefers a UI for operations over editing files: KB upload, add seller, persona and common prompts all happen in admin.
 - Is scaling to 5+ sellers, so wants shared defaults with per-seller overrides.
 - Wants the bot strict on guardrails: no prices, grounded answers only.
+- Wants compact, scannable lists as the seller count grows: the admin seller cards became one-line rows with a Manage toggle.
 
 ## Notes
 - Personal-assistant preferences, such as the #brain vault rules, apply to Nitin's own chats and are not part of this project. Don't copy personal data into this repo.

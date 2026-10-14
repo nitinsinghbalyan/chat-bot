@@ -14,7 +14,7 @@
 | Area | Files |
 |------|-------|
 | HTTP: chat API (SSE), website routes | `src/app.ts` |
-| Admin pages (Basic auth, any username + `ADMIN_PASSWORD`, same-origin POSTs) | `src/admin.ts`, `public/admin.css` |
+| Admin pages (Basic auth, any username + `ADMIN_PASSWORD`, same-origin POSTs); seller rows = `sellerRow()` + `ROWS_SCRIPT` | `src/admin.ts`, `public/admin.css` |
 | Seller registry, catalogue merge, admin sellers | `src/sellers.ts` |
 | KB JSON: lenient schema, repairs, guardrail filters, ISQs, prompt text, catalogue entries | `src/sellerKb.ts` |
 | Chat loop: Claude streaming, tools, output filter | `src/claude.ts`, `src/tools.ts`, `src/guardrails.ts` |
@@ -50,7 +50,8 @@
 | JSON format = the seller export v3.0 (we adapted to it; no custom schema) | Nitin sent a sample export |
 | ISQs derived from category specs (the export has no question list) | Claude's design, accepted |
 | One common system prompt and guardrails for all sellers, editable in admin | Nitin (5+ sellers) |
-| Admin = seller cards UI; add seller by uploading JSON | Nitin |
+| Admin = seller rows UI (was cards): one compact row per seller, **Manage** expands its controls in place; public directory keeps cards | Nitin |
+| Add seller by uploading JSON | Nitin |
 | Lenient import: repair or skip bad records, warn; refuse only unusable files | After a production failure on a blank `category_id` |
 | Never commit raw seller exports | They contain GST, bank and turnover data |
 | Large KBs accepted: over ~300k characters, the system prompt keeps categories + ISQs + product index, details come per message via catalogue search | A 3.3M-character export was refused by the old 400k limit |
@@ -68,10 +69,12 @@
 | #8 | Lenient KB import (blank ids or names, duplicates) with fix notes |
 | #9 | Project memory (CLAUDE.md + memory/) |
 | #10 | Large catalogues: prompt budget with index/partial modes, `ID:` and details in catalogue hits, 20k products / 40 MB uploads |
+| #11 | Admin sellers list as expandable rows (Manage), filter box, row opens after upload/crawl/add |
 
 ## Open items / ideas
 - Real SMS OTP (replace the demo check in `src/tools.ts`; stop sending `demo: true` from `/api/sellers/:slug`).
 - Run `npm run eval` (live-model scenarios) where an API key is available. The price scenario now expects no price.
+- Large-catalogue answers (index/partial modes, details via per-message search) are untested with the live model; check on production with questions that name specific models.
 - Check on production that seller photos (imimg.com) load; they can't be seen from cloud sessions.
 - The seller's own site rate-limits the Render crawler. The JSON covers the website, so this is low priority.
 - Possible: write a `persona.json` for each new seller; an About page built from the export's `company_pages`.
