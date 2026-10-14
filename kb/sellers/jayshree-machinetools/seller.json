@@ -4,5 +4,8 @@
   "siteUrl": "https://www.jayshreemachinetools.in/",
   "color": "#0b5cad",
   "allowedOrigins": ["https://www.jayshreemachinetools.in", "https://jayshreemachinetools.in"],
-  "chips": ["Press Brake", "Shearing Machine", "Laser Cutting Machine", "Hydraulic Press"]
+  "chips": ["Press Brake", "Shearing Machine", "Laser Cutting Machine", "Hydraulic Press"],
+  "widgetPosition": "right",
+  "tagline": "Manufacturer of press brakes, shearing machines, hydraulic presses and fiber laser cutting machines in Rajkot, Gujarat",
+  "about": "Jayshree Machinetools Private Limited is a manufacturer of sheet metal machinery based in Rajkot, Gujarat, India.\n\nOur range covers hydraulic and CNC press brakes, hydraulic, NC and mechanical under-crank shearing machines, hydraulic plate shears and guillotine shears, fiber and CNC laser cutting machines, C-frame and H-frame hydraulic presses, and universal ironworker machines.\n\nTell our assistant what you need to bend, cut or press, and our team will get back to you with the right machine and a quote."
 }

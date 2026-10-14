@@ -3,8 +3,8 @@
 A website that hosts an AI chat assistant for many sellers. For each seller it shows:
 
 - **a directory** (`/`) listing every seller, with **Visit site** and **Chat** buttons
-- **a mini-website** (`/s/<seller>/`) built from the seller's crawled web pages: home, categories, products and search
-- **the seller's chatbot** in the **bottom-left corner** on every page of that site. The **Chat** button opens it right on the directory too.
+- **a website per seller** (`/s/<seller>/`) built from the seller's crawled web pages and business card: Home, About Us, Products, category pages, product pages (photo gallery, starting price, specifications, description, features, related machines), Contact Us and search
+- **the seller's chatbot** in the **bottom-right corner** on every page of that site (set `"widgetPosition": "left"` to move it). Every "Get quote" and "Send an enquiry" button opens it, and the **Chat** button opens it right on the directory too.
 
 Each bot answers buyers' discovery and enquiry questions on its seller's behalf. It uses only that seller's knowledge base and follows the guardrails. When a buyer wants a quote, a price that isn't listed, or a callback, the bot captures a verified lead: **mobile number → OTP → name**. Sellers can also embed their bot on their own website with one script tag.
 
@@ -14,7 +14,7 @@ Each bot answers buyers' discovery and enquiry questions on its seller's behalf.
 kb/sellers/<seller>/ (KB you supply) ──► SellerRegistry ──► per seller: KB, cached system prompt, catalogue
 sitemap.xml ──► crawler ──► catalogue.json ──► (a) the seller's mini-website  (b) the bot's retrieval
 
-browser ── widget.js (bottom-left) ── POST /api/chat {seller, message, pageUrl} (SSE) ──►
+browser ── widget.js (bottom-right) ── POST /api/chat {seller, message, pageUrl} (SSE) ──►
   input guardrails ─► catalogue retrieval (+ the product page the buyer is on) ─► user prompt
   ─► Claude, streaming, with that seller's cached system prompt
   ─► tool loop: send_otp / verify_otp / save_lead (state enforced on the server)
@@ -47,13 +47,18 @@ Create a folder `kb/sellers/<slug>/`, where `<slug>` uses lowercase letters, dig
   "logoUrl": "https://www.alphapresses.example/logo.png",
   "allowedOrigins": ["https://www.alphapresses.example"],
   "greeting": "Hi! Looking for a press brake? Ask me anything.",
-  "chips": ["Press Brake", "Shearing Machine"]
+  "chips": ["Press Brake", "Shearing Machine"],
+  "widgetPosition": "right",
+  "tagline": "Manufacturer of press brakes and shearing machines in Rajkot",
+  "about": "First paragraph of About Us.\n\nSecond paragraph."
 }
 ```
 
 - `slug` must match the folder name.
 - `allowedOrigins` lists the websites that may embed this seller's bot.
 - `logoUrl`, `greeting` and `chips` are optional. Without `chips`, the quick replies come from the product cards.
+- `widgetPosition` (`right` by default, or `left`) picks the corner for the chat bubble.
+- `tagline` and `about` are optional text for the home and About Us pages. Without them the text is built from the business card. Keep `about` to verified business card facts: Guardrail 7 rules out earnings, enquiry volume, customer count and tenure.
 
 Then:
 
@@ -75,7 +80,20 @@ On Render, the push redeploys. The server then crawls every seller's sitemap on 
 
 - `prompts/system.md` is the system prompt template shared by all sellers. `{{GUARDRAILS}}` is filled from `prompts/guardrails.md`, or from the seller's own `guardrails.md`.
 - `prompts/user.md` is the template for each turn. It carries `<current_page>` when the buyer is on a product or category page, so "what's the price of this?" just works.
-- The crawler skips profile, testimonial and director pages (guardrail 7). It also drops spec rows about GST, freight, delivery, payment or stock, so neither the website nor the bot shows them.
+- The crawler skips profile, testimonial and director pages (guardrail 7). It also drops spec rows, description sentences and feature bullets about GST, freight, delivery, payment or stock, and sentences containing phone numbers, emails or links, so neither the website nor the bot shows them.
+- For each page the crawler keeps the title, starting price, specifications, every product photo (linked from the seller's site, not copied), the description, feature bullets, breadcrumbs, and on category pages the listed products with their thumbnails.
+
+### Website pages
+
+| Page | Built from |
+|---|---|
+| `/s/<slug>/` Home | Tagline, business card facts, product range (categories), featured machines, About teaser, how to get a quote |
+| `/s/<slug>/about` About Us | `about` text (or the business card), company facts table (name, nature, CEO, location, address, phone), everything in `deals_in`, linked to matching categories |
+| `/s/<slug>/products` | Every category with its first products, and machines not in any category |
+| `/s/<slug>/c/<category>` | Category photo, description, sidebar of all categories, product cards with key specs and "Get quote" |
+| `/s/<slug>/p/<product>` | Photo gallery, starting price, key specs, full specifications, description, features, related machines |
+| `/s/<slug>/contact` | Address, listed phone, Google Maps link, enquiry button |
+| `/s/<slug>/search?q=` | Catalogue search |
 
 ## Guardrails
 
@@ -182,7 +200,7 @@ Add this just before `</body>` on every page, replacing `<slug>` with the seller
 <script src="https://YOUR-BOT-HOST/widget.js" defer data-seller="<slug>"></script>
 ```
 
-- The bubble appears bottom-left, in the seller's colour and name from `seller.json`.
+- The bubble appears bottom-right (or bottom-left with `widgetPosition: "left"`, or `data-position="left"` on the script tag), in the seller's colour and name from `seller.json`.
 - The seller's site must be listed in that seller's `allowedOrigins`.
 - `/demo.html?seller=<slug>` shows the embed on a blank page.
 - Pages can also open the chat from a button: `SellerChat.open("<slug>", { message: "optional first message" })`.

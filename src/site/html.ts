@@ -45,6 +45,7 @@ ${o.description ? `<meta name="description" content="${esc(o.description.slice(0
 ${canonical ? `<link rel="canonical" href="${esc(canonical)}">` : ""}
 ${o.noindex ? '<meta name="robots" content="noindex, follow">' : ""}
 <meta name="referrer" content="no-referrer">
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="/site.css">
 <style>:root{--brand:${/^#[0-9a-fA-F]{6}$/.test(o.color ?? "") ? o.color : "#0b5cad"}}</style>
 </head>

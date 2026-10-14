@@ -3,8 +3,9 @@
  *
  *   <script src="https://YOUR-BOT-HOST/widget.js" defer data-seller="jayshree-machinetools"></script>
  *
- * Renders a chat bubble fixed to the bottom-left corner, styled for that seller. Styles are
- * isolated in a Shadow DOM. Without data-seller nothing shows until a page calls:
+ * Renders a chat bubble fixed to the bottom-right corner (or bottom-left, if the seller's
+ * widgetPosition is "left" or the tag has data-position="left"), styled for that seller.
+ * Styles are isolated in a Shadow DOM. Without data-seller nothing shows until a page calls:
  *
  *   SellerChat.open("seller-slug", { message: "optional first message" })
  *   SellerChat.close()
@@ -76,9 +77,9 @@
     ":host{all:initial}" +
     "*{box-sizing:border-box;font-family:system-ui,-apple-system,'Segoe UI',Roboto,'Noto Sans',sans-serif}" +
     "[hidden]{display:none!important}" +
-    ".bubble{position:fixed;left:20px;bottom:20px;z-index:2147483000;width:60px;height:60px;border-radius:50%;border:0;cursor:pointer;background:var(--c);color:#fff;box-shadow:0 6px 20px rgba(0,0,0,.25);display:flex;align-items:center;justify-content:center;transition:transform .15s}" +
+    ".bubble{position:fixed;right:20px;bottom:20px;z-index:2147483000;width:60px;height:60px;border-radius:50%;border:0;cursor:pointer;background:var(--c);color:#fff;box-shadow:0 6px 20px rgba(0,0,0,.25);display:flex;align-items:center;justify-content:center;transition:transform .15s}" +
     ".bubble:hover{transform:scale(1.06)}.bubble svg{width:28px;height:28px}" +
-    ".panel{position:fixed;left:20px;bottom:92px;z-index:2147483000;width:370px;max-width:calc(100vw - 32px);height:560px;max-height:calc(100vh - 120px);background:#fff;color:#1d2433;border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.22);display:none;flex-direction:column;overflow:hidden}" +
+    ".panel{position:fixed;right:20px;bottom:92px;z-index:2147483000;width:370px;max-width:calc(100vw - 32px);height:560px;max-height:calc(100vh - 120px);background:#fff;color:#1d2433;border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.22);display:none;flex-direction:column;overflow:hidden}" +
     ".panel.open{display:flex}" +
     ".head{background:var(--c);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px}" +
     ".head .t{font-weight:600;font-size:15px;flex:1;line-height:1.2}.head .s{font-size:12px;opacity:.85;font-weight:400}" +
@@ -100,7 +101,8 @@
     "form button:disabled{opacity:.5;cursor:default}" +
     ".hint{font-size:11px;color:#6b7588;padding:0 14px 6px;background:#fff}" +
     ".foot{font-size:11px;color:#8b94a7;text-align:center;padding:0 0 8px;background:#fff}" +
-    "@media (max-width:480px){.panel{left:0;right:0;bottom:0;width:100vw;max-width:100vw;height:100%;max-height:100%;border-radius:0}.bubble{left:16px;bottom:16px}}" +
+    ":host([data-pos=left]) .bubble,:host([data-pos=left]) .panel{right:auto;left:20px}" +
+    "@media (max-width:480px){.panel,:host([data-pos=left]) .panel{left:0;right:0;bottom:0;width:100vw;max-width:100vw;height:100%;max-height:100%;border-radius:0}.bubble{right:16px;bottom:16px}:host([data-pos=left]) .bubble{left:16px}}" +
     "</style>" +
     '<button class="bubble" aria-label="Chat with us" aria-expanded="false" hidden>' +
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
@@ -180,6 +182,7 @@
   function render() {
     var c = configs[current];
     root.host.style.setProperty("--c", c.color || "#0b5cad");
+    root.host.setAttribute("data-pos", (ds.position || c.position) === "left" ? "left" : "right");
     titleEl.innerHTML = escapeHtml(c.name) + '<div class="s">Typically replies instantly</div>';
     bubble.setAttribute("aria-label", "Chat with " + c.name);
     log.innerHTML = "";

@@ -63,11 +63,28 @@ describe("extractPage", () => {
     expect(e.price_text).toBeNull();
     expect(e.products).toEqual([
       // The image alt text titles the first link; the second only says "View", so its title comes from the URL.
-      { url: `${BASE}/product/fiber-laser-cutting-machine-abc.html`, title: "Fiber Laser 1.5 kW" },
-      { url: `${BASE}/product/fiber-laser-3kw-def.html`, title: "Fiber laser 3kw def" },
+      { url: `${BASE}/product/fiber-laser-cutting-machine-abc.html`, title: "Fiber Laser 1.5 kW", image: `${BASE}/img/laser-15.jpg` },
+      { url: `${BASE}/product/fiber-laser-3kw-def.html`, title: "Fiber laser 3kw def", image: null },
     ]);
     expect(e.image).toBe("https://cdn.example/laser-category.jpg");
     expect(e.slug).toBe("fiber-laser-cutting-machine");
+  });
+});
+
+describe("rich product pages", () => {
+  const e = extractPage(fx("product_rich.html"), `${BASE}/product/hydraulic-press-brake-q1w2e3r.html`);
+
+  it("collects the product's photo gallery, main image first, without logos or other products", () => {
+    expect(e.image).toBe("https://cdn.example/hpb-main.jpg");
+    expect(e.images).toEqual(["https://cdn.example/hpb-main.jpg", "https://cdn.example/hpb-side.jpg", "https://cdn.example/hpb-back-large.jpg"]);
+  });
+
+  it("keeps the description and features but drops delivery, GST, stock and contact sentences", () => {
+    expect(e.details).toContain("Heavy welded steel frame, stress relieved.");
+    expect(e.details).toContain("Suitable for bending mild steel and stainless steel sheets.");
+    expect(e.details).not.toMatch(/dispatch|GST|stock|98765|sales@/i);
+    expect(e.features).toEqual(["Synchronised cylinders", "Back gauge with ball screw", "Front sheet supports"]);
+    expect(e.description).not.toMatch(/delivery/i);
   });
 });
 
