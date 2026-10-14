@@ -92,6 +92,10 @@ async function chat(seller: string, message: string, opts: { origin?: string; se
 }
 
 const auth = (pw: string) => ({ Authorization: `Basic ${Buffer.from(`seller:${pw}`).toString("base64")}` });
+const page_ = async (p: string) => {
+  const res = await fetch(`${base}${p}`);
+  return { status: res.status, body: await res.text() };
+};
 const page = async (p: string) => {
   const res = await fetch(`${base}${p}`);
   return { status: res.status, body: await res.text() };
@@ -138,13 +142,15 @@ describe("chat API", () => {
 });
 
 describe("website", () => {
-  it("lists every seller in the directory with a Chat button", async () => {
+  it("lists every seller in the directory with Visit site and Edit prompts, and no chat", async () => {
     const { status, body } = await page("/");
     expect(status).toBe(200);
     expect(body).toContain("Alpha Presses");
     expect(body).toContain("Beta Pumps");
-    expect(body).toContain(`data-chat-open="${ALPHA}"`);
-    expect(body).toContain('<script src="/widget.js" defer></script>');
+    expect(body).toContain(`<a class="btn" href="/s/${ALPHA}/">Visit site</a>`);
+    expect(body).toContain(`href="/admin/sellers/${ALPHA}/prompts">Edit prompts</a>`);
+    expect(body).not.toContain("data-chat-open");
+    expect(body).not.toContain("widget.js");
   });
 
   it("renders a seller home page with categories, products and their bot", async () => {
@@ -251,6 +257,53 @@ describe("admin", () => {
     const ok = await fetch(`${base}/admin/sellers/${ALPHA}/recrawl`, { method: "POST", headers: { ...auth(PASSWORD), Origin: base }, redirect: "manual" });
     expect(ok.status).toBe(303);
     expect(recrawled).toEqual([ALPHA]);
+  });
+});
+
+describe("brand persona prompts", () => {
+  const form = (seller: string, fields: Record<string, string>, origin = base) =>
+    fetch(`${base}/admin/sellers/${seller}/prompts`, {
+      method: "POST",
+      headers: { ...auth(PASSWORD), Origin: origin, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(fields).toString(),
+      redirect: "manual",
+    });
+
+  it("protects the form and blocks cross-site saves", async () => {
+    expect((await fetch(`${base}/admin/sellers/${ALPHA}/prompts`)).status).toBe(401);
+    expect((await fetch(`${base}/admin/sellers/nobody/prompts`, { headers: auth(PASSWORD) })).status).toBe(404);
+    expect((await form(ALPHA, { system: "x", user: "y" }, "https://evil.example")).status).toBe(403);
+    expect((await form(ALPHA, { system: "x".repeat(4001), user: "" })).status).toBe(400);
+  });
+
+  it("saves a persona that the next chat turn uses, for that seller only", async () => {
+    const saved = await form(ALPHA, { system: "You are Ava, the Alpha Presses assistant.", user: "Always ask the sheet thickness." });
+    expect(saved.status).toBe(303);
+    expect(saved.headers.get("location")).toBe(`/admin/sellers/${ALPHA}/prompts?saved=1`);
+    expect(db.getPrompts(ALPHA).system).toBe("You are Ava, the Alpha Presses assistant.");
+    const page = await (await fetch(`${base}/admin/sellers/${ALPHA}/prompts?saved=1`, { headers: auth(PASSWORD) })).text();
+    expect(page).toContain("Saved.");
+    expect(page).toContain("&lt;brand_persona&gt;\nYou are Ava");
+
+    requests.length = 0;
+    await chat(ALPHA, "hello", { origin: base, sessionId: "persona-test-1", pageUrl: `${base}/s/${ALPHA}/` });
+    expect(requests[0].system[0].text).toContain("<brand_persona>\nYou are Ava, the Alpha Presses assistant.\n</brand_persona>");
+    expect(requests[0].messages.at(-1).content[0].text).toContain("<seller_instructions>\nAlways ask the sheet thickness.\n</seller_instructions>");
+
+    requests.length = 0;
+    await chat(BETA, "hello", { origin: base, sessionId: "persona-test-2", pageUrl: `${base}/s/${BETA}/` });
+    expect(requests[0].system[0].text).not.toContain("brand_persona");
+    expect(requests[0].messages.at(-1).content[0].text).not.toContain("seller_instructions");
+
+    expect((await page_("/")).body).toContain("Brand persona set");
+  });
+
+  it("clears the persona", async () => {
+    expect((await form(ALPHA, { system: "ignored", user: "ignored", clear: "1" })).status).toBe(303);
+    expect(db.getPrompts(ALPHA)).toMatchObject({ system: "", user: "" });
+    requests.length = 0;
+    await chat(ALPHA, "hello again", { origin: base, sessionId: "persona-test-3", pageUrl: `${base}/s/${ALPHA}/` });
+    expect(requests[0].system[0].text).not.toContain("brand_persona");
   });
 });
 

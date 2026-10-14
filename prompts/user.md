@@ -6,6 +6,6 @@
 {{CATALOGUE}}
 </seller_catalogue>
 
-<buyer_message>
+{{SELLER_INSTRUCTIONS}}<buyer_message>
 {{BUYER_MESSAGE}}
 </buyer_message>

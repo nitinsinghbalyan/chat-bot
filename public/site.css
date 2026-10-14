@@ -132,6 +132,7 @@ a.card-title:hover { color: var(--brand); }
 .card-actions { display: flex; gap: 8px; padding: 0 14px 14px; flex-wrap: wrap; }
 .card.seller { border-top: 4px solid var(--brand); }
 .card.seller .card-title { font-size: 1.1rem; margin: 0; }
+.persona-set { color: var(--brand); font-weight: 600; margin-top: 8px; }
 .img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: #fff; border-bottom: 1px solid var(--line); }
 .img.placeholder { background: linear-gradient(135deg, var(--surface), var(--line)); }
 .keyspecs { list-style: none; padding: 0; margin: 4px 0 0; font-size: 0.84rem; }
