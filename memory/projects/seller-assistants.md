@@ -21,7 +21,8 @@
 | Prompts: common system and guardrails templates, per-turn user template; version history and diff | `prompts/system.md`, `prompts/guardrails.md`, `prompts/user.md`, `src/prompts.ts`, `src/promptVersions.ts`, `src/diff.ts` |
 | Media cards | `src/shareMedia.ts`, `src/media.ts` |
 | Crawler (images, videos, PDFs, specs, partial-crawl guard) | `src/crawler.ts`, `scripts/crawl.ts` |
-| SQLite: sessions, transcript, leads, guardrail_events, seller_prompts, platform_prompts, prompt_versions | `src/db.ts` |
+| SQLite: sessions, transcript (with trace_id), leads, guardrail_events, seller_prompts, platform_prompts, prompt_versions | `src/db.ts` |
+| Langfuse tracing: setup, masking, prices, scores | `src/tracing.ts` (runTurn gets a `trace` sink; `/api/feedback` in `src/app.ts`) |
 | Website templates | `src/site/pages.ts`, `src/site/html.ts`, `public/site.css` |
 | Widget | `public/widget.js` |
 
@@ -42,6 +43,7 @@
 | Replies brief: 1–2 sentences, ~40 words, no filler, options only as chips | Nitin |
 | Chips inline in the chat log (not a bar above the input) | Nitin |
 | Prompt version history for common prompts and personas, with diff, restore and built-in banner | Nitin |
+| Langfuse tracing (v6 `@langfuse/tracing` + `@langfuse/otel`): one trace per buyer message, Sessions per chat; mask mobiles/OTPs, system prompt by version reference only, 👍/👎 buyer feedback + automatic scores. Off without keys | Nitin |
 | Catalogue from crawling the sitemap; MCAT specs file not used | Nitin |
 | SQLite on a Render disk; Render hosting | Nitin |
 | Multi-seller; KB supplied per seller | Nitin |
@@ -75,10 +77,12 @@
 | #10 | Large catalogues: prompt budget with index/partial modes, `ID:` and details in catalogue hits, 20k products / 40 MB uploads |
 | #11 | Admin sellers list as expandable rows (Manage), filter box, row opens after upload/crawl/add |
 | #12 | Prompt versions (common + personas), lead-first flow, inline chips, brief replies |
+| #13 | Langfuse tracing, scores and buyer feedback |
 
 ## Open items / ideas
 - Real SMS OTP (replace the demo check in `src/tools.ts`; stop sending `demo: true` from `/api/sellers/:slug`).
 - Run `npm run eval` (live-model scenarios) where an API key is available. The price scenario now expects no price.
+- Add the Langfuse keys on Render to turn tracing on; check the first traces (masking, costs, sessions).
 - After deploying #12: if production has a saved edit of the common prompt, click **Use the new built-in** on `/admin/prompts` or the new flow/style won't apply. Check tone and order with the live model.
 - Large-catalogue answers (index/partial modes, details via per-message search) are untested with the live model; check on production with questions that name specific models.
 - Check on production that seller photos (imimg.com) load; they can't be seen from cloud sessions.

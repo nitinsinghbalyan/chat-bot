@@ -28,6 +28,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 | **repo seller / admin seller** | Seller from `kb/sellers/<slug>/` vs one added via **+ Add seller** (stored on the data disk) |
 | **large catalogue** | KB over ~300k chars: prompt keeps categories, ISQs and a product index; details come per message from catalogue search |
 | **prompt versions** | Every save/reset/restore of common prompts and personas, plus each shipped default, kept with View (diff) and Restore |
+| **traces** | Langfuse: one per buyer message, chats as Sessions; mobiles masked, OTPs never sent; off without `LANGFUSE_*` keys |
 | **seller row / Manage** | `/admin` lists sellers as one-line rows; **Manage** expands the controls |
 | **demo OTP** | `12345`; no SMS gateway yet |
 → Full glossary: memory/glossary.md

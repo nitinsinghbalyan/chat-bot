@@ -98,6 +98,9 @@
     ".chips.live .chip:hover{background:var(--c);color:#fff}" +
     ".chips.used .chip{cursor:default;opacity:.45;border-color:#cfd6e2;color:#6b7588}" +
     ".chips.used .chip.picked{opacity:1;border-color:var(--c);color:var(--c)}" +
+    ".fb{display:flex;flex-shrink:0;gap:2px;align-self:flex-start;margin:-4px 0 0 4px}" +
+    ".fb button{border:0;background:transparent;cursor:pointer;font-size:13px;line-height:1;padding:3px 5px;border-radius:6px;opacity:.45;filter:grayscale(1)}" +
+    ".fb button:hover{opacity:.9;background:#e9edf3}.fb button.on{opacity:1;filter:none;background:#e9edf3}" +
     "form{display:flex;gap:8px;padding:10px;border-top:1px solid #e3e8f0;background:#fff}" +
     "input{flex:1;border:1px solid #cfd6e2;border-radius:10px;padding:10px 12px;font-size:15px;outline:none;min-width:0;color:#1d2433;background:#fff}" +
     "input:focus{border-color:var(--c)}" +
@@ -283,6 +286,47 @@
     log.appendChild(wrap);
     log.scrollTop = log.scrollHeight;
   }
+  /** 👍 / 👎 under a bot reply (only when the server records feedback); the vote is kept in history. */
+  function addFeedback(entry, after) {
+    var c = configs[current];
+    if (!c || !c.feedback || !entry || !entry.traceId) return;
+    var row = document.createElement("div");
+    row.className = "fb";
+    [
+      [1, "\uD83D\uDC4D", "Helpful"],
+      [-1, "\uD83D\uDC4E", "Not helpful"],
+    ].forEach(function (o) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = o[1];
+      b.title = o[2];
+      b.setAttribute("aria-label", o[2]);
+      b.setAttribute("aria-pressed", entry.vote === o[0] ? "true" : "false");
+      if (entry.vote === o[0]) b.className = "on";
+      b.onclick = function () {
+        if (entry.vote === o[0]) return;
+        entry.vote = o[0];
+        Array.prototype.forEach.call(row.children, function (x) {
+          x.className = "";
+          x.setAttribute("aria-pressed", "false");
+        });
+        b.className = "on";
+        b.setAttribute("aria-pressed", "true");
+        persist();
+        fetch(API + "/api/feedback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ seller: current, sessionId: state.sessionId, traceId: entry.traceId, value: o[0] }),
+        }).catch(function () {
+          /* feedback is best-effort */
+        });
+      };
+      row.appendChild(b);
+    });
+    if (after && after.parentNode) after.parentNode.insertBefore(row, after.nextSibling);
+    else log.appendChild(row);
+  }
+
   /**
    * Reply buttons inline in the conversation, right under the bot message that asked. Tapping one
    * sends it as the buyer's answer. Once the buyer replies, the row stays as a greyed-out record
@@ -374,6 +418,7 @@
     var last = state.history.length - 1;
     state.history.forEach(function (h, i) {
       if (h.text) addMsg(h.who, h.text);
+      if (h.who === "bot") addFeedback(h);
       addCards(h.cards);
       // Older saved chats kept the last options only in state.chips.
       var rowChips = h.chips || (i === last && h.who === "bot" ? state.chips : null);
@@ -425,6 +470,7 @@
     var reply = "";
     var replyCards = null;
     var replyChips = null;
+    var replyTrace = null;
 
     fetch(API + "/api/chat", {
       method: "POST",
@@ -474,6 +520,7 @@
             botEl.innerHTML = linkify(reply.replace(/^\s+/, ""));
             log.scrollTop = log.scrollHeight;
           } else if (ev === "cards") replyCards = payload.cards || null;
+          else if (ev === "trace") replyTrace = payload.traceId || null;
           else if (ev === "ui") {
             state.askFor = payload.askFor || null;
             replyChips = payload.chips && payload.chips.length ? payload.chips : null;
@@ -492,7 +539,9 @@
         var entry = { who: "bot", text: reply };
         if (replyCards) entry.cards = replyCards;
         if (replyChips) entry.chips = replyChips;
+        if (replyTrace) entry.traceId = replyTrace;
         state.history.push(entry);
+        addFeedback(entry, botEl);
         state.chips = replyChips;
         addChips(replyChips, { live: true });
         sending = false;

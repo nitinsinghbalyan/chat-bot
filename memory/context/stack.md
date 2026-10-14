@@ -12,6 +12,7 @@
 | vitest, tsx | Tests, scripts and dev |
 | Render | Hosting: Blueprint `render.yaml`, auto-deploy `main`, disk `/var/data` |
 | GitHub MCP tools | PRs and merges (no `gh` CLI in cloud sessions) |
+| Langfuse JS v6 (`@langfuse/tracing`, `@langfuse/otel`, `@langfuse/client`) + OpenTelemetry `NodeTracerProvider` | Tracing, scores |
 
 ## Commands
 | Command | What |
@@ -24,7 +25,7 @@
 | `npm run dev` | Local server, port 3000 |
 
 ## Environment variables
-`ANTHROPIC_API_KEY`, `ADMIN_PASSWORD` (8+ characters; enables `/admin`), `BOT_MODEL`, `BOT_EFFORT`, `BOT_FALLBACKS`, `DATA_DIR`, `SELLERS_DIR`, `ALLOWED_ORIGINS`, `CRAWL_ON_START`, `CRAWL_INTERVAL_HOURS`, `DEMO_OTP`, `PORT`.
+`ANTHROPIC_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_ENVIRONMENT`, `ADMIN_PASSWORD` (8+ characters; enables `/admin`), `BOT_MODEL`, `BOT_EFFORT`, `BOT_FALLBACKS`, `DATA_DIR`, `SELLERS_DIR`, `ALLOWED_ORIGINS`, `CRAWL_ON_START`, `CRAWL_INTERVAL_HOURS`, `DEMO_OTP`, `PORT`.
 Don't call them `CLAUDE_*`: the harness sets `CLAUDE_EFFORT`, which once clashed.
 
 ## Data on the Render disk (`/var/data`)
@@ -42,4 +43,6 @@ Don't call them `CLAUDE_*`: the harness sets `CLAUDE_EFFORT`, which once clashed
 - Branch workflow: after a PR merges, `git fetch origin main && git checkout -B claude/practical-clarke-0tbalp origin/main`, then push with `--force-with-lease`. Always fetch first: local `origin/main` goes stale after a merge done through the GitHub tools.
 - Testing big imports: copy a real export in the scratchpad and multiply its products (new ids and URLs); never commit it. Post it to the local server's `POST /admin/sellers` with `{config: {slug, name, siteUrl, color}, kb}`.
 - Chat flow checks: `e2e/flow.ts` in the scratchpad is a stateful fake model that walks machine → mobile → OTP → name → ISQ chips (recreate it if the scratchpad is gone).
+- cloud.langfuse.com is blocked by the agent proxy too, so real trace delivery can only be checked on production.
+- Tracing checks: run `e2e/fake-langfuse.mjs` (records OTLP and score requests) on port 3470 and start the app with `LANGFUSE_BASE_URL=http://127.0.0.1:3470`, test keys, `LANGFUSE_FLUSH_AT=1` and `NO_PROXY=127.0.0.1`.
 - Admin browser checks: add 3+ sellers through the API so the seller filter box shows (it appears above 3).
