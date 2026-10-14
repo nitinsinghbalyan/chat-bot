@@ -353,6 +353,18 @@ describe("adding a seller from a KB JSON", () => {
     expect(admin).toContain("added in admin");
   });
 
+  it("adds a seller whose export has blank ids, with notes about the fixes", async () => {
+    const messy = kb();
+    messy.categories[0].category_id = "";
+    const res = await add({ config: { ...config, slug: "delta-machines", name: "Delta Machines" }, kb: messy });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.warnings).toContain("categories[0].category_id (Press Brakes): empty; generated one");
+    expect((await page_("/s/delta-machines/c/press-brakes")).body).toContain("NC Press Brake");
+    const del = await fetch(`${base}/admin/sellers/delta-machines/delete`, { method: "POST", headers: { ...auth(PASSWORD), Origin: base }, redirect: "manual" });
+    expect(del.status).toBe(303);
+  });
+
   it("deletes an admin-added seller but not a repo seller", async () => {
     const post = (p: string) => fetch(`${base}${p}`, { method: "POST", headers: { ...auth(PASSWORD), Origin: base }, redirect: "manual" });
     expect((await post(`/admin/sellers/${ALPHA}/delete`)).status).toBe(400);
