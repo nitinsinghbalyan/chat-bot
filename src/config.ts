@@ -39,6 +39,13 @@ const schema = z.object({
   ADMIN_PASSWORD: optional(z.string().min(8, "ADMIN_PASSWORD must be at least 8 characters")),
   /** Folder holding one sub-folder per seller. Default: kb/sellers in the repo. */
   SELLERS_DIR: optional(z.string()),
+  /** Langfuse tracing: on when both keys are set. */
+  LANGFUSE_PUBLIC_KEY: optional(z.string()),
+  LANGFUSE_SECRET_KEY: optional(z.string()),
+  /** EU: https://cloud.langfuse.com, US: https://us.cloud.langfuse.com, or a self-hosted URL. */
+  LANGFUSE_BASE_URL: optional(z.string().url()),
+  /** Shown as the trace environment in Langfuse. Default: NODE_ENV, else "development". */
+  LANGFUSE_ENVIRONMENT: optional(z.string().regex(/^[a-z0-9_-]{1,40}$/, "use lowercase letters, digits, - or _")),
 });
 
 export const config = schema.parse(process.env);

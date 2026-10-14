@@ -33,6 +33,7 @@ Shorthand and internal language for the Seller assistants project.
 | current page | `<current_page>`: the product or category page the buyer has open | `src/prompts.ts` |
 | lead | Verified enquiry: machine named → mobile → OTP → name → `save_lead` (saved) → ISQs → `save_lead` again (updates the same row) | `leads` table, `ChatDb.updateLead` |
 | prompt version | A snapshot of the common prompts (system + guardrails) or a seller's persona (system + user). Sources: saved, reset, restored, built-in (shipped default recorded at startup when a deploy changed it). View = diff vs in use; Restore. Newer built-in banner on `/admin/prompts` when an edit hides a new default | `prompt_versions` table, `src/promptVersions.ts`, `src/diff.ts` |
+| trace / observation / score | Langfuse: a trace per buyer message (`chat-turn`) with observations (catalogue-search retriever, `claude round N` generations, tool calls, output-guardrails) and scores (lead_captured, lead_updated, guardrail_fired, fallback_reply, buyer_feedback). Sessions = whole chats | `src/tracing.ts` |
 | inline chips | ISQ buttons drawn in the chat log under the asking message; after the reply they stay greyed with the pick highlighted | `addChips`/`retireChips` in `public/widget.js` |
 | demo OTP | `12345` (`DEMO_OTP`); no SMS is sent yet | `src/tools.ts` |
 

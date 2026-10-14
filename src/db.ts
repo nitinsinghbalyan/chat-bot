@@ -36,6 +36,8 @@ export interface TranscriptLine {
   role: "buyer" | "bot";
   text: string;
   guardrails?: string[];
+  /** Langfuse trace id of the bot reply (when tracing is on), so buyer feedback can be checked. */
+  traceId?: string;
 }
 
 const MIGRATIONS = `
@@ -124,9 +126,13 @@ export class ChatDb {
     this.db.pragma("busy_timeout = 5000");
     this.db.exec(MIGRATIONS);
     this.migrateToMultiSeller();
+    if (!(this.db.prepare("PRAGMA table_info(transcript)").all() as Array<{ name: string }>).some((c) => c.name === "trace_id")) {
+      this.db.exec("ALTER TABLE transcript ADD COLUMN trace_id TEXT");
+    }
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS leads_seller ON leads(seller, id);
       CREATE INDEX IF NOT EXISTS guardrail_events_seller ON guardrail_events(seller, id);
+      CREATE INDEX IF NOT EXISTS transcript_trace ON transcript(trace_id) WHERE trace_id IS NOT NULL;
     `);
   }
 
@@ -188,8 +194,13 @@ export class ChatDb {
 
   appendTranscript(line: TranscriptLine) {
     this.db
-      .prepare("INSERT INTO transcript (seller, session_id, role, text, guardrails, at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(line.seller, line.sessionId, line.role, line.text, line.guardrails?.length ? line.guardrails.join(",") : null, new Date().toISOString());
+      .prepare("INSERT INTO transcript (seller, session_id, role, text, guardrails, at, trace_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(line.seller, line.sessionId, line.role, line.text, line.guardrails?.length ? line.guardrails.join(",") : null, new Date().toISOString(), line.traceId ?? null);
+  }
+
+  /** Whether this session has a bot reply with this trace id (buyers may only rate their own replies). */
+  hasTrace(sessionId: string, traceId: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM transcript WHERE session_id = ? AND trace_id = ? AND role = 'bot' LIMIT 1").get(sessionId, traceId);
   }
 
   transcript(sessionId: string): Array<{ role: string; text: string; guardrails: string | null; at: string }> {

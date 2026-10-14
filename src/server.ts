@@ -5,6 +5,7 @@ import { refreshCatalogue } from "./crawler.js";
 import { ChatDb } from "./db.js";
 import { SellerRegistry, type SellerContext } from "./sellers.js";
 import { SessionStore } from "./session.js";
+import { initTracing } from "./tracing.js";
 
 const sellers = SellerRegistry.load();
 const db = new ChatDb(paths.db);
@@ -34,7 +35,8 @@ async function recrawlAll() {
   for (const seller of sellers.list()) await recrawl(seller);
 }
 
-const app = createApp({ client: new Anthropic(), sellers, sessions, db, recrawl });
+const tracing = initTracing();
+const app = createApp({ client: new Anthropic(), sellers, sessions, db, recrawl, tracing });
 
 function prune() {
   const removed = db.pruneSessions(30);
@@ -56,14 +58,16 @@ const server = app.listen(config.PORT, () => {
 
 function shutdown(signal: string) {
   console.log(`${signal} received, shutting down`);
+  // Send buffered traces before exiting, so the last chats before a redeploy aren't lost.
+  const exit = () => void tracing.flush().finally(() => process.exit(0));
   server.close(() => {
     db.close();
-    process.exit(0);
+    exit();
   });
   // Don't hang on open SSE streams.
   setTimeout(() => {
     db.close();
-    process.exit(0);
+    exit();
   }, 10_000).unref();
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));

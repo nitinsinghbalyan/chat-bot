@@ -195,6 +195,25 @@ A replaced sentence becomes a short hand-off line. The model is told about the c
 
 To send real OTPs, replace the demo check in `src/tools.ts` with your SMS provider's calls, and stop returning `demo: true` from `/api/sellers/:slug` in `src/app.ts`.
 
+## Tracing (Langfuse)
+
+Set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL` (EU `https://cloud.langfuse.com`, US `https://us.cloud.langfuse.com`, or self-hosted) to send traces to Langfuse. Without the keys nothing is sent. On Render, add them under Environment and redeploy. The release is the deployed git commit (`RENDER_GIT_COMMIT`), and the environment is `LANGFUSE_ENVIRONMENT`, else `NODE_ENV`.
+
+**One trace per buyer message** (`chat-turn`), grouped in Langfuse **Sessions** by chat (`<seller>:<browser id>`), tagged with the seller and `on-platform` or `embedded`. User id is the buyer's masked mobile once verified. Each trace holds:
+
+| Observation | Type | What it shows |
+|---|---|---|
+| `catalogue-search` | retriever | The query (or the follow-up fallback to the last query) and the products and categories found |
+| `claude round N` | generation | One per Claude call: model that actually answered (fallbacks show), effort, this round's new input (the per-turn prompt or the tool results), output, tokens including cache reads and writes, cost in USD, stop reason. API errors are ERROR, refusals WARNING |
+| `send_otp`, `verify_otp`, `save_lead`, `show_options`, `share_media` | tool | Input and result of each tool call; failed calls are ERROR |
+| `output-guardrails` | guardrail | Only when the output filter replaced something: the rules and the removed sentences (WARNING) |
+
+Trace metadata has the page URL, lead stage before and after, and the prompts in use: the common prompt version (`v12`), the persona version, the knowledge base mode (KB folder or JSON full / index / partial) and the system prompt length. The system prompt itself isn't copied into traces; its text is in the admin version history.
+
+**Scores:** `lead_captured`, `lead_updated`, `guardrail_fired` (count), `fallback_reply` (the buyer got a canned reply), and `buyer_feedback`: when tracing is on, the widget shows 👍 / 👎 under each reply (+1 / −1; changing the vote replaces the score). Buyers can only rate replies from their own chat.
+
+**Privacy:** mobile numbers are masked as `xxxxxx3210` everywhere in a trace (also by the exporter as a last check), OTPs are never recorded, and payment or ID details are already removed from buyer messages before the bot sees them. Names are kept.
+
 ## Storage
 
 Everything is kept in one SQLite file, `DATA_DIR/chatbot.db`. Every table has a `seller` column.

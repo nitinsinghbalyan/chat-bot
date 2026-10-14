@@ -10,7 +10,8 @@ import type { SellerContext, SellerRegistry } from "./sellers.js";
 import type { SessionStore } from "./session.js";
 import { mountAdmin } from "./admin.js";
 import { validateSystemTemplate } from "./prompts.js";
-import { recordStartupVersions } from "./promptVersions.js";
+import { activeVersionId, COMMON_SCOPE, recordStartupVersions, sellerScope } from "./promptVersions.js";
+import { maskMobile, noTracing, OTP_MASK, type Tracing } from "./tracing.js";
 import { shareMedia } from "./shareMedia.js";
 import { aboutPage, categoryPage, contactPage, directoryPage, notFoundPage, productPage, productsPage, searchPage, sellerHomePage } from "./site/pages.js";
 
@@ -24,12 +25,15 @@ export interface AppDeps {
   /** Fallback origins allowed for every seller, in addition to each seller's own `allowedOrigins`. */
   allowedOrigins?: string[];
   adminPassword?: string;
+  /** Langfuse tracing (see src/tracing.ts); off by default. */
+  tracing?: Tracing;
 }
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
 export function createApp(deps: AppDeps) {
   const { sellers, db, sessions } = deps;
+  const tracing = deps.tracing ?? noTracing;
   const globalOrigins = deps.allowedOrigins ?? config.ALLOWED_ORIGINS;
   const adminPassword = deps.adminPassword ?? config.ADMIN_PASSWORD;
 
@@ -114,7 +118,7 @@ export function createApp(deps: AppDeps) {
     }
     const c = seller.config;
     // No SMS gateway is wired yet, so the widget shows the demo OTP hint.
-    res.json({ slug: c.slug, name: c.name, color: c.color, greeting: c.greeting ?? null, chips: c.chips ?? seller.kb.productCards.map((p) => p.canonical_name).slice(0, 4), position: c.widgetPosition, demo: true });
+    res.json({ slug: c.slug, name: c.name, color: c.color, greeting: c.greeting ?? null, chips: c.chips ?? seller.kb.productCards.map((p) => p.canonical_name).slice(0, 4), position: c.widgetPosition, demo: true, feedback: tracing.enabled });
   });
 
   /** Works out which catalogue page the buyer is on: a page of this site or the seller's own page. */
@@ -129,6 +133,27 @@ export function createApp(deps: AppDeps) {
     const m = u.pathname.match(/^\/s\/([^/]+)\/(p|c)\/([^/]+)\/?$/);
     if (m && m[1] === seller.config.slug) return seller.catalogue.get(m[2] === "p" ? "product" : "category", decodeURIComponent(m[3]));
     return seller.catalogue.byPageUrl(u.origin + u.pathname);
+  }
+
+  /** Which prompt versions a seller's system prompt is built from, for trace metadata (recomputed only when it changes). */
+  const promptInfoCache = new Map<string, { systemPrompt: string; info: Record<string, unknown> }>();
+  function promptInfo(seller: SellerContext): Record<string, unknown> {
+    const hit = promptInfoCache.get(seller.config.slug);
+    if (hit?.systemPrompt === seller.systemPrompt) return hit.info;
+    const version = (scope: string, a: string, b: string) => {
+      const list = db.listPromptVersions(scope);
+      const id = activeVersionId(list, a, b);
+      return id ? `v${list.find((v) => v.id === id)!.number}` : null;
+    };
+    const info = {
+      commonPrompt: version(COMMON_SCOPE, sellers.common.system, sellers.common.guardrails),
+      persona: seller.persona.system || seller.persona.user ? version(sellerScope(seller.config.slug), seller.persona.system, seller.persona.user) : "none",
+      knowledgeBase: seller.uploaded ? `JSON (${seller.uploaded.view.promptPlan().mode})` : "KB folder",
+      systemPromptChars: seller.systemPrompt.length,
+      ownGuardrails: seller.ownGuardrails !== null,
+    };
+    promptInfoCache.set(seller.config.slug, { systemPrompt: seller.systemPrompt, info });
+    return info;
   }
 
   app.post("/api/chat", async (req, res) => {
@@ -174,25 +199,49 @@ export function createApp(deps: AppDeps) {
       const session = sessions.get(slug, sessionId);
       // Store what the buyer typed after redaction, never the raw payment/ID details.
       db.appendTranscript({ seller: slug, sessionId: session.id, role: "buyer", text: input.text });
-      const result = await runTurn(
-        session,
-        input.text,
-        {
-          client: deps.client,
-          kb: seller.kb,
-          catalogue: seller.catalogue,
-          systemPrompt: seller.systemPrompt,
-          sellerInstructions: seller.persona.user,
-          shareMedia: (ids, kinds, related) => shareMedia(seller, ids, kinds, related, { siteOrigin: onPlatform ? `${req.protocol}://${req.headers.host}` : null }),
-          saveLead: (lead) => void (lead.update ? db.updateLead(lead.seller, lead.sessionId, lead) || db.insertLead(lead) : db.insertLead(lead)),
-          logGuardrail: (id, interventions) => db.logGuardrailEvents(slug, id, interventions),
-        },
-        { onText: (text) => send("text", { text }) },
-        { pageUrl, pageEntry: pageEntryFor(seller, pageUrl) },
-      );
+      const stageBefore = session.lead.stage;
+      const traceCtx = {
+        sessionId: session.id,
+        userId: session.lead.mobile && session.lead.stage !== "otp_sent" ? maskMobile(session.lead.mobile) : undefined,
+        tags: [slug, onPlatform ? "on-platform" : "embedded"],
+        // While an OTP is expected, the buyer's message is the code.
+        input: stageBefore === "otp_sent" ? OTP_MASK : input.text,
+        metadata: { seller: slug, pageUrl: pageUrl ?? null, leadStageBefore: stageBefore, turn: session.turns + 1, prompt: promptInfo(seller), redacted: input.redacted },
+      };
+      const { result, traceId } = await tracing.trace("chat-turn", traceCtx, async (root) => {
+        const result = await runTurn(
+          session,
+          input.text,
+          {
+            client: deps.client,
+            kb: seller.kb,
+            catalogue: seller.catalogue,
+            systemPrompt: seller.systemPrompt,
+            sellerInstructions: seller.persona.user,
+            shareMedia: (ids, kinds, related) => shareMedia(seller, ids, kinds, related, { siteOrigin: onPlatform ? `${req.protocol}://${req.headers.host}` : null }),
+            saveLead: (lead) => void (lead.update ? db.updateLead(lead.seller, lead.sessionId, lead) || db.insertLead(lead) : db.insertLead(lead)),
+            logGuardrail: (id, interventions) => db.logGuardrailEvents(slug, id, interventions),
+            trace: tracing,
+          },
+          { onText: (text) => send("text", { text }) },
+          { pageUrl, pageEntry: pageEntryFor(seller, pageUrl) },
+        );
+        root.update({
+          output: { reply: result.text, chips: result.chips, cards: result.cards.map((c) => `${c.type}: ${c.title}`), askFor: result.askFor },
+          metadata: { leadStageAfter: session.lead.stage, usage: result.usage },
+          ...(result.fallbackReply ? { level: "WARNING" as const, statusMessage: "Buyer got a canned fallback reply" } : {}),
+        });
+        if (tracing.enabled && root.traceId) {
+          for (const e of result.leadEvents ?? []) tracing.score({ traceId: root.traceId, name: e === "captured" ? "lead_captured" : "lead_updated", value: 1, dataType: "BOOLEAN" });
+          if (result.interventions.length) tracing.score({ traceId: root.traceId, name: "guardrail_fired", value: result.interventions.length, dataType: "NUMERIC" });
+          if (result.fallbackReply) tracing.score({ traceId: root.traceId, name: "fallback_reply", value: 1, dataType: "BOOLEAN" });
+        }
+        return { result, traceId: root.traceId };
+      });
       sessions.save(session);
       const sharedNote = result.cards.length ? `\n[Shared: ${result.cards.map((c) => `${c.type} "${c.title}"`).join(", ")}]` : "";
-      db.appendTranscript({ seller: slug, sessionId: session.id, role: "bot", text: result.text + sharedNote, guardrails: result.interventions.map((i) => i.rule) });
+      db.appendTranscript({ seller: slug, sessionId: session.id, role: "bot", text: result.text + sharedNote, guardrails: result.interventions.map((i) => i.rule), traceId: traceId || undefined });
+      if (traceId) send("trace", { traceId });
       if (result.cards.length) send("cards", { cards: result.cards });
       send("ui", { askFor: result.askFor, leadStage: session.lead.stage, chips: result.chips });
       if (process.env.NODE_ENV !== "production") send("debug", { usage: result.usage, interventions: result.interventions.map((i) => i.rule) });
@@ -204,6 +253,39 @@ export function createApp(deps: AppDeps) {
       busy.delete(key);
       res.end();
     }
+  });
+
+  /** Buyer feedback (👍 / 👎) on one bot reply, recorded as a Langfuse score on that reply's trace. */
+  const feedbackLimiter = new RateLimiter(30, 60_000);
+  app.post("/api/feedback", (req, res) => {
+    if (!tracing.enabled) {
+      res.status(404).json({ error: "Feedback is not enabled" });
+      return;
+    }
+    const seller = typeof req.body?.seller === "string" ? sellers.get(req.body.seller) : undefined;
+    const sessionId = typeof req.body?.sessionId === "string" && SESSION_ID_RE.test(req.body.sessionId) ? req.body.sessionId : null;
+    const traceId = typeof req.body?.traceId === "string" && /^[0-9a-f]{32}$/.test(req.body.traceId) ? req.body.traceId : null;
+    const value = req.body?.value === 1 || req.body?.value === -1 ? (req.body.value as 1 | -1) : null;
+    if (!seller || !sessionId || !traceId || value === null) {
+      res.status(400).json({ error: "Invalid feedback" });
+      return;
+    }
+    if (!originAllowed(req, seller)) {
+      res.status(403).json({ error: "Origin not allowed" });
+      return;
+    }
+    if (!feedbackLimiter.allow(req.ip ?? "unknown")) {
+      res.status(429).json({ error: "Too many requests" });
+      return;
+    }
+    // Buyers may only rate replies from their own chat.
+    if (!db.hasTrace(`${seller.config.slug}:${sessionId}`, traceId)) {
+      res.status(403).json({ error: "Unknown reply" });
+      return;
+    }
+    // The same score id per reply, so changing a vote replaces it instead of adding another.
+    tracing.score({ traceId, name: "buyer_feedback", value, dataType: "NUMERIC", id: `${traceId}-buyer-feedback` });
+    res.sendStatus(204);
   });
 
   // ---- Website: seller directory and each seller's mini-site ----

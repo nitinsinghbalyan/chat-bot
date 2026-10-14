@@ -225,3 +225,76 @@ describe("chips and media", () => {
     expect(r.text).toBe("Here are photos of the CNC press brake.");
   });
 });
+
+describe("tracing", () => {
+  /** A TraceSink that records what runTurn reports, with the masking the Langfuse processor applies. */
+  function recorder() {
+    const obs: Array<{ name: string; type: string; attrs: any; ended: boolean }> = [];
+    const trace = {
+      start(name: string, type: string, attrs: any = {}) {
+        const o = { name, type, attrs: { ...attrs }, ended: false };
+        obs.push(o);
+        return { update: (a: any) => Object.assign(o.attrs, a), end: () => void (o.ended = true) };
+      },
+    };
+    return { trace, obs };
+  }
+
+  it("records the search, each Claude call and each tool call, with usage, cost and the OTP kept out", async () => {
+    const session = new SessionStore().get("jayshree-machinetools", "s-trace-0001");
+    const leads: Lead[] = [];
+    const { d } = deps(
+      [
+        { content: [{ type: "tool_use", id: "t1", name: "send_otp", input: { mobile: "9876543210" } }], stop_reason: "tool_use" },
+        text("OTP sent. Please enter it."),
+        { content: [{ type: "tool_use", id: "t2", name: "verify_otp", input: { otp: "12345" } }], stop_reason: "tool_use" },
+        text("Verified. Your name?"),
+      ],
+      leads,
+    );
+    const r1 = recorder();
+    await runTurn(session, "cnc press brake, my number 9876543210", { ...d, trace: r1.trace });
+    expect(r1.obs.map((o) => `${o.type}:${o.name}`)).toEqual(["retriever:catalogue-search", "generation:claude round 1", "tool:send_otp", "generation:claude round 2"]);
+    expect(r1.obs.every((o) => o.ended)).toBe(true);
+    expect(r1.obs[0].attrs.output[0]).toMatchObject({ title: "CNC Press Brake Machine", kind: "product" });
+    const gen = r1.obs[1].attrs;
+    expect(gen.model).toBe("claude-sonnet-5-5");
+    expect(gen.usageDetails).toMatchObject({ input: 100, output: 20, cache_read_input_tokens: 80 });
+    expect(gen.costDetails.total).toBeCloseTo((100 * 2 + 20 * 10 + 80 * 0.2) / 1e6);
+    expect(gen.metadata).toMatchObject({ stop_reason: "tool_use", fallback: false });
+    // Round 2's input is just the tool result, not the whole history or system prompt.
+    expect(JSON.stringify(r1.obs[3].attrs.input)).toContain("tool_result");
+    expect(JSON.stringify(r1.obs[3].attrs.input)).not.toContain("SYSTEM");
+
+    const r2 = recorder();
+    await runTurn(session, "12345", { ...d, trace: r2.trace });
+    const all = JSON.stringify(r2.obs);
+    expect(all).not.toContain("12345");
+    expect(r2.obs.find((o) => o.name === "verify_otp")!.attrs.input).toEqual({ otp: "•••••" });
+  });
+
+  it("marks a failed Claude call as an error and reports the canned reply", async () => {
+    const session = new SessionStore().get("jayshree-machinetools", "s-trace-0002");
+    const { d } = deps([new Error("network down")]);
+    const r = recorder();
+    const result = await runTurn(session, "hello", { ...d, trace: r.trace });
+    expect(result.fallbackReply).toBe(true);
+    const gen = r.obs.find((o) => o.type === "generation")!;
+    expect(gen).toMatchObject({ ended: true, attrs: { level: "ERROR" } });
+    expect(gen.attrs.statusMessage).toContain("network down");
+  });
+
+  it("records guardrail edits and lead events", async () => {
+    const session = new SessionStore().get("jayshree-machinetools", "s-trace-0003");
+    session.lead = { stage: "verified", mobile: "9876543210", otpAttempts: 0, otpSends: 1 };
+    const { d } = deps([
+      { content: [{ type: "tool_use", id: "t3", name: "save_lead", input: { name: "Ramesh", product: "Press Brake", requirements: "", quantity: "", city: "" } }], stop_reason: "tool_use" },
+      text("Thanks Ramesh. The price is ₹4,50,000. Which control type do you need?"),
+    ]);
+    const r = recorder();
+    const result = await runTurn(session, "Ramesh", { ...d, trace: r.trace });
+    expect(result.leadEvents).toEqual(["captured"]);
+    const g = r.obs.find((o) => o.type === "guardrail")!;
+    expect(g.attrs).toMatchObject({ level: "WARNING", statusMessage: "G1_price" });
+  });
+});

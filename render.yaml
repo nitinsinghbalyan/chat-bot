@@ -36,3 +36,10 @@ services:
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
+      # Langfuse tracing: optional. Leave the keys empty to keep tracing off.
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false
+      - key: LANGFUSE_BASE_URL
+        sync: false
