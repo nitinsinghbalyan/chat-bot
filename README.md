@@ -221,6 +221,7 @@ Add this just before `</body>` on every page, replacing `<slug>` with the seller
 - The seller's site must be listed in that seller's `allowedOrigins`.
 - `/demo.html?seller=<slug>` shows the embed on a blank page.
 - Pages can also open the chat from a button: `SellerChat.open("<slug>", { message: "optional first message" })`.
+- The chat header has a **New chat** button (circular arrow) that starts a fresh conversation after a confirmation. The previous chat stays in `/admin` and any captured lead is kept. Pages can do the same with `SellerChat.reset()`.
 
 ## Tests
 
