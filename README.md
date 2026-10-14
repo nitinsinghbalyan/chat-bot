@@ -97,6 +97,8 @@ What the bot is given from it:
 
 **Never given to the bot (guardrails):** prices, currency and price units, delivery time, payment terms, dispatch port, packaging, production capacity, turnover, staff numbers, year of establishment, member-since, GST and statutory details, bankers, ratings, key customers, and the profile, insights, team, jobs, news and testimonial pages. Sentences about tenure, turnover, export share, staff or customer counts, prices, freight, delivery, payment, GST or stock are also dropped from descriptions and page text, as are phone numbers, emails and links inside text.
 
+**Large catalogues:** a JSON whose bot text fits in about 300,000 characters (Jayshree's 143 products is about 170,000) goes into the bot's system prompt in full. A bigger one, with thousands of products or long descriptions, is still accepted (up to 20,000 products and a 40 MB file). The system prompt then keeps the business card, every category with its ISQs and the product names and ids, or, if even that is too long, the first few products per category. Each buyer message then pulls in the full details of the best-matching products (specifications, description and the id for sharing media) through the catalogue search. The upload result says when this applies.
+
 **ISQs:** the export has no question list, so they are derived per category. Each specification whose values differ across the category's products (for example Control Type: CNC / NC) becomes a question, and its values become the options. Brand, model and country of origin are skipped, and each category gets up to 5 ISQs with up to 8 options each.
 
 ## Chat features

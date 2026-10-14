@@ -2,7 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { cleanText, KbView, SELLER_KB_TEMPLATE, validateSellerKb } from "../src/sellerKb.js";
+import { Catalogue, formatCatalogueHits } from "../src/catalogue.js";
+import { cleanText, KbView, PROMPT_BUDGET, SELLER_KB_TEMPLATE, validateSellerKb } from "../src/sellerKb.js";
 import { SellerRegistry } from "../src/sellers.js";
 import { shareMedia } from "../src/shareMedia.js";
 
@@ -57,6 +58,69 @@ describe("validateSellerKb", () => {
     // The repaired category still lists both products: one via product_ids, the other via its taxonomy name.
     const view = new KbView(r.kb);
     expect(view.productsIn(r.kb.categories[0]).map((p) => p.name)).toEqual(["CNC Press Brake", "NC Press Brake"]);
+  });
+});
+
+/** An export far over the prompt budget: 4,000 products with long descriptions in 40 categories. */
+function hugeKb(products = 4000) {
+  const kb = raw();
+  kb.categories = Array.from({ length: 40 }, (_, c) => ({ category_id: 100 + c, name: `Machine Family ${c}`, url: `https://www.alphapresses.example/family-${c}.html`, product_ids: [] }));
+  kb.products = Array.from({ length: products }, (_, i) => ({
+    product_id: 10_000 + i,
+    product_url: `https://www.alphapresses.example/product/machine-model-${i}.html`,
+    name: `Machine Model ${i}`,
+    category_id: 100 + (i % 40),
+    description: `Machine Model ${i} is a heavy duty unit built for ${i % 2 ? "steel" : "aluminium"} work. `.repeat(12),
+    specifications: [
+      { name: "Capacity", value: `${(i % 9) + 1}0 Ton` },
+      { name: "Bed Length", value: `${(i % 4) + 2} m` },
+    ],
+  }));
+  return kb;
+}
+
+describe("large catalogues", () => {
+  it("imports an export over the prompt budget with an index instead of refusing it", () => {
+    const r = validateSellerKb(hugeKb());
+    if (!r.ok) throw new Error(r.errors.join("\n"));
+    expect(r.summary.products).toBe(4000);
+    expect(r.warnings[0]).toMatch(/^Large catalogue \(4000 products/);
+    const view = new KbView(r.kb);
+    const plan = view.promptPlan();
+    expect(plan.mode).not.toBe("full");
+    expect(plan.fullChars).toBeGreaterThan(PROMPT_BUDGET);
+    const text = view.systemText();
+    expect(text.length).toBeLessThanOrEqual(PROMPT_BUDGET);
+    expect(text).toContain("full details");
+    expect(text).toContain("### Machine Family 39");
+    expect(text).toMatch(/1\. Capacity\? Options: /);
+    expect(text).not.toContain("heavy duty unit");
+  });
+
+  it("lists every product when the index fits", () => {
+    const r = validateSellerKb(hugeKb(1200));
+    if (!r.ok) throw new Error(r.errors.join("\n"));
+    const view = new KbView(r.kb);
+    expect(view.promptPlan().mode).toBe("index");
+    expect(view.systemText()).toContain("Machine Model 1199 (machine-model-1199)");
+  });
+
+  it("finds a product's details per message through the catalogue search", () => {
+    const r = validateSellerKb(hugeKb());
+    if (!r.ok) throw new Error(r.errors.join("\n"));
+    const cat = new Catalogue(new KbView(r.kb).catalogueEntries());
+    const hits = cat.search("Machine Model 3721");
+    expect(hits[0]?.slug).toBe("machine-model-3721");
+    const text = formatCatalogueHits(hits.slice(0, 1));
+    expect(text).toContain("ID: machine-model-3721");
+    expect(text).toContain("Capacity: 50 Ton");
+    expect(text).toContain("Description: Machine Model 3721 is a heavy duty unit");
+    expect(text.match(/heavy duty unit/g)?.length).toBe(12);
+    expect(text).not.toContain("Details:");
+  });
+
+  it("keeps a normal export in full", () => {
+    expect(new KbView(loaded().kb).promptPlan().mode).toBe("full");
   });
 });
 

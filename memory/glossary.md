@@ -21,6 +21,7 @@ Shorthand and internal language for the Seller assistants project.
 | crawl | Fetches the sitemap (or the JSON's page URLs) into `catalogue.json`; on start and every 24 hours | `src/crawler.ts` |
 | partial crawl | A crawl that got under 80% of the existing pages; the old catalogue is kept | `MIN_CRAWL_SHARE` |
 | RAG / SELLER CATALOGUE | Top catalogue matches put into each turn's user prompt | `src/claude.ts` `retrieve` |
+| prompt budget / large catalogue | `PROMPT_BUDGET` (300k chars). KB text up to it goes in the system prompt in full; above it `promptPlan()` uses "index" (all product names) or "partial" (some per category) and details come from the catalogue search | `src/sellerKb.ts` |
 | ISQ | Item Specification Question. Derived per category from specs whose values differ across its products | `KbView.isqs` |
 | chips | Tap-to-reply buttons; the `show_options` tool (2–8 options) | `src/tools.ts`, widget |
 | cards / carousel | `share_media` tool: product, image, video and document cards plus related products; built server-side only | `src/shareMedia.ts` |

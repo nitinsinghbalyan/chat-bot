@@ -84,6 +84,9 @@ const DROPZONE_SCRIPT = `<script>
   window.fixCount = function (warnings) {
     return (warnings || []).filter(function (w) { return /generated|skipped|ignored|used twice/.test(w); }).length;
   };
+  window.isLarge = function (warnings) {
+    return (warnings || []).some(function (w) { return /^Large catalogue/.test(w); });
+  };
   window.adminShow = function (out, kind, text, items, itemsLabel) {
     out.className = "dz-result " + kind;
     out.textContent = text;
@@ -111,9 +114,9 @@ const DROPZONE_SCRIPT = `<script>
         return res.json().catch(function () { return { ok: false, errors: ["Upload failed (HTTP " + res.status + ")"] }; });
       }).then(function (r) {
         if (r.ok) {
-          var fixed = fixCount(r.warnings);
-          adminShow(out, "ok", "✓ Uploaded: " + r.summary.products + " products, " + r.summary.categories + " categories, " + r.summary.images + " photos, " + r.summary.videos + " videos, " + r.summary.documents + " PDFs. Live from the next chat message." + (fixed ? " " + fixed + " record" + (fixed === 1 ? " was" : "s were") + " fixed or skipped: see Notes." : ""), r.warnings, "Notes");
-          setTimeout(function () { location.href = "/admin?kb=" + encodeURIComponent(zone.getAttribute("data-slug")) + "#seller-" + zone.getAttribute("data-slug"); }, fixed ? 6000 : 1800);
+          var fixed = fixCount(r.warnings), large = isLarge(r.warnings);
+          adminShow(out, "ok", "✓ Uploaded: " + r.summary.products + " products, " + r.summary.categories + " categories, " + r.summary.images + " photos, " + r.summary.videos + " videos, " + r.summary.documents + " PDFs. Live from the next chat message." + (fixed ? " " + fixed + " record" + (fixed === 1 ? " was" : "s were") + " fixed or skipped: see Notes." : "") + (large ? " Large catalogue: see Notes." : ""), r.warnings, "Notes");
+          setTimeout(function () { location.href = "/admin?kb=" + encodeURIComponent(zone.getAttribute("data-slug")) + "#seller-" + zone.getAttribute("data-slug"); }, fixed || large ? 6000 : 1800);
         } else adminShow(out, "err", "Not uploaded. Fix these and try again:", r.errors);
       }).catch(function (err) { adminShow(out, "err", err.message); });
     });
@@ -362,8 +365,9 @@ ${DROPZONE_SCRIPT}
       .then(function (r) {
         if (r.ok) {
           var fixed = fixCount(r.warnings), go = function () { location.href = "/admin?added=" + encodeURIComponent(r.slug) + "#seller-" + r.slug; };
-          if (!fixed) return go();
-          adminShow(out, "ok", "✓ Added. " + fixed + " record" + (fixed === 1 ? " was" : "s were") + " fixed or skipped (see Notes). Opening the sellers page…", r.warnings, "Notes");
+          var large = isLarge(r.warnings);
+          if (!fixed && !large) return go();
+          adminShow(out, "ok", "✓ Added." + (fixed ? " " + fixed + " record" + (fixed === 1 ? " was" : "s were") + " fixed or skipped (see Notes)." : "") + (large ? " Large catalogue (see Notes)." : "") + " Opening the sellers page…", r.warnings, "Notes");
           out.querySelector("details").open = true;
           setTimeout(go, 6000);
         }
@@ -378,7 +382,7 @@ ${DROPZONE_SCRIPT}
     );
   });
 
-  app.post("/admin/sellers", requireAdmin, sameOriginPost, express.json({ limit: "12mb" }), (req, res) => {
+  app.post("/admin/sellers", requireAdmin, sameOriginPost, express.json({ limit: "40mb" }), (req, res) => {
     const errors: string[] = [];
     const cfg = sellerConfigSchema.safeParse(req.body?.config);
     if (!cfg.success) for (const i of cfg.error.issues) errors.push(`${i.path.join(".") || "details"}: ${i.message}`);
@@ -426,7 +430,7 @@ ${DROPZONE_SCRIPT}
   });
 
   // Upload: the raw JSON is the request body (the /admin page reads the file and posts it).
-  app.post("/admin/sellers/:seller/kb", requireAdmin, sameOriginPost, express.text({ type: "*/*", limit: "10mb" }), (req, res) => {
+  app.post("/admin/sellers/:seller/kb", requireAdmin, sameOriginPost, express.text({ type: "*/*", limit: "40mb" }), (req, res) => {
     const seller = sellerParam(req);
     if (!seller) {
       res.status(404).json({ ok: false, errors: ["Unknown seller"] });

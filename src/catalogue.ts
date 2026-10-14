@@ -136,14 +136,21 @@ export function formatCatalogueHits(hits: CatalogueEntry[]): string {
   if (hits.length === 0) return "No matching catalogue entry.";
   return hits
     .map((h, i) => {
-      const lines = [`[${i + 1}] ${h.title}`, `Link: ${h.url}`, `Type: ${h.kind}${h.category ? ` | Category: ${h.category}` : ""}`];
+      const lines = [`[${i + 1}] ${h.title}`, `ID: ${h.slug}`, `Link: ${h.url}`, `Type: ${h.kind}${h.category ? ` | Category: ${h.category}` : ""}`];
       // Guardrail 1: prices are never shown to the model; our team confirms them.
       lines.push("Price: confirmed by our team on enquiry");
       const specs = Object.entries(h.specs);
       if (specs.length) lines.push(`Specifications: ${specs.map(([k, v]) => `${k}: ${v}`).join("; ")}`);
       if (h.kind === "category" && h.products.length) lines.push(`Products on this page: ${h.products.map((p) => p.title).filter(Boolean).slice(0, 12).join("; ")}`);
       if (h.features.length) lines.push(`Features: ${h.features.slice(0, 8).join("; ")}`);
-      if (h.description) lines.push(`Description: ${h.description}`);
+      // Large catalogues aren't in the system prompt in full, so give the longer text too.
+      const more = h.details.trim().slice(0, 1200);
+      const longer = more.length > h.description.length + 100;
+      if (longer && more.startsWith(h.description.slice(0, 100))) lines.push(`Description: ${more}`);
+      else {
+        if (h.description) lines.push(`Description: ${h.description}`);
+        if (longer) lines.push(`Details: ${more}`);
+      }
       return lines.join("\n");
     })
     .join("\n\n");
