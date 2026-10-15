@@ -89,10 +89,12 @@
 | #13 | Langfuse tracing, scores and buyer feedback |
 | #14 | Project memory refresh |
 | #15 | Enquiry summary card, per-chat cost score, Langfuse key check / region auto-detect / visible tracing status |
+| #16 | Langfuse upload counters, server version, **Test Langfuse** button on /admin |
 
 ## Open items / ideas
 - Real SMS OTP (replace the demo check in `src/tools.ts`; stop sending `demo: true` from `/api/sellers/:slug`).
 - Run `npm run eval` (live-model scenarios) where an API key is available. The price scenario now expects no price.
+- Langfuse is **self-hosted at `langfuse.intermesh.net`** (`LANGFUSE_BASE_URL` on Render). Oct 15: `/health` said keys OK, 0 export errors, but no traces visible. After #16, click **Test Langfuse** on /admin: the failing step says whether it's the server version, the upload, or the server not storing (then it's for the intermesh Langfuse admins).
 - Traces "not getting logged" (reported Oct 14): #15 adds the key check. After deploy, read `/health` → `tracing.state` or the `/admin` banner: `off` = keys not set on Render; `auth_failed` = wrong/swapped keys or region; `ok` but nothing in Langfuse = look for `[tracing] export failed` in Render logs.
 - After deploying #15: if production has a saved common-prompt edit, click **Use the new built-in** on `/admin/prompts`, or the summary flow won't apply.
 - After deploying #12: if production has a saved edit of the common prompt, click **Use the new built-in** on `/admin/prompts` or the new flow/style won't apply. Check tone and order with the live model.

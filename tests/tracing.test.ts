@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { costDetails, initTracing, LANGFUSE_EU, LANGFUSE_US, maskMobile, maskPII, noTracing, resolveLangfuse, usageDetails } from "../src/tracing.js";
+import { ExportResultCode } from "@opentelemetry/core";
+import {
+  costDetails,
+  describeError,
+  initTracing,
+  LANGFUSE_EU,
+  LANGFUSE_US,
+  langfuseVersion,
+  maskMobile,
+  maskPII,
+  noTracing,
+  RecordingExporter,
+  resolveLangfuse,
+  runConnectionTest,
+  usageDetails,
+  versionWarning,
+  type TracingStatus,
+} from "../src/tracing.js";
 
 describe("maskPII", () => {
   it.each([
@@ -94,5 +111,109 @@ describe("resolveLangfuse (startup key check)", () => {
     const t = await initTracing({ ...keys, LANGFUSE_SECRET_KEY: undefined });
     expect(t).toBe(noTracing);
     expect(t.status.state).toBe("off");
+  });
+});
+
+const freshStatus = (): TracingStatus => ({ state: "ok", host: "langfuse.example.com", message: "", exports: 0, spansExported: 0, exportErrors: 0 });
+
+describe("Langfuse server version", () => {
+  it("reads it from /api/public/health and warns when it predates OpenTelemetry", async () => {
+    const f = (async () => new Response(JSON.stringify({ status: "OK", version: "2.95.1" }))) as unknown as typeof fetch;
+    expect(await langfuseVersion("https://lf.example.com", f)).toBe("2.95.1");
+    expect(versionWarning("2.95.1")).toMatch(/no OpenTelemetry endpoint/);
+    expect(versionWarning("v3.120.0")).toBeNull();
+    expect(versionWarning(undefined)).toBeNull();
+    const down = (async () => {
+      throw new Error("down");
+    }) as unknown as typeof fetch;
+    expect(await langfuseVersion("https://lf.example.com", down)).toBeUndefined();
+  });
+});
+
+describe("RecordingExporter", () => {
+  it("counts successful and failed uploads", async () => {
+    const status = freshStatus();
+    let next: any = { code: ExportResultCode.SUCCESS };
+    const delegate = { export: (_s: any, cb: any) => cb(next), shutdown: async () => {} };
+    const ex = new RecordingExporter(delegate as any, status);
+    const run = () => new Promise((r) => ex.export([{}, {}, {}] as any, r));
+    await run();
+    expect(status).toMatchObject({ exports: 1, spansExported: 3, exportErrors: 0, lastExportOk: true });
+    next = { code: ExportResultCode.FAILED, error: { name: "OTLPExporterError", message: "Not Found", code: 404, data: "Cannot POST /api/public/otel/v1/traces" } };
+    await run();
+    expect(status).toMatchObject({ exports: 1, exportErrors: 1, lastExportOk: false });
+    expect(status.lastExportError).toBe("OTLPExporterError: Not Found (HTTP 404) Cannot POST /api/public/otel/v1/traces");
+    expect(describeError('{"stack":"OTLPExporterError: Unauthorized\\n    at x"}')).toBe("OTLPExporterError: Unauthorized");
+  });
+});
+
+describe("runConnectionTest", () => {
+  const base = "https://lf.example.com";
+  /** A fake Langfuse: health, projects, and a trace lookup that answers `traceStatus`. */
+  const fakeLangfuse = (o: { version?: string; projects?: number; traceStatus?: number }) =>
+    (async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path === "/api/public/health") return new Response(JSON.stringify({ status: "OK", version: o.version ?? "3.120.0" }));
+      if (path === "/api/public/projects") return new Response(JSON.stringify({ data: [{ id: "proj1", name: "Seller bots" }] }), { status: o.projects ?? 200 });
+      if (path.startsWith("/api/public/traces/")) return new Response("{}", { status: o.traceStatus ?? 200 });
+      return new Response("", { status: 404 });
+    }) as unknown as typeof fetch;
+  const deps = (fetchImpl: typeof fetch, upload: "ok" | "fail" = "ok") => {
+    const status = freshStatus();
+    return {
+      status,
+      d: {
+        baseUrl: base,
+        publicKey: "pk-lf-1",
+        secretKey: "sk-lf-1",
+        environment: "production",
+        status,
+        fetchImpl,
+        waitMs: 30,
+        pollMs: 10,
+        sendTrace: async () => {
+          if (upload === "ok") status.exports++;
+          else {
+            status.exportErrors++;
+            status.lastExportError = "OTLPExporterError: Not Found (HTTP 404)";
+          }
+          return "a".repeat(32);
+        },
+      },
+    };
+  };
+
+  it("passes when the trace comes back, with a link to it", async () => {
+    const r = await runConnectionTest(deps(fakeLangfuse({})).d);
+    expect(r.ok).toBe(true);
+    expect(r.steps.map((s) => s.ok)).toEqual([true, true, true, true]);
+    expect(r.traceUrl).toBe(`${base}/project/proj1/traces/${"a".repeat(32)}`);
+    expect(r.verdict).toMatch(/environment filter to "production"/);
+  });
+
+  it("names a refused upload", async () => {
+    const r = await runConnectionTest(deps(fakeLangfuse({}), "fail").d);
+    expect(r.ok).toBe(false);
+    expect(r.steps.at(-1)).toMatchObject({ label: "Send a test trace", ok: false });
+    expect(r.verdict).toMatch(/refused the trace upload/);
+  });
+
+  it("names an upload that is accepted but never stored", async () => {
+    const r = await runConnectionTest(deps(fakeLangfuse({ traceStatus: 404 })).d);
+    expect(r.ok).toBe(false);
+    expect(r.steps.at(-1)).toMatchObject({ label: "Stored in Langfuse", ok: false });
+    expect(r.steps.at(-1)!.detail).toMatch(/HTTP 404/);
+    expect(r.verdict).toMatch(/accepted the upload but hasn't stored it/);
+    expect(r.traceUrl).toBeDefined();
+  });
+
+  it("stops early for an old server or rejected keys", async () => {
+    expect((await runConnectionTest(deps(fakeLangfuse({ version: "2.60.0" })).d)).verdict).toMatch(/no OpenTelemetry endpoint/);
+    const r = await runConnectionTest(deps(fakeLangfuse({ projects: 401 })).d);
+    expect(r.steps.at(-1)).toMatchObject({ label: "Keys", ok: false, detail: "Langfuse answered HTTP 401" });
+  });
+
+  it("is a clear no-op when tracing is off", async () => {
+    expect((await noTracing.testConnection()).verdict).toMatch(/Tracing is off/);
   });
 });

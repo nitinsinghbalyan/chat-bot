@@ -200,7 +200,21 @@ To send real OTPs, replace the demo check in `src/tools.ts` with your SMS provid
 
 Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to send traces to Langfuse, plus `LANGFUSE_BASE_URL` (or `LANGFUSE_HOST`) for a self-hosted Langfuse. Without the keys nothing is sent. On Render, add them under Environment and redeploy. The release is the deployed git commit (`RENDER_GIT_COMMIT`), and the environment is `LANGFUSE_ENVIRONMENT`, else `NODE_ENV`.
 
-**Startup check:** at startup the server asks Langfuse whether it accepts the keys. Without `LANGFUSE_BASE_URL` it tries the EU cloud (`https://cloud.langfuse.com`), then the US cloud (`https://us.cloud.langfuse.com`), and uses whichever accepts them. Keys are trimmed, since a pasted space makes Langfuse reject them. The result appears in the startup log (`[tracing] …`), on `/health` (`tracing.state`: `off`, `ok`, `auth_failed`, `unreachable`) and on `/admin`. `/admin` shows a red banner when the keys are rejected and a warning when exports fail. Export failures are also logged as `[tracing] export failed: …`.
+**Startup check:** at startup the server asks Langfuse whether it accepts the keys. Without `LANGFUSE_BASE_URL` it tries the EU cloud (`https://cloud.langfuse.com`), then the US cloud (`https://us.cloud.langfuse.com`), and uses whichever accepts them. Keys are trimmed, since a pasted space makes Langfuse reject them. The result appears in the startup log (`[tracing] …`), on `/health` (`tracing.state`: `off`, `ok`, `auth_failed`, `unreachable`) and on `/admin`. `/admin` shows a red banner when the keys are rejected and a warning when exports fail. Export failures are also logged as `[tracing] export of N spans failed: …`.
+
+**Is it working?** `/health` and the `/admin` tracing line show:
+- the Langfuse server version
+- every trace upload since the last deploy (count, spans, last upload time, OK or failed with the HTTP error)
+
+**Test Langfuse** on `/admin` runs four steps and names the step that fails:
+1. Server and version. Langfuse 2.x has no OpenTelemetry endpoint and can't take these traces.
+2. Keys and project.
+3. Upload one test trace (`langfuse-connection-test`).
+4. Whether Langfuse returns that trace from its API within 20s.
+
+If step 3 passes and step 4 fails, the Langfuse server accepted the data but isn't storing it. On a self-hosted Langfuse that points to its worker, ClickHouse or event storage, or a version too old for this SDK (v6 sends `x-langfuse-ingestion-version: 4`). If all steps pass, open the linked trace and check the project and the environment filter. Production traces use environment `production`.
+
+Production uses a **self-hosted Langfuse** (`langfuse.intermesh.net`), set with `LANGFUSE_BASE_URL`.
 
 **One trace per buyer message** (`chat-turn`), grouped in Langfuse **Sessions** by chat (`<seller>:<browser id>`), tagged with the seller and `on-platform` or `embedded`. User id is the buyer's masked mobile once verified. Each trace holds:
 

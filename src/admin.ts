@@ -14,7 +14,7 @@ import { defaultSystemTemplate, REQUIRED_PLACEHOLDERS, sharedGuardrails, validat
 import { SELLER_KB_TEMPLATE, validateSellerKb } from "./sellerKb.js";
 import { sellerConfigSchema, SLUG_RE, type SellerContext, type SellerRegistry } from "./sellers.js";
 import { esc } from "./site/html.js";
-import type { TracingStatus } from "./tracing.js";
+import type { ConnectionTest, TracingStatus } from "./tracing.js";
 
 /** Maximum characters for each brand persona prompt. */
 export const PERSONA_LIMITS = { system: 4000, user: 2000 } as const;
@@ -28,6 +28,8 @@ export interface AdminDeps {
   sameHost: (req: Request, url: string | undefined) => boolean;
   /** Langfuse status, shown on the dashboard when traces are not getting through. */
   tracing?: TracingStatus;
+  /** Runs the "Test Langfuse" check (see Tracing.testConnection). */
+  testTracing?: () => Promise<ConnectionTest>;
 }
 
 /** Quotes a CSV cell and defuses spreadsheet formulas (a buyer could type "=HYPERLINK(...)"). */
@@ -150,16 +152,31 @@ const DROPZONE_SCRIPT = `<script>
 })();
 </script>`;
 
-/** A dashboard line about Langfuse: a warning while traces are not getting through, else a quiet note. */
-function tracingNote(t: TracingStatus | undefined): string {
+/** The Langfuse panel on the dashboard: status, the latest upload, a Test Langfuse button and its last result. */
+function tracingNote(t: TracingStatus | undefined, canTest: boolean): string {
   if (!t) return "";
   if (t.state === "off") return `<p class="muted small">Langfuse tracing is off: add LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY on Render to turn it on.</p>`;
-  if (t.state === "auth_failed") return `<div class="flash err"><b>Langfuse traces are not being recorded.</b> ${esc(t.message)}</div>`;
-  if (t.exportErrors) {
-    return `<div class="flash warn"><b>Some traces failed to reach Langfuse</b> (${t.exportErrors} failed export${t.exportErrors === 1 ? "" : "s"} since the last deploy). Last error: ${esc(t.lastExportError ?? "unknown")}</div>`;
-  }
-  if (t.state === "unreachable") return `<div class="flash warn">${esc(t.message)}</div>`;
-  return `<p class="muted small">Langfuse tracing is on (${esc(t.host ?? "")}).</p>`;
+  const button = canTest
+    ? `<form class="inline" method="post" action="/admin/tracing/test"><button class="btn small" type="submit" onclick="this.disabled=true;this.textContent='Testing… (up to 30s)';this.form.submit()">Test Langfuse</button></form>`
+    : "";
+  const uploads = t.lastExportAt
+    ? `Last upload ${t.lastExportOk ? "OK" : "failed"} at ${esc(fmtIST(t.lastExportAt))} · ${t.exports} upload${t.exports === 1 ? "" : "s"}, ${t.spansExported.toLocaleString("en-IN")} span${t.spansExported === 1 ? "" : "s"}${t.exportErrors ? `, ${t.exportErrors} failed` : ""} since the last deploy.`
+    : "No uploads since the last deploy yet (one is sent within a few seconds of a chat message).";
+  const where = `${esc(t.host ?? "")}${t.version ? `, Langfuse ${esc(t.version)}` : ""}`;
+  let head: string;
+  if (t.state === "auth_failed") head = `<div class="flash err"><b>Langfuse traces are not being recorded.</b> ${esc(t.message)}</div>`;
+  else if (t.exportErrors && !t.lastExportOk) head = `<div class="flash warn"><b>Trace uploads to Langfuse are failing</b> (${where}). Last error: ${esc(t.lastExportError ?? "unknown")}</div>`;
+  else if (t.state === "unreachable" || /no OpenTelemetry endpoint/.test(t.message)) head = `<div class="flash warn">${esc(t.message)}</div>`;
+  else head = "";
+  const test = t.lastTest ? testResult(t.lastTest) : "";
+  return `${head}<div class="tracing-note" id="tracing"><p class="muted small">Langfuse tracing is on (${where}). ${uploads}</p>${button}</div>${test}`;
+}
+
+function testResult(r: ConnectionTest): string {
+  const icon = (ok: boolean | null) => (ok === true ? "✓" : ok === false ? "✗" : "–");
+  return `<div class="flash ${r.ok ? "ok" : "warn"} tracing-test"><b>Langfuse test, ${esc(fmtIST(r.at))}:</b> ${esc(r.verdict)}
+<ul>${r.steps.map((s) => `<li><span class="step-${s.ok === true ? "ok" : s.ok === false ? "bad" : "na"}">${icon(s.ok)}</span> <b>${esc(s.label)}</b>: ${esc(s.detail)}</li>`).join("")}</ul>
+${r.traceUrl ? `<a class="btn small" href="${esc(r.traceUrl)}" target="_blank" rel="noopener">Open the test trace in Langfuse ↗</a>` : ""}</div>`;
 }
 
 export function mountAdmin(app: Express, d: AdminDeps) {
@@ -320,7 +337,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
         `<div class="page-head"><div><h1>Sellers</h1><p class="muted">${plural(list.length, "seller")} · ${plural(totalLeads, "lead")}</p></div>
 <div class="btn-row"><a class="btn" href="/admin/kb-template.json">Download JSON template</a><a class="btn primary" href="/admin/sellers/new">+ Add seller</a></div></div>
 ${flash}
-${tracingNote(d.tracing)}
+${tracingNote(d.tracing, !!d.testTracing)}
 ${
   list.length
     ? `${list.length > 3 ? `<input id="seller-filter" class="filter" type="search" placeholder="Filter sellers by name or slug" aria-label="Filter sellers">` : ""}
@@ -440,6 +457,16 @@ ${DROPZONE_SCRIPT}
         "sellers",
       ),
     );
+  });
+
+  app.post("/admin/tracing/test", requireAdmin, sameOriginPost, async (_req, res) => {
+    if (!d.testTracing) {
+      res.status(404).send("Not found");
+      return;
+    }
+    // The result is kept on the tracing status, so the dashboard shows it after the redirect.
+    await d.testTracing().catch((err) => console.error("[tracing] test failed", err));
+    res.redirect(303, "/admin#tracing");
   });
 
   app.post("/admin/sellers", requireAdmin, sameOriginPost, express.json({ limit: "40mb" }), (req, res) => {
