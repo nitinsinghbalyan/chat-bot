@@ -105,7 +105,16 @@ export function createApp(deps: AppDeps) {
     res.json({
       ok: true,
       model: config.BOT_MODEL,
-      tracing: { state: tracing.status.state, host: tracing.status.host, exportErrors: tracing.status.exportErrors },
+      tracing: (({ state, host, version, exports, spansExported, exportErrors, lastExportAt, lastExportOk }) => ({
+        state,
+        host,
+        version: version ?? null,
+        exports,
+        spansExported,
+        exportErrors,
+        lastExportAt: lastExportAt ?? null,
+        lastExportOk: lastExportOk ?? null,
+      }))(tracing.status),
       sellers: sellers.list().map((s) => ({ slug: s.config.slug, catalogueEntries: s.catalogue.size, productCards: s.kb.productCards.length })),
     });
   });
@@ -357,7 +366,7 @@ export function createApp(deps: AppDeps) {
   );
 
   // ---- Admin (team only) ----
-  mountAdmin(app, { sellers, db, adminPassword, recrawl: deps.recrawl, sameHost, tracing: tracing.status });
+  mountAdmin(app, { sellers, db, adminPassword, recrawl: deps.recrawl, sameHost, tracing: tracing.status, testTracing: () => tracing.testConnection() });
 
   app.use(
     express.static(paths.public, {

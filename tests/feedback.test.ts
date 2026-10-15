@@ -37,6 +37,18 @@ function fakeTracing() {
   let n = 0;
   const tracing: Tracing = {
     enabled: true,
+    status: { state: "ok", host: "langfuse.example.com", message: "Langfuse accepted the keys.", version: "3.120.0", exports: 2, spansExported: 14, exportErrors: 0, lastExportAt: "2026-10-15T05:00:00Z", lastExportOk: true },
+    testConnection: async () => {
+      const r = {
+        at: "2026-10-15T05:01:00Z",
+        ok: false,
+        verdict: "Langfuse accepted the upload but hasn't stored it.",
+        steps: [{ label: "Stored in Langfuse", ok: false, detail: "Not returned by the API after 20s (last answer HTTP 404)" }],
+        traceUrl: "https://langfuse.example.com/project/p1/traces/abc",
+      };
+      tracing.status.lastTest = r;
+      return r;
+    },
     start: (name) => (observations.push(name), { update() {}, end() {} }),
     async trace(name, ctx, fn) {
       const traceId = (++n).toString(16).padStart(32, "0");
@@ -53,9 +65,10 @@ function fakeTracing() {
 const sellersDir = path.join(__dirname, "fixtures", "sellers");
 const ALPHA = "alpha-presses";
 
+const ADMIN_PW = "admin-pass-1234";
 async function serve(tracing?: Tracing) {
   const sellers = SellerRegistry.load(sellersDir, fs.mkdtempSync(path.join(os.tmpdir(), "fb-data-")));
-  const app = createApp({ client, sellers, sessions: new SessionStore(), db: new ChatDb(":memory:"), allowedOrigins: [], tracing });
+  const app = createApp({ client, sellers, sessions: new SessionStore(), db: new ChatDb(":memory:"), allowedOrigins: [], tracing, adminPassword: ADMIN_PW });
   const server = app.listen(0);
   await new Promise((r) => server.once("listening", r));
   return { base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, close: () => server.close() };
@@ -133,5 +146,22 @@ describe("tracing on", () => {
     // Another chat starts from zero.
     await chat(s.base, "cost-session-2", "hello");
     expect(t.scores.filter((x) => x.name === "chat_cost_usd").at(-1)).toMatchObject({ sessionId: `${ALPHA}:cost-session-2`, comment: "1 buyer message, 2 tokens" });
+  });
+
+  it("shows uploads on /health and runs the Langfuse test from admin", async () => {
+    const health = await (await fetch(`${s.base}/health`)).json();
+    expect(health.tracing).toEqual({ state: "ok", host: "langfuse.example.com", version: "3.120.0", exports: 2, spansExported: 14, exportErrors: 0, lastExportAt: "2026-10-15T05:00:00Z", lastExportOk: true });
+    const auth = { Authorization: `Basic ${Buffer.from(`a:${ADMIN_PW}`).toString("base64")}` };
+    // Admin only, and only from admin's own pages.
+    expect((await fetch(`${s.base}/admin/tracing/test`, { method: "POST" })).status).toBe(401);
+    expect((await fetch(`${s.base}/admin/tracing/test`, { method: "POST", headers: { ...auth, Origin: "https://evil.example" } })).status).toBe(403);
+    const r = await fetch(`${s.base}/admin/tracing/test`, { method: "POST", headers: { ...auth, Origin: s.base }, redirect: "manual" });
+    expect(r.status).toBe(303);
+    const page = await (await fetch(`${s.base}/admin`, { headers: auth })).text();
+    expect(page).toContain("Langfuse tracing is on (langfuse.example.com, Langfuse 3.120.0)");
+    expect(page).toContain("Test Langfuse");
+    expect(page).toContain("hasn&#39;t stored it");
+    expect(page).toContain("Not returned by the API after 20s (last answer HTTP 404)");
+    expect(page).toContain('href="https://langfuse.example.com/project/p1/traces/abc"');
   });
 });

@@ -8,6 +8,10 @@
  */
 import { LangfuseClient } from "@langfuse/client";
 import { diag, DiagLogLevel } from "@opentelemetry/api";
+import { ExportResultCode, type ExportResult } from "@opentelemetry/core";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { CompressionAlgorithm } from "@opentelemetry/otlp-exporter-base";
+import type { ReadableSpan, SpanExporter } from "@opentelemetry/sdk-trace-base";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { propagateAttributes, startActiveObservation, startObservation } from "@langfuse/tracing";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
@@ -65,9 +69,34 @@ export interface TracingStatus {
   /** The Langfuse host traces go to, e.g. cloud.langfuse.com. */
   host: string | null;
   message: string;
-  /** Failed exports since startup, and the last error (from the OpenTelemetry exporter). */
+  /** The Langfuse server version, from /api/public/health. */
+  version?: string;
+  /** Uploads of trace batches since startup: successful, failed, and the latest one. */
+  exports: number;
+  spansExported: number;
   exportErrors: number;
+  lastExportAt?: string;
+  lastExportOk?: boolean;
   lastExportError?: string;
+  /** The latest result of the admin "Test Langfuse" check. */
+  lastTest?: ConnectionTest;
+}
+
+/** One step of the Langfuse connection test: ok, failed, or not run / unknown (null). */
+export interface TestStep {
+  label: string;
+  ok: boolean | null;
+  detail: string;
+}
+
+export interface ConnectionTest {
+  at: string;
+  ok: boolean;
+  steps: TestStep[];
+  /** Link to the test trace in the Langfuse UI. */
+  traceUrl?: string;
+  /** What to do next, in one or two sentences. */
+  verdict: string;
 }
 
 export interface Tracing extends TraceSink {
@@ -78,17 +107,25 @@ export interface Tracing extends TraceSink {
   score(s: Score): void;
   /** Sends everything still buffered (call before the process exits). */
   flush(): Promise<void>;
+  /** Sends a test trace and checks every step on the way into Langfuse (admin "Test Langfuse"). */
+  testConnection(): Promise<ConnectionTest>;
 }
 
 const noObservation: Observation = { update() {}, end() {} };
 
 export const noTracing: Tracing = {
   enabled: false,
-  status: { state: "off", host: null, message: "Langfuse is off: LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are not set.", exportErrors: 0 },
+  status: { state: "off", host: null, message: "Langfuse is off: LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are not set.", exports: 0, spansExported: 0, exportErrors: 0 },
   start: () => noObservation,
   trace: (_name, _ctx, fn) => fn({ ...noObservation, traceId: "" }),
   score() {},
   flush: async () => {},
+  testConnection: async () => ({
+    at: new Date().toISOString(),
+    ok: false,
+    steps: [{ label: "Keys", ok: false, detail: "LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are not set on the server." }],
+    verdict: "Tracing is off. Add the two keys on Render (and LANGFUSE_BASE_URL for a self-hosted Langfuse), then redeploy.",
+  }),
 };
 
 // ---- masking ----
@@ -216,6 +253,201 @@ export async function resolveLangfuse(env: LangfuseEnv, fetchImpl: typeof fetch 
 
 const host = (url: string) => url.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
 
+/** One readable line for an export error ("OTLPExporterError: Not Found (HTTP 404) {...}"). */
+export function describeError(a: unknown): string {
+  if (typeof a === "string") {
+    // OpenTelemetry's error handler passes errors as JSON strings with a stack.
+    try {
+      const parsed = JSON.parse(a);
+      if (parsed && typeof parsed === "object") return describeError(parsed);
+    } catch {}
+    return a.split("\n")[0].slice(0, 300);
+  }
+  const o = (a ?? {}) as { name?: unknown; message?: unknown; stack?: unknown; code?: unknown; data?: unknown };
+  const named = o.message ? `${typeof o.name === "string" && o.name ? `${o.name}: ` : ""}${String(o.message)}` : "";
+  const head = a instanceof Error ? `${a.name}: ${a.message}` : String(o.stack || named || JSON.stringify(a)).split("\n")[0];
+  const code = typeof o.code === "number" ? ` (HTTP ${o.code})` : "";
+  const body = typeof o.data === "string" && o.data.trim() ? ` ${o.data.trim().slice(0, 160)}` : "";
+  return `${head}${code}${body}`.slice(0, 300);
+}
+
+/** Wraps the span exporter and records how every upload went, so /health and admin can show it. */
+export class RecordingExporter implements SpanExporter {
+  constructor(
+    private delegate: SpanExporter,
+    private status: TracingStatus,
+  ) {}
+  export(spans: ReadableSpan[], done: (r: ExportResult) => void): void {
+    this.delegate.export(spans, (r) => {
+      this.status.lastExportAt = new Date().toISOString();
+      if (r.code === ExportResultCode.SUCCESS) {
+        this.status.exports++;
+        this.status.spansExported += spans.length;
+        this.status.lastExportOk = true;
+      } else {
+        this.status.exportErrors++;
+        this.status.lastExportOk = false;
+        this.status.lastExportError = describeError(r.error ?? "export failed");
+        console.error(`[tracing] export of ${spans.length} spans failed: ${this.status.lastExportError}`);
+      }
+      done(r);
+    });
+  }
+  shutdown() {
+    return this.delegate.shutdown();
+  }
+  forceFlush() {
+    return this.delegate.forceFlush?.() ?? Promise.resolve();
+  }
+}
+
+/** The SDK's own exporter settings (endpoint, headers, gzip), so traces look exactly as @langfuse/otel sends them. */
+function langfuseExporter(baseUrl: string, publicKey: string, secretKey: string): SpanExporter {
+  return new OTLPTraceExporter({
+    url: `${baseUrl}/api/public/otel/v1/traces`,
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${publicKey}:${secretKey}`).toString("base64")}`,
+      "x-langfuse-sdk-name": "javascript",
+      "x-langfuse-sdk-version": LANGFUSE_SDK_VERSION,
+      "x-langfuse-public-key": publicKey,
+      "x-langfuse-ingestion-version": "4",
+    },
+    compression: CompressionAlgorithm.GZIP,
+    timeoutMillis: 20_000,
+  });
+}
+
+/** Version of the @langfuse/* packages in package.json. */
+const LANGFUSE_SDK_VERSION = "6.0.0";
+/** The oldest Langfuse server major version that accepts OpenTelemetry traces. */
+const MIN_SERVER_MAJOR = 3;
+
+/** Reads the server version from /api/public/health ({status, version}); undefined when it can't be read. */
+export async function langfuseVersion(baseUrl: string, fetchImpl: typeof fetch = fetch): Promise<string | undefined> {
+  try {
+    const r = await fetchImpl(`${baseUrl}/api/public/health`, { signal: AbortSignal.timeout(8000) });
+    const body = (await r.json().catch(() => null)) as { version?: unknown } | null;
+    return typeof body?.version === "string" ? body.version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A warning when the server is too old for OpenTelemetry traces, else null. */
+export function versionWarning(version: string | undefined): string | null {
+  const major = Number(version?.replace(/^v/, "").split(".")[0]);
+  if (!version || !Number.isFinite(major)) return null;
+  return major < MIN_SERVER_MAJOR
+    ? `This Langfuse is version ${version}. It has no OpenTelemetry endpoint (added in Langfuse 3), so this SDK's traces can't be stored. Upgrade the Langfuse server.`
+    : null;
+}
+
+export interface ConnectionTestDeps {
+  baseUrl: string;
+  publicKey: string;
+  secretKey: string;
+  environment: string;
+  status: TracingStatus;
+  fetchImpl: typeof fetch;
+  /** Sends one trace, flushes it, and returns its id. */
+  sendTrace(): Promise<string>;
+  /** How long to look for the stored trace (default 20s), and how often. */
+  waitMs?: number;
+  pollMs?: number;
+}
+
+/**
+ * The admin "Test Langfuse" check: server version, keys, one test trace upload, and whether
+ * Langfuse then returns that trace from its API. The step that fails names the cause.
+ */
+export async function runConnectionTest(d: ConnectionTestDeps): Promise<ConnectionTest> {
+  const steps: TestStep[] = [];
+  const at = new Date().toISOString();
+  const authHeader = { Authorization: `Basic ${Buffer.from(`${d.publicKey}:${d.secretKey}`).toString("base64")}` };
+  const done = (ok: boolean, verdict: string, traceUrl?: string): ConnectionTest => ({ at, ok, steps, verdict, traceUrl });
+
+  // 1. Server and version
+  const version = await langfuseVersion(d.baseUrl, d.fetchImpl);
+  const tooOld = versionWarning(version);
+  steps.push({ label: "Langfuse server", ok: tooOld ? false : version ? true : null, detail: version ? `${host(d.baseUrl)}, version ${version}` : `${host(d.baseUrl)} (version not reported)` });
+  if (tooOld) return done(false, tooOld);
+
+  // 2. Keys, and the project they belong to
+  let projectId: string | undefined;
+  let projectName = "";
+  try {
+    const r = await d.fetchImpl(`${d.baseUrl}/api/public/projects`, { headers: authHeader, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) {
+      steps.push({ label: "Keys", ok: false, detail: `Langfuse answered HTTP ${r.status}` });
+      return done(false, "Langfuse rejected the keys. Copy the public and secret key again from the same project (Settings > API keys) and redeploy.");
+    }
+    const body = (await r.json().catch(() => null)) as { data?: Array<{ id?: string; name?: string }> } | null;
+    projectId = body?.data?.[0]?.id;
+    projectName = body?.data?.[0]?.name ?? "";
+    steps.push({ label: "Keys", ok: true, detail: projectName ? `Accepted, project "${projectName}"` : "Accepted" });
+  } catch (err) {
+    steps.push({ label: "Keys", ok: false, detail: `Could not reach Langfuse: ${describeError(err)}` });
+    return done(false, `The server can't reach ${host(d.baseUrl)}. If this Langfuse is on a private network, it has to be reachable from Render.`);
+  }
+
+  // 3. Upload one trace
+  const before = { ok: d.status.exports, failed: d.status.exportErrors };
+  let traceId: string;
+  try {
+    traceId = await d.sendTrace();
+  } catch (err) {
+    steps.push({ label: "Send a test trace", ok: false, detail: describeError(err) });
+    return done(false, "The test trace could not be created on this server.");
+  }
+  if (d.status.exportErrors > before.failed) {
+    steps.push({ label: "Send a test trace", ok: false, detail: `Upload refused: ${d.status.lastExportError ?? "unknown error"}` });
+    return done(
+      false,
+      "Langfuse refused the trace upload (POST /api/public/otel/v1/traces). A 404 means this Langfuse version has no OpenTelemetry endpoint; upgrade it. Other errors usually come from a proxy or size limit in front of Langfuse.",
+    );
+  }
+  if (d.status.exports === before.ok) {
+    steps.push({ label: "Send a test trace", ok: null, detail: "Nothing was uploaded (the batch may still be queued)." });
+  } else {
+    steps.push({ label: "Send a test trace", ok: true, detail: `Uploaded, Langfuse answered OK (trace ${traceId})` });
+  }
+
+  // 4. Is it stored?
+  const traceUrl = projectId ? `${d.baseUrl}/project/${projectId}/traces/${traceId}` : undefined;
+  const waitMs = d.waitMs ?? 20_000;
+  const pollMs = d.pollMs ?? 2_000;
+  const until = Date.now() + waitMs;
+  let lastStatus = 0;
+  while (true) {
+    try {
+      const r = await d.fetchImpl(`${d.baseUrl}/api/public/traces/${traceId}`, { headers: authHeader, signal: AbortSignal.timeout(8000) });
+      lastStatus = r.status;
+      if (r.ok) {
+        steps.push({ label: "Stored in Langfuse", ok: true, detail: `Found after the upload (environment "${d.environment}")` });
+        return done(
+          true,
+          `Traces are reaching Langfuse${projectName ? ` project "${projectName}"` : ""}. If you don't see chats, open that project and set the environment filter to "${d.environment}" (or all).`,
+          traceUrl,
+        );
+      }
+    } catch {
+      lastStatus = -1;
+    }
+    if (Date.now() >= until) break;
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  steps.push({
+    label: "Stored in Langfuse",
+    ok: false,
+    detail: `Not returned by the API after ${Math.round(waitMs / 1000)}s (last answer ${lastStatus === -1 ? "no response" : `HTTP ${lastStatus}`})`,
+  });
+  return done(
+    false,
+    `Langfuse accepted the upload but hasn't stored it. Open the link in a few minutes: if the trace is still missing, the Langfuse server isn't processing what it receives (on a self-hosted Langfuse, ask its admins to check the worker, ClickHouse and event storage, and that it is recent enough for SDK v${LANGFUSE_SDK_VERSION.split(".")[0]}).`,
+    traceUrl,
+  );
+}
+
 /** Starts Langfuse tracing when the keys are configured; otherwise returns `noTracing`. */
 export async function initTracing(env: LangfuseEnv = config, fetchImpl: typeof fetch = fetch): Promise<Tracing> {
   if (!env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) {
@@ -225,27 +457,14 @@ export async function initTracing(env: LangfuseEnv = config, fetchImpl: typeof f
   const { baseUrl, state, message } = await resolveLangfuse(env, fetchImpl);
   const environment = env.LANGFUSE_ENVIRONMENT ?? (process.env.NODE_ENV || "development").toLowerCase();
   const release = process.env.RENDER_GIT_COMMIT?.slice(0, 12);
-  const status: TracingStatus = { state, host: host(baseUrl), message, exportErrors: 0 };
-  // Export failures are otherwise silent: log them and show them on /health and the admin page.
-  const exportError = (msg: unknown, ...args: unknown[]) => {
-    status.exportErrors++;
-    // OpenTelemetry passes errors as JSON strings with a stack; keep the first line ("OTLPExporterError: Unauthorized").
-    const describe = (a: unknown): string => {
-      if (typeof a === "string") {
-        try {
-          const parsed = JSON.parse(a);
-          if (parsed && typeof parsed === "object") return describe(parsed);
-        } catch {}
-        return a.split("\n")[0];
-      }
-      if (a instanceof Error) return `${a.name}: ${a.message}`;
-      const o = a as { message?: unknown; stack?: unknown } | null;
-      return String(o?.stack || o?.message || JSON.stringify(a)).split("\n")[0];
-    };
-    status.lastExportError = [msg, ...args].map(describe).join(" ").slice(0, 300);
-    console.error("[tracing] export failed:", status.lastExportError);
-  };
-  diag.setLogger({ error: exportError, warn: (m, ...a) => console.warn("[tracing]", m, ...a), info() {}, debug() {}, verbose() {} }, DiagLogLevel.WARN);
+  const version = await langfuseVersion(baseUrl, fetchImpl);
+  const tooOld = versionWarning(version);
+  const status: TracingStatus = { state, host: host(baseUrl), message: tooOld ?? message, version, exports: 0, spansExported: 0, exportErrors: 0 };
+  // Uploads are counted by RecordingExporter; anything else OpenTelemetry reports goes to the log.
+  diag.setLogger(
+    { error: (m, ...a) => console.error("[tracing]", [m, ...a].map(describeError).join(" ")), warn: (m, ...a) => console.warn("[tracing]", m, ...a), info() {}, debug() {}, verbose() {} },
+    DiagLogLevel.WARN,
+  );
 
   const processor = new LangfuseSpanProcessor({
     publicKey: env.LANGFUSE_PUBLIC_KEY,
@@ -253,6 +472,7 @@ export async function initTracing(env: LangfuseEnv = config, fetchImpl: typeof f
     baseUrl,
     environment,
     release,
+    exporter: new RecordingExporter(langfuseExporter(baseUrl, env.LANGFUSE_PUBLIC_KEY, env.LANGFUSE_SECRET_KEY), status),
     // Last line of defence: nothing leaves the server with a buyer's mobile number in it.
     mask: ({ data }) => maskPII(data),
   });
@@ -265,20 +485,47 @@ export async function initTracing(env: LangfuseEnv = config, fetchImpl: typeof f
     end: () => o.end(),
   });
 
-  const line = `[tracing] Langfuse on (${baseUrl}, environment ${environment}${release ? `, release ${release}` : ""}): ${message}`;
-  if (state === "auth_failed") console.error(line);
+  const line = `[tracing] Langfuse ${version ? `${version} ` : ""}on (${baseUrl}, environment ${environment}${release ? `, release ${release}` : ""}): ${status.message}`;
+  if (state === "auth_failed" || tooOld) console.error(line);
   else console.log(line);
-  return {
-    enabled: true,
-    status,
-    start: (name, type, attrs = {}) => wrap(startObservation(name, attrs as any, { asType: type as any }) as any),
-    trace: (name, ctx, fn) =>
+  const trace: Tracing["trace"] = (name, ctx, fn) =>
       propagateAttributes({ traceName: name, sessionId: ctx.sessionId, userId: ctx.userId, tags: ctx.tags }, () =>
         startActiveObservation(name, async (root) => {
           root.update({ input: ctx.input, metadata: ctx.metadata });
           return fn({ ...wrap(root), traceId: root.traceId });
         }),
-      ),
+      );
+  const auth = { publicKey: env.LANGFUSE_PUBLIC_KEY, secretKey: env.LANGFUSE_SECRET_KEY };
+
+  return {
+    enabled: true,
+    status,
+    start: (name, type, attrs = {}) => wrap(startObservation(name, attrs as any, { asType: type as any }) as any),
+    trace,
+    testConnection: async () => {
+      const result = await runConnectionTest({
+        baseUrl,
+        environment,
+        ...auth,
+        fetchImpl,
+        status,
+        sendTrace: async () => {
+          const traceId = await trace(
+            "langfuse-connection-test",
+            { sessionId: "langfuse-connection-test", tags: ["connection-test"], input: "Connection test from the admin page", metadata: { test: true } },
+            async (root) => {
+              root.update({ output: "OK" });
+              return root.traceId;
+            },
+          );
+          // A refused upload rejects the flush; RecordingExporter has already recorded why.
+          await processor.forceFlush().catch(() => {});
+          return traceId;
+        },
+      });
+      status.lastTest = result;
+      return result;
+    },
     score: (s) => client.score.create({ ...s, environment }),
     flush: async () => {
       await Promise.allSettled([processor.forceFlush(), client.score.flush()]);
