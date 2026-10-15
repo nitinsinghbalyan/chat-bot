@@ -13,6 +13,7 @@ import { FORBIDDEN_SPEC_KEYS, slugFromUrl, splitSentences, stripForbidden } from
 import type { CatalogueEntry } from "./crawler.js";
 import type { BusinessCard, KnowledgeBase, ProductCard } from "./kb.js";
 import { httpUrl, videoInfo, type MediaCard } from "./media.js";
+import { findMcat, idsIn, type McatSpec } from "./sellerFiles.js";
 
 /**
  * How much KB text goes into the (cached) system prompt. A catalogue up to this size is included
@@ -83,7 +84,7 @@ const product = z.looseObject({
   name: str,
   display_name: str,
   category_id: id,
-  taxonomy: z.looseObject({ category_name: str }).nullish(),
+  taxonomy: z.looseObject({ category_name: str, glmcat_ids: str, glcat_ids: str }).nullish(),
   item_code: str,
   description: str,
   specifications: list(z.looseObject({ name: str, value: str })),
@@ -351,6 +352,13 @@ interface Isq {
   options: string[];
 }
 
+export interface KbViewOptions {
+  /** MCAT specifications: ISQs for categories whose products give none. */
+  mcats?: McatSpec[];
+  /** Characters of the system prompt already taken by uploaded extras (business card, product cards). */
+  reservedChars?: number;
+}
+
 /** Read-only view over an uploaded KB: rendering for the prompt, ISQs and media lookups. */
 export class KbView {
   readonly kb: SellerKb;
@@ -358,8 +366,11 @@ export class KbView {
   private bySlug = new Map<string, KbProduct>();
   private categoryOfProduct = new Map<string, SellerKb["categories"][number]>();
 
-  constructor(kb: SellerKb) {
+  readonly options: KbViewOptions;
+
+  constructor(kb: SellerKb, options: KbViewOptions = {}) {
     this.kb = kb;
+    this.options = options;
     for (const p of kb.products) {
       this.byId.set(p.product_id, p);
       this.bySlug.set(this.slug(p), p);
@@ -677,15 +688,51 @@ export class KbView {
     return lines.join("\n");
   }
 
+  /**
+   * The MCAT that gives a category its ISQs when its products give none: matched by the MCAT ids
+   * in the products' taxonomy, else by name (the category's or its products' taxonomy category).
+   */
+  mcatFor(c: SellerKb["categories"][number]): McatSpec | undefined {
+    const mcats = this.options.mcats;
+    if (!mcats?.length) return undefined;
+    const products = this.productsIn(c);
+    const ids = products.flatMap((p) => [...idsIn(p.taxonomy?.glmcat_ids), ...idsIn(p.taxonomy?.glcat_ids)]);
+    const names = [c.name, ...new Set(products.map((p) => p.taxonomy?.category_name ?? "").filter(Boolean))];
+    return findMcat(mcats, names, ids);
+  }
+
+  /** The category's ISQs: derived from its products, else (filling the gap) from the matching MCAT. */
+  categoryIsqs(c: SellerKb["categories"][number]): { isqs: Isq[]; mcat?: string } {
+    const own = this.isqs(c);
+    if (own.length) return { isqs: own };
+    const m = this.mcatFor(c);
+    return m ? { isqs: m.specs.map((s) => ({ question: s.name, options: s.options })), mcat: m.name } : { isqs: [] };
+  }
+
+  /** Categories that got their ISQs from an MCAT, for the admin summary. */
+  mcatFilledCategories(): Array<{ category: string; mcat: string }> {
+    return this.kb.categories.flatMap((c) => {
+      const r = this.categoryIsqs(c);
+      return r.mcat ? [{ category: c.name, mcat: r.mcat }] : [];
+    });
+  }
+
+  /** Every MCAT id in the products' taxonomy. */
+  mcatIds(): Set<string> {
+    return new Set(this.kb.products.flatMap((p) => [...idsIn(p.taxonomy?.glmcat_ids), ...idsIn(p.taxonomy?.glcat_ids)]));
+  }
+
   private categoryGuide(c: SellerKb["categories"][number], maxProducts: number): string {
     const products = this.productsIn(c);
-    const isqs = this.isqs(c);
+    const { isqs, mcat } = this.categoryIsqs(c);
     const lines = [`### ${c.name}`];
     const desc = cleanText(c.description);
     if (desc) lines.push(maxProducts === Infinity ? desc : desc.slice(0, 300));
     lines.push(`Products: ${this.productList(products, maxProducts)}`);
     if (isqs.length) {
-      lines.push(`ISQs (ask one per message, in this order, offering the options with show_options):\n${isqs.map((q, i) => `${i + 1}. ${q.question}? Options: ${q.options.join(" / ")}`).join("\n")}`);
+      lines.push(
+        `ISQs${mcat ? ` (from MCAT ${mcat})` : ""} (ask one per message, in this order, offering the options with show_options):\n${isqs.map((q, i) => `${i + 1}. ${q.question}? Options: ${q.options.join(" / ")}`).join("\n")}`,
+      );
     }
     return lines.join("\n");
   }
@@ -718,10 +765,10 @@ export class KbView {
   promptPlan(): PromptPlan {
     if (this.plan) return this.plan;
     const company = this.companyText();
-    const budget = PROMPT_BUDGET - company.length;
+    const budget = PROMPT_BUDGET - company.length - (this.options.reservedChars ?? 0);
     const fullGuide = this.guide(Infinity);
     const full = `# Categories and their ISQs\n\n${fullGuide}\n\n# Products\n\n${this.kb.products.map((p) => this.productText(p)).join("\n\n---\n\n")}`;
-    const fullChars = company.length + full.length;
+    const fullChars = company.length + (this.options.reservedChars ?? 0) + full.length;
     if (full.length <= budget) return (this.plan = { mode: "full", text: full, fullChars });
     const note =
       "This seller's catalogue is large, so only the categories, their ISQs and product names are listed here. The full details (specifications, description, media) of the products that match the buyer's message are given in <seller_catalogue> in each buyer turn. State specifications only from there; if the buyer's product isn't shown, ask for its name or model, or collect the requirement for our team.";

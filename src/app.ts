@@ -13,6 +13,7 @@ import { validateSystemTemplate } from "./prompts.js";
 import { activeVersionId, COMMON_SCOPE, recordStartupVersions, sellerScope } from "./promptVersions.js";
 import { maskMobile, noTracing, OTP_MASK, type Tracing } from "./tracing.js";
 import { shareMedia } from "./shareMedia.js";
+import type { FaqStore } from "./faq.js";
 import type { EnquirySummary } from "./tools.js";
 import { aboutPage, categoryPage, contactPage, directoryPage, notFoundPage, productPage, productsPage, searchPage, sellerHomePage } from "./site/pages.js";
 
@@ -28,6 +29,8 @@ export interface AppDeps {
   adminPassword?: string;
   /** Langfuse tracing (see src/tracing.ts); off by default. */
   tracing?: Tracing;
+  /** The common FAQ (see src/faq.ts). */
+  faq?: FaqStore;
 }
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
@@ -233,6 +236,7 @@ export function createApp(deps: AppDeps) {
             saveLead: (lead) => void (lead.update ? db.updateLead(lead.seller, lead.sessionId, lead) || db.insertLead(lead) : db.insertLead(lead)),
             logGuardrail: (id, interventions) => db.logGuardrailEvents(slug, id, interventions),
             trace: tracing,
+            faq: deps.faq?.forSeller(seller.kb, { ...seller.terms, mcats: seller.mcatUse.matched }, seller.config.name) ?? null,
           },
           { onText: (text) => send("text", { text }) },
           { pageUrl, pageEntry: pageEntryFor(seller, pageUrl) },
@@ -366,7 +370,7 @@ export function createApp(deps: AppDeps) {
   );
 
   // ---- Admin (team only) ----
-  mountAdmin(app, { sellers, db, adminPassword, recrawl: deps.recrawl, sameHost, tracing: tracing.status, testTracing: () => tracing.testConnection() });
+  mountAdmin(app, { sellers, db, adminPassword, recrawl: deps.recrawl, sameHost, tracing: tracing.status, testTracing: () => tracing.testConnection(), faq: deps.faq });
 
   app.use(
     express.static(paths.public, {

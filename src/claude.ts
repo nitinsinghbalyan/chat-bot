@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Catalogue } from "./catalogue.js";
 import { formatCatalogueHits } from "./catalogue.js";
+import { formatFaqHits, type FaqIndex } from "./faq.js";
 import { config } from "./config.js";
 import type { CatalogueEntry } from "./crawler.js";
 import { OutputFilter, REPLACEMENTS, type Intervention } from "./guardrails.js";
@@ -29,6 +30,8 @@ export interface ChatDeps {
   model?: string;
   /** Records observations (search, Claude calls, tools, guardrails) under the current Langfuse trace. */
   trace?: TraceSink;
+  /** The common FAQ rows that apply to this seller, searched per buyer message. */
+  faq?: FaqIndex | null;
 }
 
 export interface TurnCallbacks {
@@ -142,6 +145,13 @@ export async function runTurn(
   // While an OTP is expected, the buyer's message is the code: keep it out of the trace.
   const traceText = (t: string) => (leadStageBefore === "otp_sent" ? t.split(buyerText).join(OTP_MASK) : t);
   const hits = retrieve(session, deps.catalogue, buyerText, opts.pageEntry, trace, traceText);
+  let faqHits: ReturnType<FaqIndex["search"]> = [];
+  if (deps.faq?.size && leadStageBefore !== "otp_sent") {
+    const obs = trace.start("faq-search", "retriever", { input: { query: buyerText }, metadata: { faqRows: deps.faq.size } });
+    faqHits = deps.faq.search(buyerText);
+    obs.update({ output: faqHits.map((r) => r.question) });
+    obs.end();
+  }
   const userContent = renderUserPrompt({
     currentPage: opts.pageEntry ? `${opts.pageEntry.title} (${opts.pageEntry.url})` : undefined,
     leadStatus: describeLeadStatus(session.lead),
@@ -149,6 +159,7 @@ export async function runTurn(
     buyerMessage: buyerText,
     operatorNotes: session.pendingNotes,
     sellerInstructions: deps.sellerInstructions,
+    faq: formatFaqHits(faqHits),
   });
 
   // Work on a copy so a failed or refused turn leaves the stored history untouched.

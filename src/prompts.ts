@@ -58,7 +58,7 @@ export function renderSystemPrompt(kb: KnowledgeBase, guardrails = sharedGuardra
   }).trim();
 }
 
-const WRAPPER_TAGS = /<\/?\s*(buyer_message|seller_catalogue|lead_status|operator_note|current_page|business_card|product_cards|seller_instructions|brand_persona)\b[^>]*>/gi;
+const WRAPPER_TAGS = /<\/?\s*(buyer_message|seller_catalogue|lead_status|operator_note|current_page|business_card|product_cards|seller_instructions|brand_persona|faq)\b[^>]*>/gi;
 
 /** Stops a buyer from closing the <buyer_message> wrapper and injecting fake context. */
 export function neutralizeBuyerText(text: string): string {
@@ -76,6 +76,8 @@ export function renderUserPrompt(vars: {
   currentPage?: string;
   /** The seller's per-turn persona instruction (the "user prompt" set in admin). */
   sellerInstructions?: string;
+  /** Common FAQ rows that match this message (empty or undefined = no <faq> block). */
+  faq?: string;
 }): string {
   const instructions = neutralizeBuyerText(vars.sellerInstructions ?? "").trim();
   const notes = vars.operatorNotes?.length ? `<operator_note>\n${vars.operatorNotes.join("\n")}\n</operator_note>\n\n` : "";
@@ -86,6 +88,7 @@ export function renderUserPrompt(vars: {
     SELLER_INSTRUCTIONS: instructions ? `<seller_instructions>\n${instructions}\n</seller_instructions>\n\n` : "",
     LEAD_STATUS: vars.leadStatus,
     CATALOGUE: vars.catalogue,
+    FAQ: vars.faq?.trim() ? `<faq>\n${neutralizeBuyerText(vars.faq.trim())}\n</faq>\n\n` : "",
     BUYER_MESSAGE: neutralizeBuyerText(vars.buyerMessage),
   }).trim();
 }
