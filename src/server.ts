@@ -5,6 +5,7 @@ import { refreshCatalogue } from "./crawler.js";
 import { ChatDb } from "./db.js";
 import { SellerRegistry, type SellerContext } from "./sellers.js";
 import { SessionStore } from "./session.js";
+import { FaqStore } from "./faq.js";
 import { initTracing } from "./tracing.js";
 
 const sellers = SellerRegistry.load();
@@ -36,7 +37,9 @@ async function recrawlAll() {
 }
 
 const tracing = await initTracing();
-const app = createApp({ client: new Anthropic(), sellers, sessions, db, recrawl, tracing });
+const faq = await FaqStore.load(paths.data);
+if (faq.file) console.log(`[faq] ${faq.file.summary}`);
+const app = createApp({ client: new Anthropic(), sellers, sessions, db, recrawl, tracing, faq });
 
 function prune() {
   const removed = db.pruneSessions(30);

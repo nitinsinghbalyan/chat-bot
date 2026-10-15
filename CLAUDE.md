@@ -29,6 +29,8 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 | **large catalogue** | KB over ~300k chars: prompt keeps categories, ISQs and a product index; details come per message from catalogue search |
 | **prompt versions** | Every save/reset/restore of common prompts and personas, plus each shipped default, kept with View (diff) and Restore |
 | **traces** | Langfuse: one per buyer message, chats as Sessions; mobiles masked, OTPs never sent; per-chat cost = `chat_cost_usd` session score; off without `LANGFUSE_*` keys; status on `/health` + `/admin` |
+| **extra files** | Per seller (Manage): business card .md, MCAT specs JSON (fills ISQ gaps), product cards JSON; merged with the KB JSON |
+| **common FAQ** | One Excel for all sellers (Question, Answer, optional Category) on /admin/prompts; searched per message as `<faq>` |
 | **seller row / Manage** | `/admin` lists sellers as one-line rows; **Manage** expands the controls |
 | **model** | `claude-sonnet-5-5`, effort low, 1M context; system prompt ~43k tokens (Jayshree), cached |
 | **demo OTP** | `12345`; no SMS gateway yet |

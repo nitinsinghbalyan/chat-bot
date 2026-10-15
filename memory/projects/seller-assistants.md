@@ -53,7 +53,9 @@
 | Langfuse tracing (v6 `@langfuse/tracing` + `@langfuse/otel`): one trace per buyer message, Sessions per chat; mask mobiles/OTPs, system prompt by version reference only, 👍/👎 buyer feedback + automatic scores. Off without keys | Nitin |
 | Detailed summary after requirement gathering = server-built card from the saved enquiry (not bot-written text), buyer can correct it | Nitin (Oct 2026) |
 | Per-chat cost in Langfuse only (session score + trace metadata), not in admin | Nitin |
-| Catalogue from crawling the sitemap; MCAT specs file not used | Nitin |
+| Catalogue from crawling the sitemap | Nitin |
+| Extra per-seller files (business card .md, MCAT specs JSON, product cards JSON) **merge** with the KB JSON; MCAT specs **only fill ISQ gaps** (earlier "MCAT not used" reversed, Oct 2026) | Nitin |
+| Common FAQ Excel (Question, Answer, optional Category), searched per message as `<faq>`, scoped per seller by category; guardrails win | Nitin |
 | SQLite on a Render disk; Render hosting | Nitin |
 | Multi-seller; KB supplied per seller | Nitin |
 | Widget bottom-right (was bottom-left) | Nitin |
@@ -90,6 +92,7 @@
 | #14 | Project memory refresh |
 | #15 | Enquiry summary card, per-chat cost score, Langfuse key check / region auto-detect / visible tracing status |
 | #16 | Langfuse upload counters, server version, **Test Langfuse** button on /admin |
+| #17 | Extra seller files (business card .md, MCAT specs, product cards) and the common FAQ Excel |
 
 ## Open items / ideas
 - Real SMS OTP (replace the demo check in `src/tools.ts`; stop sending `demo: true` from `/api/sellers/:slug`).

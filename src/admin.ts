@@ -12,7 +12,9 @@ import { diffLines } from "./diff.js";
 import { activeVersionId, COMMON_SCOPE, newerBuiltIn, recordVersion, sellerScope } from "./promptVersions.js";
 import { defaultSystemTemplate, REQUIRED_PLACEHOLDERS, sharedGuardrails, validateSystemTemplate } from "./prompts.js";
 import { SELLER_KB_TEMPLATE, validateSellerKb } from "./sellerKb.js";
-import { sellerConfigSchema, SLUG_RE, type SellerContext, type SellerRegistry } from "./sellers.js";
+import { FAQ_LIMIT_BYTES, parseFaq, type FaqStore } from "./faq.js";
+import { isSellerFileKind, SELLER_FILES, type SellerFileKind } from "./sellerFiles.js";
+import { parseSellerFile, sellerConfigSchema, SLUG_RE, type SellerContext, type SellerRegistry } from "./sellers.js";
 import { esc } from "./site/html.js";
 import type { ConnectionTest, TracingStatus } from "./tracing.js";
 
@@ -30,6 +32,8 @@ export interface AdminDeps {
   tracing?: TracingStatus;
   /** Runs the "Test Langfuse" check (see Tracing.testConnection). */
   testTracing?: () => Promise<ConnectionTest>;
+  /** The common FAQ (Excel), managed on /admin/prompts. */
+  faq?: FaqStore;
 }
 
 /** Quotes a CSV cell and defuses spreadsheet formulas (a buyer could type "=HYPERLINK(...)"). */
@@ -130,6 +134,30 @@ const DROPZONE_SCRIPT = `<script>
     });
     input.addEventListener("change", function () { if (input.files[0]) zone.dispatchEvent(new CustomEvent("file", { detail: input.files[0] })); });
   });
+  // Extra files and the FAQ: text, JSON or binary bodies; the server answers {ok, summary, warnings} or {ok:false, errors}.
+  document.querySelectorAll(".dropzone[data-file-upload]").forEach(function (zone) {
+    var out = zone.parentNode.querySelector(".dz-result");
+    var format = zone.getAttribute("data-format");
+    zone.addEventListener("file", function (e) {
+      var file = e.detail;
+      adminShow(out, "busy", "Checking " + file.name + "…");
+      (format === "binary" ? file.arrayBuffer() : file.text()).then(function (body) {
+        if (format === "json") { try { JSON.parse(body); } catch (err) { throw new Error("This file is not valid JSON: " + err.message); } }
+        var type = format === "binary" ? "application/octet-stream" : format === "json" ? "application/json" : "text/plain";
+        return fetch(zone.getAttribute("data-file-upload"), { method: "POST", headers: { "Content-Type": type }, body: body, credentials: "same-origin" });
+      }).then(function (res) {
+        return res.json().catch(function () { return { ok: false, errors: ["Upload failed (HTTP " + res.status + ")"] }; });
+      }).then(function (r) {
+        if (r.ok) {
+          adminShow(out, "ok", "✓ Uploaded: " + r.summary + ". Live from the next chat message.", r.warnings, "Notes");
+          setTimeout(function () {
+            var u = new URL(zone.getAttribute("data-done"), location.href);
+            if (u.pathname === location.pathname && u.search === location.search) { location.hash = u.hash; location.reload(); } else location.href = u.href;
+          }, r.warnings && r.warnings.length ? 6000 : 1800);
+        } else adminShow(out, "err", "Not uploaded. Fix these and try again:", r.errors);
+      }).catch(function (err) { adminShow(out, "err", err.message); });
+    });
+  });
   document.querySelectorAll(".dropzone[data-upload]").forEach(function (zone) {
     var out = zone.parentNode.querySelector(".dz-result");
     zone.addEventListener("file", function (e) {
@@ -218,7 +246,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
   const notFound = (res: Response) => res.status(404).send(shell("Not found", `<div class="panel empty">Not found. <a href="/admin">Back to sellers</a></div>`));
 
   /** Writes a file atomically so a crash mid-write never leaves half a file on the disk. */
-  function writeAtomic(file: string, data: string) {
+  function writeAtomic(file: string, data: string | Buffer) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = `${file}.tmp`;
     fs.writeFileSync(tmp, data);
@@ -240,6 +268,44 @@ export function mountAdmin(app: Express, d: AdminDeps) {
     if (saved.system || saved.user) return { label: "Persona: custom", tone: "ok", text: saved.system || saved.user };
     if (s.defaultPersona.system || s.defaultPersona.user) return { label: "Persona: default", tone: "info", text: s.defaultPersona.system || s.defaultPersona.user };
     return { label: "No persona", tone: "", text: "" };
+  }
+
+  const fileCount = (s: SellerContext) => Object.keys(s.files).length;
+  const FILE_KEY: Record<SellerFileKind, keyof SellerContext["files"]> = { "business-card": "businessCard", mcat: "mcat", "product-cards": "productCards" };
+
+  /** The Extra files block: business card (.md), MCAT specifications and product cards, each optional. */
+  function extraFilesBlock(s: SellerContext): string {
+    const slug = esc(s.config.slug);
+    const hints: Record<SellerFileKind, string> = {
+      "business-card": "Added to the business card the bot uses. GST, bank, turnover, staff, ratings, prices and terms are left out.",
+      mcat: "Spec questions (ISQs) for categories and product cards that have none, from the MCATs that match this seller.",
+      "product-cards": s.uploaded ? "Added to the products from the knowledge base JSON." : "Replaces the KB folder's product_cards.json.",
+    };
+    const items = (Object.keys(SELLER_FILES) as SellerFileKind[]).map((kind) => {
+      const meta = SELLER_FILES[kind];
+      const f = s.files[FILE_KEY[kind]];
+      const base = `/admin/sellers/${slug}/files/${kind}`;
+      const status = f ? `${esc(f.summary)} · uploaded ${esc(ago(f.uploadedAt))}` : "Not uploaded";
+      let use = "";
+      if (kind === "mcat" && f) {
+        const u = s.mcatUse;
+        use = u.matched.length
+          ? `Matches this seller: ${esc(u.matched.slice(0, 8).join(", "))}${u.matched.length > 8 ? ` and ${u.matched.length - 8} more` : ""}.${u.filled.length ? ` ISQs added to: ${esc(u.filled.slice(0, 8).join("; "))}${u.filled.length > 8 ? ` and ${u.filled.length - 8} more` : ""}.` : " Every matching category already has its own ISQs."}`
+          : "No MCAT in the file matches what this seller deals in.";
+      }
+      const notes = f?.warnings.length ? `<details class="notes"><summary>Notes</summary><ul>${f.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></details>` : "";
+      return `<div class="xfile">
+  <div class="row"><p><b>${esc(meta.label)}</b><br><span class="muted small">${status}</span></p>
+  <div class="btn-row">${f ? `<a class="btn small" href="${base}">Download</a><form class="inline" method="post" action="${base}/delete" onsubmit="return confirm('Remove this file? The bot stops using it from the next message.')"><button class="btn small" type="submit">Remove</button></form>` : ""}</div></div>
+  ${use ? `<p class="use">${use}</p>` : ""}<p class="hint">${hints[kind]}</p>${notes}
+  <div class="dropzone small" data-file-upload="${base}" data-format="${meta.format}" data-done="/admin?kb=${slug}#seller-${slug}">
+    <input type="file" accept="${meta.accept}" aria-label="${f ? "Replace" : "Upload"} the ${esc(meta.label.toLowerCase())} for ${esc(s.config.name)}">
+    <div class="dz-text">Drop a file or <b>choose one</b> to ${f ? "replace" : "upload"}</div>
+  </div>
+  <div class="dz-result" aria-live="polite"></div>
+</div>`;
+    });
+    return `<section class="block files"><h3>Extra files <span class="muted small">(optional)</span></h3>${items.join("")}</section>`;
   }
 
   function sellerRow(s: SellerContext, leads: number): string {
@@ -266,6 +332,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
   </div>
   <div class="dz-result" aria-live="polite"></div>
 </section>`;
+    const filesBlock = extraFilesBlock(s);
     const catalogueBlock = `<section class="block">
   <h3>Website catalogue</h3>
   <div class="row">
@@ -286,7 +353,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
     return `<details class="srow" id="seller-${slug}" data-search="${esc(`${s.config.name} ${s.config.slug}`.toLowerCase())}">
   <summary>
     <div class="seller"><span class="avatar" style="--c:${esc(s.config.color)}">${esc(s.config.name.charAt(0).toUpperCase())}</span><div class="who"><h2>${esc(s.config.name)}</h2><div class="muted small">${slug} · ${s.source === "admin" ? "added in admin" : "KB folder in the repo"}</div></div></div>
-    <div class="badges">${u ? badge("JSON knowledge base", "ok") : badge("KB folder files", "info")}${crawlBadge(s)}${badge(persona.label, persona.tone)}</div>
+    <div class="badges">${u ? badge("JSON knowledge base", "ok") : badge("KB folder files", "info")}${crawlBadge(s)}${badge(persona.label, persona.tone)}${fileCount(s) ? badge(`+${plural(fileCount(s), "file")}`, "info") : ""}</div>
     <div class="nums">
       <a class="num" href="/admin/leads?seller=${slug}" title="Leads"><b>${leads}</b><span>Leads</span></a>
       <span class="num"><b>${products}</b><span>Products</span></span>
@@ -307,7 +374,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
       <div class="stat"><b>${u?.summary.videos ?? "–"}</b><span>Videos</span></div>
       <div class="stat"><b>${u?.summary.documents ?? "–"}</b><span>PDFs</span></div>
     </div>
-    <div class="blocks">${kbBlock}${catalogueBlock}${personaBlock}</div>
+    <div class="blocks">${kbBlock}${filesBlock}${catalogueBlock}${personaBlock}</div>
     ${
       s.source === "admin"
         ? `<footer class="srow-foot"><form class="inline" method="post" action="/admin/sellers/${slug}/delete" onsubmit="return confirm('Delete ${esc(s.config.name).replace(/'/g, "\\'")}? Its website and bot stop working. Leads and chats are kept.')"><button class="btn danger small" type="submit">Delete seller</button></form></footer>`
@@ -498,6 +565,111 @@ ${DROPZONE_SCRIPT}
     fs.rmSync(s.dataDir, { recursive: true, force: true });
     res.redirect(303, `/admin?deleted=${encodeURIComponent(s.config.name)}`);
   });
+
+  // ---- Extra files (per seller): business card .md, MCAT specifications, product cards ----
+
+  const fileKind = (req: Request): SellerFileKind | null => (isSellerFileKind(String(req.params.kind)) ? (String(req.params.kind) as SellerFileKind) : null);
+
+  app.post("/admin/sellers/:seller/files/:kind", requireAdmin, sameOriginPost, express.text({ type: "*/*", limit: "10mb" }), (req, res) => {
+    const s = sellerParam(req);
+    const kind = fileKind(req);
+    if (!s || !kind) return void notFound(res);
+    const raw = typeof req.body === "string" ? req.body : "";
+    const r = parseSellerFile(kind, raw);
+    if (!r.ok) {
+      res.status(400).json({ ok: false, errors: r.errors });
+      return;
+    }
+    writeAtomic(path.join(s.filesDir, SELLER_FILES[kind].file), raw);
+    sellers.setSellerFile(s.config.slug, kind, { value: r.value, uploadedAt: new Date().toISOString(), summary: r.summary, warnings: r.warnings });
+    let summary = r.summary;
+    if (kind === "mcat") summary += s.mcatUse.matched.length ? `, ${s.mcatUse.matched.length} match${s.mcatUse.matched.length === 1 ? "es" : ""} this seller, ISQs added to ${plural(s.mcatUse.filled.length, "category or card", "categories or cards")}` : ", none match this seller";
+    res.json({ ok: true, summary, warnings: r.warnings });
+  });
+
+  app.get("/admin/sellers/:seller/files/:kind", requireAdmin, (req, res) => {
+    const s = sellerParam(req);
+    const kind = fileKind(req);
+    const file = s && kind ? path.join(s.filesDir, SELLER_FILES[kind].file) : "";
+    if (!s || !kind || !fs.existsSync(file)) return void notFound(res);
+    res.setHeader("Content-Disposition", `attachment; filename="${s.config.slug}-${SELLER_FILES[kind].file}"`);
+    res.type(SELLER_FILES[kind].format === "json" ? "application/json" : "text/markdown").send(fs.readFileSync(file));
+  });
+
+  app.post("/admin/sellers/:seller/files/:kind/delete", requireAdmin, sameOriginPost, (req, res) => {
+    const s = sellerParam(req);
+    const kind = fileKind(req);
+    if (!s || !kind) return void notFound(res);
+    fs.rmSync(path.join(s.filesDir, SELLER_FILES[kind].file), { force: true });
+    sellers.setSellerFile(s.config.slug, kind, null);
+    res.redirect(303, `/admin?kb=${encodeURIComponent(s.config.slug)}#seller-${encodeURIComponent(s.config.slug)}`);
+  });
+
+  // ---- Common FAQ (Excel or CSV) ----
+
+  app.post("/admin/faq", requireAdmin, sameOriginPost, express.raw({ type: "*/*", limit: FAQ_LIMIT_BYTES }), async (req, res) => {
+    const faq = d.faq;
+    if (!faq) return void notFound(res);
+    const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    const r = await parseFaq(buf);
+    if (!r.ok) {
+      res.status(400).json({ ok: false, errors: r.errors });
+      return;
+    }
+    const format = r.format ?? "xlsx";
+    writeAtomic(faq.pathFor(format), buf);
+    fs.rmSync(faq.pathFor(format === "xlsx" ? "csv" : "xlsx"), { force: true });
+    faq.set({ rows: r.value, uploadedAt: new Date().toISOString(), format, summary: r.summary, warnings: r.warnings });
+    res.json({ ok: true, summary: r.summary, warnings: r.warnings });
+  });
+
+  app.get("/admin/faq.:format", requireAdmin, (req, res) => {
+    const faq = d.faq;
+    const format = req.params.format === "csv" ? "csv" : req.params.format === "xlsx" ? "xlsx" : null;
+    if (!faq || !format || !fs.existsSync(faq.pathFor(format))) return void notFound(res);
+    res.setHeader("Content-Disposition", `attachment; filename="common-faq.${format}"`);
+    res.type(format === "csv" ? "text/csv" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").send(fs.readFileSync(faq.pathFor(format)));
+  });
+
+  app.post("/admin/faq/delete", requireAdmin, sameOriginPost, (_req, res) => {
+    const faq = d.faq;
+    if (!faq) return void notFound(res);
+    for (const f of ["xlsx", "csv"] as const) fs.rmSync(faq.pathFor(f), { force: true });
+    faq.set(null);
+    res.redirect(303, "/admin/prompts#faq");
+  });
+
+  /** The Common FAQ panel on /admin/prompts. */
+  function faqPanel(): string {
+    const faq = d.faq;
+    if (!faq) return "";
+    const f = faq.file;
+    const perSeller = f
+      ? sellers
+          .list()
+          .map((s) => `${esc(s.config.name)}: ${faq.forSeller(s.kb, { ...s.terms, mcats: s.mcatUse.matched }, s.config.name)?.size ?? 0}`)
+          .join(" · ")
+      : "";
+    const preview = f
+      ? `<details class="notes"><summary>First ${Math.min(10, f.rows.length)} of ${plural(f.rows.length, "row")}</summary><table class="faq-preview"><thead><tr><th>Question</th><th>Answer</th><th>Category</th></tr></thead><tbody>${f.rows
+          .slice(0, 10)
+          .map((r) => `<tr><td>${esc(r.question)}</td><td>${esc(r.answer)}</td><td>${esc(r.categories.join(", ") || "all sellers")}</td></tr>`)
+          .join("")}</tbody></table></details>`
+      : "";
+    return `<section class="panel" id="faq">
+<div class="row"><div><h2>Common FAQ (Excel)</h2><p class="muted small">One sheet for every seller with the columns <b>Question</b>, <b>Answer</b> and an optional <b>Category</b>. A row with a category is used only for sellers that deal in it; <code>{seller_name}</code> is filled in. The bot looks up the rows that match each buyer message; the guardrails still apply, and rows that state a price are left out.</p></div>
+<div class="btn-row">${f ? `<a class="btn small" href="/admin/faq.${f.format}">Download</a><form class="inline" method="post" action="/admin/faq/delete" onsubmit="return confirm('Remove the common FAQ? The bot stops using it from the next message.')"><button class="btn small" type="submit">Remove</button></form>` : ""}</div></div>
+<p>${f ? `${esc(f.summary)} · uploaded ${esc(ago(f.uploadedAt))} <span class="muted small">(${esc(fmtIST(f.uploadedAt))})</span>` : "No FAQ uploaded."}</p>
+${perSeller ? `<p class="muted small">Rows used per seller: ${perSeller}</p>` : ""}
+${f?.warnings.length ? `<details class="notes" open><summary>Notes</summary><ul>${f.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></details>` : ""}
+${preview}
+<div class="dropzone" data-file-upload="/admin/faq" data-format="binary" data-done="/admin/prompts#faq">
+  <input type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" aria-label="${f ? "Replace" : "Upload"} the common FAQ">
+  <div class="dz-text">Drop an Excel (.xlsx) or CSV file here or <b>choose a file</b> to ${f ? "replace" : "upload"} the FAQ</div>
+</div>
+<div class="dz-result" aria-live="polite"></div>
+</section>`;
+  }
 
   // ---- Knowledge base JSON (per seller) ----
 
@@ -802,6 +974,8 @@ ${noteField}
 <div class="btn-row"><button class="btn primary" type="submit">Save for all sellers</button><button class="btn" type="submit" name="reset" value="1" onclick="return confirm('Reset both to the defaults in prompts/?')">Reset to defaults</button></div>
 </form>
 ${versionsPanel(COMMON_SCOPE, { a: sellers.common.system, b: sellers.common.guardrails })}
+${faqPanel()}
+${DROPZONE_SCRIPT}
 ${preview ? `<details class="panel preview"><summary>Preview: full system prompt for ${esc(preview.config.name)}</summary><pre>${esc(preview.systemPrompt)}</pre></details>` : ""}`,
       "prompts",
     );

@@ -33,6 +33,7 @@
     "dotenv": "^18.0.6",
     "express": "^5.2.1",
     "minisearch": "^7.2.0",
+    "read-excel-file": "9.3.10",
     "zod": "^4.6.5"
   },
   "devDependencies": {

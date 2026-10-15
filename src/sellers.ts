@@ -8,10 +8,23 @@ import { z } from "zod";
 import { Catalogue } from "./catalogue.js";
 import type { CatalogueEntry } from "./crawler.js";
 import { paths } from "./config.js";
-import { loadKnowledgeBase, sitemapUrls, type KnowledgeBase } from "./kb.js";
+import { loadKnowledgeBase, renderProductCard, sitemapUrls, type KnowledgeBase, type ProductCard } from "./kb.js";
 import type { SellerPersona } from "./db.js";
 import { defaultSystemTemplate, renderSystemPrompt, sharedGuardrails } from "./prompts.js";
 import { KbView, knowledgeFromKb, validateSellerKb, type KbSummary, type SellerKb } from "./sellerKb.js";
+import {
+  fillCardIsqs,
+  matchingMcats,
+  parseBusinessCardMd,
+  parseMcatSpecs,
+  parseProductCards,
+  SELLER_FILES,
+  type BusinessCardMd,
+  type McatSpec,
+  type ParseResult,
+  type SellerFileKind,
+  type SellerTerms,
+} from "./sellerFiles.js";
 
 export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,58}[a-z0-9])?$/;
 
@@ -66,6 +79,28 @@ export interface UploadedKb {
   summary: KbSummary;
 }
 
+/** One extra file uploaded on /admin (see src/sellerFiles.ts). */
+export interface SellerFile<T> {
+  value: T;
+  uploadedAt: string;
+  summary: string;
+  warnings: string[];
+}
+
+export interface SellerFiles {
+  businessCard?: SellerFile<BusinessCardMd>;
+  mcat?: SellerFile<McatSpec[]>;
+  productCards?: SellerFile<ProductCard[]>;
+}
+
+/** How the MCAT file was used for this seller, for the admin page. */
+export interface McatUse {
+  /** MCATs that match something the seller deals in. */
+  matched: string[];
+  /** Categories and product cards that got their ISQs from an MCAT ("Iron Worker Machine ← Ironworker Machine"). */
+  filled: string[];
+}
+
 export interface SellerContext {
   config: SellerConfig;
   /** repo: a folder under kb/sellers/ (committed). admin: added on /admin, stored on the data disk. */
@@ -103,6 +138,12 @@ export interface SellerContext {
   /** Number of pages the crawler visits: the sitemap's, else the KB JSON's product and category pages. */
   sitemapPages: number;
   lastCrawl: CrawlStatus | null;
+  /** Extra files uploaded on /admin: business card (md), MCAT specifications, product cards. */
+  files: SellerFiles;
+  /** Where those files are stored: DATA_DIR/sellers/<slug>/files. */
+  filesDir: string;
+  mcatUse: McatUse;
+  terms: SellerTerms;
 }
 
 function readJsonFile(file: string, errors: string[]): unknown {
@@ -245,10 +286,14 @@ export class SellerRegistry {
       persona: extra.defaultPersona,
       sitemapPages: extra.sitemapList.length,
       lastCrawl: null,
+      files: {},
+      filesDir: path.join(dataDir, "files"),
+      mcatUse: { matched: [], filled: [] },
+      terms: { names: [], mcatIds: new Set() },
     };
+    s.files = readSellerFiles(s.filesDir, config.slug);
     this.sellers.set(config.slug, s);
-    this.rebuildCatalogue(s);
-    this.render(s);
+    this.compose(s);
     return s;
   }
 
@@ -296,13 +341,69 @@ export class SellerRegistry {
     if (kb) {
       const view = new KbView(kb);
       s.uploaded = { view, uploadedAt, summary: view.summary() };
-      s.kb = knowledgeFromKb(view, s.fileKb);
       s.sitemapPages = s.sitemapList.length || view.pageUrls().length;
     } else {
       s.uploaded = null;
-      s.kb = s.fileKb;
       s.sitemapPages = s.sitemapList.length;
     }
+    this.compose(s);
+  }
+
+  /** Sets (or with null removes) one extra file and rebuilds the seller's knowledge. The caller stores the file. */
+  setSellerFile(slug: string, kind: SellerFileKind, file: SellerFile<unknown> | null) {
+    const s = this.sellers.get(slug);
+    if (!s) return;
+    const key = FILE_KEYS[kind];
+    if (file) (s.files as Record<string, unknown>)[key] = file;
+    else delete s.files[key];
+    this.compose(s);
+  }
+
+  /**
+   * Builds the knowledge the bot uses from the KB JSON (or KB folder) plus the extra files, which
+   * are merged in: the business card .md is added to the business card, uploaded product cards to
+   * the product cards (for a KB-folder seller they replace the folder's cards), and the MCAT file
+   * gives ISQs to categories and cards that have none. Then re-renders the prompt and catalogue.
+   */
+  private compose(s: SellerContext) {
+    const mcats = s.files.mcat?.value ?? [];
+    const md = s.files.businessCard?.value;
+    const uploadedCards = s.files.productCards?.value ?? [];
+    const mdText = md ? `\n\n## More from the seller's business card\n\n${md.text}` : "";
+    const filled: string[] = [];
+    const fill = (cards: ProductCard[]) => {
+      const r = fillCardIsqs(cards, mcats);
+      filled.push(...r.filled.map((n) => `${n} (product card)`));
+      return r.cards;
+    };
+    let kb: KnowledgeBase;
+    if (s.uploaded) {
+      const extra = fill(uploadedCards);
+      const extraText = extra.length ? `\n\n# Product cards (uploaded)\n\n${extra.map(renderProductCard).join("\n\n---\n\n")}` : "";
+      const view = new KbView(s.uploaded.view.kb, { mcats, reservedChars: mdText.length + extraText.length });
+      s.uploaded.view = view;
+      filled.push(...view.mcatFilledCategories().map((f) => `${f.category} (from MCAT ${f.mcat})`));
+      const fromJson = knowledgeFromKb(view, s.fileKb);
+      kb = { ...fromJson, productCards: [...fromJson.productCards, ...extra], productCardsText: fromJson.productCardsText + extraText };
+    } else {
+      // The same kind of file as the KB folder's product_cards.json: the uploaded copy replaces it.
+      const cards = fill(uploadedCards.length ? uploadedCards : s.fileKb.productCards);
+      kb = { ...s.fileKb, productCards: cards, productCardsText: cards.map(renderProductCard).join("\n\n---\n\n") };
+    }
+    kb.businessCardText += mdText;
+    if (md?.phones.length) kb.allowedPhones = [...new Set([...kb.allowedPhones, ...md.phones])];
+    s.kb = kb;
+    s.terms = {
+      names: [
+        ...new Set([
+          ...(s.uploaded?.view.kb.categories.map((c) => c.name) ?? []),
+          ...(kb.businessCard.deals_in ?? []),
+          ...kb.productCards.flatMap((c) => [c.canonical_name, c.category ?? "", ...(c.aliases ?? []), ...(c.flow.categories ?? [])]),
+        ]),
+      ].filter(Boolean),
+      mcatIds: s.uploaded?.view.mcatIds() ?? new Set(),
+    };
+    s.mcatUse = { matched: matchingMcats(mcats, s.terms).map((m) => m.name), filled };
     this.rebuildCatalogue(s);
     this.render(s);
   }
@@ -371,6 +472,36 @@ export class SellerRegistry {
   get size() {
     return this.sellers.size;
   }
+}
+
+const FILE_KEYS = { "business-card": "businessCard", mcat: "mcat", "product-cards": "productCards" } as const;
+
+/** Parses an uploaded extra file (raw text as uploaded). */
+export function parseSellerFile(kind: SellerFileKind, raw: string): ParseResult<unknown> {
+  if (SELLER_FILES[kind].format === "text") return parseBusinessCardMd(raw);
+  let json: unknown;
+  try {
+    json = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  } catch (err) {
+    return { ok: false, errors: [`Not valid JSON: ${(err as Error).message}`] };
+  }
+  return kind === "mcat" ? parseMcatSpecs(json) : parseProductCards(json);
+}
+
+/** Reads the extra files stored for a seller; a file that no longer parses is logged and skipped. */
+function readSellerFiles(dir: string, slug: string): SellerFiles {
+  const files: SellerFiles = {};
+  for (const kind of Object.keys(SELLER_FILES) as SellerFileKind[]) {
+    const file = path.join(dir, SELLER_FILES[kind].file);
+    if (!fs.existsSync(file)) continue;
+    const r = parseSellerFile(kind, fs.readFileSync(file, "utf8"));
+    if (!r.ok) {
+      console.error(`[files:${slug}] ignoring ${file}: ${r.errors.slice(0, 3).join("; ")}`);
+      continue;
+    }
+    (files as Record<string, unknown>)[FILE_KEYS[kind]] = { value: r.value, uploadedAt: fs.statSync(file).mtime.toISOString(), summary: r.summary, warnings: r.warnings };
+  }
+  return files;
 }
 
 function readKbFile(file: string, slug: string): SellerKb | null {

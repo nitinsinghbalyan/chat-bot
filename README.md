@@ -101,6 +101,25 @@ What the bot is given from it:
 
 **ISQs:** the export has no question list, so they are derived per category. Each specification whose values differ across the category's products (for example Control Type: CNC / NC) becomes a question, and its values become the options. Brand, model and country of origin are skipped, and each category gets up to 5 ISQs with up to 8 options each.
 
+## Extra seller files and the common FAQ
+
+Each seller's **Manage** panel on `/admin` has an **Extra files** block with three optional uploads. They're stored in `DATA_DIR/sellers/<slug>/files/` and **merged** with the KB JSON (or KB folder); each can be downloaded or removed.
+
+| File | Format | How the bot uses it |
+|---|---|---|
+| Business card | Markdown (`.md`) | Added under the business card as "More from the seller's business card". Lines about GST, bank, turnover, staff, ratings, prices, payment or delivery terms are left out (the upload notes say how many). Numbers on contact lines are added to the numbers the bot may share. |
+| MCAT specifications | JSON: `[{"mcat_id", "mcat_name", "specifications": [{"name", "options": [...]}]}]` | **Fills ISQ gaps only.** A category whose products give no ISQs, or a product card without qualification questions, gets the matching MCAT's specs as ISQs, with up to 8 options each. Brand, model, price, finance and usage fields are dropped. An MCAT matches by its id in the export's `taxonomy.glmcat_ids`, or by name. The seller's category must be the MCAT or a kind of it ("Metal Sheet Bending Machine" is a "Bending Machine"; a seller listing "Bending Machine" doesn't get "Bar Bending Machine"). Unmatched MCATs are ignored. The panel lists the matches and where ISQs were added. |
+| Product cards | JSON, the KB folder's `product_cards.json` format | With a KB JSON: added after its products as "Product cards (uploaded)". For a KB-folder seller: replaces the folder's `product_cards.json`. Broken or duplicate cards are skipped with a note. |
+
+The extra text counts against the large-catalogue prompt budget.
+
+**Common FAQ** (`/admin/prompts`, **Common FAQ (Excel)**): one `.xlsx` (first sheet) or `.csv` for every seller, stored as `DATA_DIR/faq.xlsx` or `faq.csv`.
+- **Columns:** `Question`, `Answer` and an optional `Category`. `FAQ`/`Q`, `Response`/`A` and `MCAT`/`Product` are accepted too.
+- **Scope:** a row with a category (several can be separated by `,` or `;`) is used only for sellers that deal in it, matched like MCATs. A row without one is used for every seller. `{seller_name}` is replaced with the seller's name.
+- **Per message:** the buyer's message is searched against the seller's rows (stopwords ignored, light stemming), and up to 3 matching rows go into that turn as `<faq>`.
+- **Guardrails:** they still win. Rows whose answer states a price are left out, and rows that mention tax, delivery, payment, discount or stock are flagged for review.
+- **Panel:** shows the rows used per seller and a preview.
+
 ## Chat features
 
 - **ISQ chips:** the bot asks one ISQ per message and calls `show_options`. The widget shows the options as tap-to-reply buttons inside the conversation, right under that message. The buyer can tap one or type their own answer; the row then stays in the chat greyed out, with the chosen option highlighted. No buttons are shown while it is collecting the mobile number, OTP or name.
@@ -362,10 +381,11 @@ npm run eval      # live scenarios against the real model for Jayshree, one or m
 kb/sellers/<slug>/   KB you supply per seller (+ optional persona.json, seller_kb.json, catalogue)
 prompts/             system.md, user.md, guardrails.md (common defaults; editable at /admin/prompts)
 src/                 app.ts (HTTP: chat API, website), admin.ts (admin pages), server.ts, sellers.ts (registry), claude.ts (chat loop),
-                     tools.ts (OTP, lead, show_options, share_media), sellerKb.ts (JSON upload), shareMedia.ts,
+                     tools.ts (OTP, lead, show_options, share_media), sellerKb.ts (JSON upload), sellerFiles.ts (extra
+                     seller files, MCAT matching), faq.ts (common FAQ), shareMedia.ts,
                      media.ts, guardrails.ts, crawler.ts, catalogue.ts, db.ts (SQLite), site/ (page templates)
 public/              widget.js (embeddable chat), site.css, admin.css, demo.html
 scripts/             crawl.ts, kb-check.ts, eval.ts
-tests/               vitest tests + fixtures (HTML pages, two sample sellers, a sample KB JSON)
+tests/               vitest tests + fixtures (HTML pages, two sample sellers, a sample KB JSON, a sample FAQ .xlsx)
 render.yaml          Render Blueprint (web service + persistent disk)
 ```
