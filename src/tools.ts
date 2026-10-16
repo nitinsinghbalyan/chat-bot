@@ -220,7 +220,7 @@ const SUMMARY_SHOWN =
 export function describeLeadStatus(lead: LeadState): string {
   switch (lead.stage) {
     case "none":
-      return "No contact details captured yet: ask for the buyer's 10-digit mobile number now (answer any question first, in one line).";
+      return "No contact details captured yet: reply only with a short request for the buyer's 10-digit mobile number, nothing else.";
     case "otp_sent":
       return `OTP sent to mobile ${maskMobile(lead.mobile!)}. Waiting for the buyer to type the OTP (${MAX_OTP_ATTEMPTS - lead.otpAttempts} attempts left).`;
     case "verified":

@@ -70,7 +70,7 @@ describe("lead capture flow", () => {
     expect(run("send_otp", { mobile: "9876543210" }).isError).toBe(true);
     expect(describeLeadStatus(session.lead)).toMatch(/locked for this chat/);
     // Mobile first: before any contact details, the bot is told to ask for the number now.
-    expect(describeLeadStatus({ stage: "none", otpAttempts: 0, otpSends: 0 })).toMatch(/ask for the buyer's 10-digit mobile number now/);
+    expect(describeLeadStatus({ stage: "none", otpAttempts: 0, otpSends: 0 })).toMatch(/reply only with a short request for the buyer's 10-digit mobile number/);
   });
 
   it("refuses save_lead before OTP verification", () => {
