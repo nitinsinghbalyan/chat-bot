@@ -17,6 +17,10 @@
 - Wants leads captured early (mobile right after the machine is named) and bot replies short and to the point.
 - Wants observability: Langfuse traces, cost per call, buyer feedback.
 - Asks for a project memory update after each milestone.
+- Wants Claude to make prompt changes itself and have them go live on deploy, without manual steps in admin.
+- Audits chats in Langfuse: every trace must sit in a unique per-conversation session.
+- Wants the chat to feel fast: chips with the message, no extra round trips; feedback asked once, not on every reply.
+- Wants spec questions that fit the buyer's machine (category), not a mix across categories.
 - Asks capacity and model questions ("which model", "is the context window enough"): answer with the configured values and sourced numbers, and say what is an estimate.
 
 ## Notes

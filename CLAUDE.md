@@ -54,6 +54,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 - Develop on branch `claude/practical-clarke-0tbalp`, restarted from `origin/main` after each merge. Open a PR and **merge it to `main`**; Render then auto-deploys production.
 - Before a push: `npm test`, `npm run build`, `npm run kb:check`, plus a Chromium check for UI changes.
 - Bigger asks often come in plan mode: ask a few sharp questions, then build.
+- Make prompt changes yourself in `prompts/*.md` / `persona.json`: on deploy they replace older admin edits automatically (kept in Versions). Don't ask Nitin to click "Use the new built-in".
 - Reply in plain language with short summaries. Nitin checks production directly and sends screenshots of problems.
 
 ## Environment gotchas (cloud sessions)

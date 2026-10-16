@@ -5,13 +5,14 @@
 
 ## What it does
 - Answers buyers' discovery and enquiry questions **on the seller's behalf**, grounded in the seller's KB, within 9 guardrails.
-- Enquiry order: machine named → mobile → OTP (demo `12345`) → name (lead saved) → ISQs one at a time as tap-to-reply chips **inline in the chat** → lead updated with the answers → **enquiry summary card** ("Your enquiry": machine, each spec, quantity, city, name, masked mobile) + "Anything to change?" with All correct / Change a detail chips; a correction updates the lead and shows a new card. A buyer who won't share a number isn't blocked.
+- Enquiry order: machine named → mobile → OTP (demo `12345`) → name (lead saved) → ISQs one at a time as tap-to-reply chips **inline in the chat** (the server picks the machine's category each turn and gives the bot only its questions in `<spec_questions>`; chips arrive with the question, no extra Claude call) → lead updated with the answers → **enquiry summary card** ("Your enquiry": machine, each spec, quantity, city, name, masked mobile) + "Anything to change?" with All correct / Change a detail chips; a correction updates the lead and shows a new card. A buyer who won't share a number isn't blocked.
 - Replies are brief: 1–2 short sentences (~40 words), answer first, no filler, options only as chips.
 - Shares photos, videos, PDFs and related products as a carousel.
 - Handles large catalogues: over ~300k characters the system prompt keeps categories, ISQs and a product index; details come per message from the catalogue search.
 - Generates a full website per seller from the KB JSON (with crawled pages as a fallback).
-- Admin for the team: seller rows (Manage), KB upload and add seller, crawls, personas, common prompts with **version history** (View diff, Restore, newer built-in banner), leads and transcripts.
-- Langfuse tracing (when keys are set): a trace per buyer message, chats as Sessions, mobiles masked, OTPs never sent; scores plus 👍/👎 buyer feedback; **per-chat cost** as a `chat_cost_usd` session score (running total, replaced each message).
+- Admin for the team: seller rows (Manage) with KB upload and **extra files** (business card .md, MCAT specs, product cards), add seller, crawls, personas, common prompts with **version history** (View diff, Restore) and the **common FAQ** Excel, leads and transcripts (each conversation linked to its Langfuse session).
+- **Prompt updates apply themselves:** a deploy that changes `prompts/*.md` or a `persona.json` replaces an older admin edit of that part at startup (kept in Versions). Claude makes prompt changes in the repo; Nitin doesn't need to click anything.
+- Langfuse tracing (when keys are set): a trace per buyer message; **one Langfuse session per conversation** (`<seller>:<chatId>`, stamped under `session.id` and legacy `langfuse.session.id`); mobiles masked, OTPs never sent; scores plus 👍/👎 asked **once per chat, under the summary card**; **per-chat cost** as a `chat_cost_usd` session score (running total, replaced each message).
 - Tracing health is visible: startup key check (EU then US cloud auto-detect), `/health` `tracing.state`, red banner on `/admin` when keys are rejected, `[tracing] export failed` in logs.
 
 ## Architecture (where things live)
@@ -57,6 +58,7 @@
 | Extra per-seller files (business card .md, MCAT specs JSON, product cards JSON) **merge** with the KB JSON (earlier "MCAT not used" reversed, Oct 2026) | Nitin |
 | ISQ source: **MCAT first** (by the products' MCAT id, else equal name), else cleaned derived ISQs pooled per MCAT family; **server picks the category per turn** (`<spec_questions>`) | Nitin (Oct 16) |
 | 👍/👎 only once per chat, under the summary card | Nitin |
+| Claude changes prompts itself in the repo; built-ins apply over older admin edits on deploy (no "Use the new built-in" click) | Nitin (Oct 16) |
 | Every trace has a unique per-conversation session id `<seller>:<chatId>` (audit); stamped under new and legacy attribute names | Nitin |
 | Common FAQ Excel (Question, Answer, optional Category), searched per message as `<faq>`, scoped per seller by category; guardrails win | Nitin |
 | SQLite on a Render disk; Render hosting | Nitin |
@@ -97,16 +99,15 @@
 | #16 | Langfuse upload counters, server version, **Test Langfuse** button on /admin |
 | #17 | Extra seller files (business card .md, MCAT specs, product cards) and the common FAQ Excel |
 | #18 | Feedback once per chat (under the summary), instant chips (no extra Claude call after show_options), ISQs per MCAT family with the server picking the category per turn, unique Langfuse session per conversation |
+| #19 | Built-in prompts and personas apply automatically on deploy; Jayshree persona asks the `<spec_questions>`; memory refresh |
 
 ## Open items / ideas
+- **Langfuse (self-hosted `langfuse.intermesh.net`):** after #16/#18, check that traces appear grouped by conversation. If not, **Test Langfuse** on /admin names the failing step (server version, upload refused, or accepted but not stored, which is for the intermesh Langfuse admins).
+- **MCAT file:** Jayshree's uploaded MCAT file is mostly construction MCATs (only the ironworkers match by id). A file with their real MCAT ids (e.g. 25058 press brakes, 1669, 123956, 185336 shears, 182186 laser) would make those questions authoritative; until then they're cleaned derived ISQs.
+- Check the live bot asks the right questions per machine (press brake vs shear vs laser), and that categories with no ISQs (single-product ones like H Frame Hydraulic Press) behave well.
 - Real SMS OTP (replace the demo check in `src/tools.ts`; stop sending `demo: true` from `/api/sellers/:slug`).
-- Run `npm run eval` (live-model scenarios) where an API key is available. The price scenario now expects no price.
-- Langfuse is **self-hosted at `langfuse.intermesh.net`** (`LANGFUSE_BASE_URL` on Render). Oct 15: `/health` said keys OK, 0 export errors, but no traces visible. After #16, click **Test Langfuse** on /admin: the failing step says whether it's the server version, the upload, or the server not storing (then it's for the intermesh Langfuse admins).
-- Traces "not getting logged" (reported Oct 14): #15 adds the key check. After deploy, read `/health` → `tracing.state` or the `/admin` banner: `off` = keys not set on Render; `auth_failed` = wrong/swapped keys or region; `ok` but nothing in Langfuse = look for `[tracing] export failed` in Render logs.
-- After deploying #15: if production has a saved common-prompt edit, click **Use the new built-in** on `/admin/prompts`, or the summary flow won't apply.
-- After deploying #12: if production has a saved edit of the common prompt, click **Use the new built-in** on `/admin/prompts` or the new flow/style won't apply. Check tone and order with the live model.
-- Large-catalogue answers (index/partial modes, details via per-message search) are untested with the live model; check on production with questions that name specific models.
+- Run `npm run eval` (live-model scenarios) where an API key is available.
+- Large-catalogue answers (index/partial modes) are untested with the live model.
 - Check on production that seller photos (imimg.com) load; they can't be seen from cloud sessions.
-- The seller's own site rate-limits the Render crawler. The JSON covers the website, so this is low priority.
-- Idea (offered, not built): per-chat token and cost readout on the admin transcript page.
-- Possible: write a `persona.json` for each new seller; an About page built from the export's `company_pages`.
+- The seller's own site rate-limits the Render crawler; low priority since the JSON covers the website.
+- Ideas (not built): per-chat cost readout on the admin transcript page; a `persona.json` for each new seller; an About page from the export's `company_pages`.

@@ -18,7 +18,13 @@
 
 ## Persona (`kb/sellers/jayshree-machinetools/persona.json`)
 - **System part:** a practical, concise machine-tool sales engineer. Mentions the KISHAN brand and the range, warm and brief greetings, matches the buyer's language (English, Hindi, Hinglish, Gujarati). Starts from the buyer's job: material, maximum sheet thickness, working length.
-- **User part:** once the mobile number and name are captured, ask material, thickness and length with the ISQ chips; share media with `share_media`; prices only via the team; keep replies short.
+- **User part:** once the mobile number and name are captured, ask the specification questions in `<spec_questions>` (the server picks them for the buyer's machine), one at a time with the options as buttons; share media with `share_media`; prices only via the team; keep replies short. (Changed Oct 16 from "ask material, thickness and length", which clashed with per-machine questions.)
+
+## Spec questions (ISQs)
+- The export's 28 categories group into MCAT families by `taxonomy.glmcat_ids`: press brakes are 25058 (CNC PRESS BRAKE, Cnc Press Brake Machine, Cnc Hydraulic Press Brake, CNC), 1669 (hydraulic Press Brake Machine, METAL SHEET BENDING MACHINE, Press Brake) and 123956 (Hydraulic Press Brake, NC PRESS BRAKE). Shears are 185336 and 148563, laser 182186.
+- With the uploaded MCAT file, only the ironworker categories (85047, 117370, 150508) get MCAT questions. The others use cleaned derived ISQs (e.g. CNC press brakes: Automation Grade, Capacity, Control Axis, Max Sheet Width; laser: Laser Power, Cutting Material, Automation Level, Cooling Type).
+- Several single-product categories (H Frame Hydraulic Press, Hydraulic Press Machine, Sheet Shearing Machine) have no ISQs; the bot then asks only quantity and city.
+- Extra files shared earlier (business card .md, MCAT specs, product cards) were tested locally; whether they're uploaded on production is up to Nitin.
 
 ## Site settings (`seller.json`)
 - Tagline: "Manufacturer of press brakes, shearing machines, hydraulic presses and fiber laser cutting machines in Rajkot, Gujarat"

@@ -10,7 +10,7 @@ import type { SellerContext, SellerRegistry } from "./sellers.js";
 import { chatSessionId, type Session, type SessionStore } from "./session.js";
 import { mountAdmin } from "./admin.js";
 import { validateSystemTemplate } from "./prompts.js";
-import { activeVersionId, COMMON_SCOPE, recordStartupVersions, sellerScope } from "./promptVersions.js";
+import { activeVersionId, applyNewerBuiltIn, applyNewerBuiltInPersonas, COMMON_SCOPE, recordStartupVersions, sellerScope } from "./promptVersions.js";
 import { maskMobile, noTracing, OTP_MASK, type Tracing } from "./tracing.js";
 import { shareMedia } from "./shareMedia.js";
 import type { FaqStore } from "./faq.js";
@@ -63,6 +63,10 @@ export function createApp(deps: AppDeps) {
 
   // Version history: record shipped defaults that changed with this deploy, and older edits.
   recordStartupVersions(db, sellers);
+  // A deploy that ships a new built-in common prompt applies it over an older edit (kept in the history).
+  const replaced = applyNewerBuiltIn(db, sellers);
+  if (replaced.length) console.log(`[prompts] new built-in ${replaced.join(" and ")} applied over the saved edit (restore it from /admin/prompts if needed)`);
+  for (const slug of applyNewerBuiltInPersonas(db, sellers)) console.log(`[prompts] new built-in persona applied for ${slug} over the saved one (restore it from its persona page if needed)`);
 
   const app = express();
   app.disable("x-powered-by");
