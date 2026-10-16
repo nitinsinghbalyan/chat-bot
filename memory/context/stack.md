@@ -49,7 +49,10 @@ Don't call them `CLAUDE_*`: the harness sets `CLAUDE_EFFORT`, which once clashed
 - Testing big imports: copy a real export in the scratchpad and multiply its products (new ids and URLs); never commit it. Post it to the local server's `POST /admin/sellers` with `{config: {slug, name, siteUrl, color}, kb}`.
 - The scratchpad is per session: the e2e helpers (`e2e/server.ts`, `e2e/flow.ts`, `e2e/fake-langfuse.mjs`, Playwright scripts) have to be recreated in a new session.
 - `npm view <package> readme` works through the proxy; use it (and the installed `.d.ts` files) to check a library's current API before coding.
+- Fake models must handle the merged turn: after `show_options` the turn ends, so the next user message holds the `tool_result` blocks **and** the buyer's text. Treat a user message as a tool round only when it has no text block.
+- ISQ checks on a real export: a small tsx script that builds `new KbView(kb, { mcats })` and prints `isqPlan(category)` per category (label, MCAT id, source, questions).
 - Chat flow checks: `e2e/flow.ts` in the scratchpad is a stateful fake model that walks machine → mobile → OTP → name → ISQ chips (recreate it if the scratchpad is gone).
 - cloud.langfuse.com is blocked by the agent proxy too, so real trace delivery can only be checked on production.
+- Trace session checks: record the stand-in Langfuse's OTLP bodies and count `"key":"session.id"` and `"key":"langfuse.session.id"` per span; both should hold one `<seller>:<uuid>` per conversation.
 - Tracing checks: run `e2e/fake-langfuse.mjs` (records OTLP and score requests) on port 3470 and start the app with `LANGFUSE_BASE_URL=http://127.0.0.1:3470`, test keys, `LANGFUSE_FLUSH_AT=1` and `NO_PROXY=127.0.0.1`.
 - Admin browser checks: add 3+ sellers through the API so the seller filter box shows (it appears above 3).

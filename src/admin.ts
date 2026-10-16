@@ -9,7 +9,7 @@ import path from "node:path";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import type { ChatDb, PromptVersion, SellerPersona } from "./db.js";
 import { diffLines } from "./diff.js";
-import { activeVersionId, COMMON_SCOPE, newerBuiltIn, recordVersion, sellerScope } from "./promptVersions.js";
+import { activeVersionId, COMMON_SCOPE, recordVersion, sellerScope } from "./promptVersions.js";
 import { defaultSystemTemplate, REQUIRED_PLACEHOLDERS, sharedGuardrails, validateSystemTemplate } from "./prompts.js";
 import { SELLER_KB_TEMPLATE, validateSellerKb } from "./sellerKb.js";
 import { FAQ_LIMIT_BYTES, parseFaq, type FaqStore } from "./faq.js";
@@ -957,7 +957,6 @@ ${counterScript()}`,
       `<div class="page-head"><div><h1>Common system prompt and guardrails</h1><p class="muted">These apply to <b>${sellers.size === 1 ? "the 1 seller" : `all ${sellers.size} sellers`}</b>. Each seller adds its own knowledge base and brand persona on top.${own.length ? ` Sellers with their own <code>guardrails.md</code> keep it: ${own.map((s) => esc(s.config.name)).join(", ")}.` : ""}</p></div></div>
 ${opts.saved ? '<div class="flash ok">✓ Saved. Every seller uses these from the next chat turn.</div>' : ""}
 ${opts.restored ? `<div class="flash ok">✓ Restored v${esc(opts.restored)}. Every seller uses it from the next chat turn.</div>` : ""}
-${builtInBanner()}
 ${opts.errors?.length ? `<div class="flash err">Not saved:<ul>${opts.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
 <form method="post" action="/admin/prompts" class="panel">
 <div class="field">
@@ -979,14 +978,6 @@ ${DROPZONE_SCRIPT}
 ${preview ? `<details class="panel preview"><summary>Preview: full system prompt for ${esc(preview.config.name)}</summary><pre>${esc(preview.systemPrompt)}</pre></details>` : ""}`,
       "prompts",
     );
-  }
-
-  /** Shown when an edited common prompt is in use but a deploy has shipped a newer built-in default. */
-  function builtInBanner(): string {
-    const v = newerBuiltIn(db, sellers);
-    if (!v) return "";
-    return `<div class="flash warn"><b>A newer built-in prompt was deployed on ${esc(fmtIST(v.createdAt))}.</b> You're using an edited version, so the bot isn't using the new default yet.
-<div class="btn-row" style="margin-top:8px"><a class="btn small" href="/admin/prompts/versions/${v.id}">Compare</a><form class="inline" method="post" action="/admin/prompts/versions/${v.id}/restore" onsubmit="return confirm('Use the new built-in prompt for all sellers? Your edited version stays in the history.')"><button class="btn small primary" type="submit">Use the new built-in</button></form></div></div>`;
   }
 
   app.get("/admin/prompts", requireAdmin, (req, res) => {

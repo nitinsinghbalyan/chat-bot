@@ -62,3 +62,55 @@ export function newerBuiltIn(db: ChatDb, sellers: SellerRegistry): PromptVersion
   if (!builtIn || builtIn.createdAt <= lastEdit) return null;
   return same(builtIn, sellers.common.system, sellers.common.guardrails) ? null : builtIn;
 }
+
+/**
+ * Run at startup after recordStartupVersions: when this deploy shipped a new built-in common
+ * prompt and an older edit is in use, the new built-in takes over, so prompt fixes go live
+ * without a click in admin. Only the part the deploy changed is replaced: a deploy that changes
+ * only the system prompt keeps an edited guardrails text, and the other way round. The replaced
+ * edit stays in the version history (Restore brings it back). Returns what was replaced.
+ */
+export function applyNewerBuiltIn(db: ChatDb, sellers: SellerRegistry): Array<"system" | "guardrails"> {
+  const builtIn = newerBuiltIn(db, sellers);
+  if (!builtIn) return [];
+  const builtIns = db.listPromptVersions(COMMON_SCOPE).filter((v) => v.source === "built-in");
+  const prev = builtIns.find((v) => v.id !== builtIn.id);
+  const parts: Array<"system" | "guardrails"> = [];
+  if (db.getPlatformPrompt("system") && (!prev || prev.a.trim() !== builtIn.a.trim())) parts.push("system");
+  if (db.getPlatformPrompt("guardrails") && (!prev || prev.b.trim() !== builtIn.b.trim())) parts.push("guardrails");
+  if (!parts.length) return [];
+  for (const p of parts) db.setPlatformPrompt(p, null);
+  sellers.setCommonPrompts({ ...(parts.includes("system") ? { system: null } : {}), ...(parts.includes("guardrails") ? { guardrails: null } : {}) });
+  const what = parts.map((p) => (p === "system" ? "system prompt" : "guardrails")).join(" and ");
+  recordVersion(db, COMMON_SCOPE, sellers.common.system, sellers.common.guardrails, "restored", `New built-in ${what} applied automatically on deploy; the edit it replaced is the version below`);
+  return parts;
+}
+
+/**
+ * The same for brand personas: when a deploy ships a changed persona.json and the seller uses a
+ * persona saved in admin before that, the changed part (system or user) of the new default takes
+ * over. The saved persona stays in the seller's version history. Returns the sellers updated.
+ */
+export function applyNewerBuiltInPersonas(db: ChatDb, sellers: SellerRegistry): string[] {
+  const updated: string[] = [];
+  for (const s of sellers.list()) {
+    const slug = s.config.slug;
+    const saved = db.getPrompts(slug);
+    if (!(saved.system || saved.user) || !saved.updatedAt) continue;
+    const scope = sellerScope(slug);
+    const builtIns = db.listPromptVersions(scope).filter((v) => v.source === "built-in");
+    const builtIn = builtIns[0];
+    if (!builtIn || builtIn.createdAt <= saved.updatedAt || same(builtIn, s.persona.system, s.persona.user)) continue;
+    const prev = builtIns[1];
+    const next = {
+      system: !prev || prev.a.trim() !== builtIn.a.trim() ? builtIn.a.trim() : saved.system,
+      user: !prev || prev.b.trim() !== builtIn.b.trim() ? builtIn.b.trim() : saved.user,
+    };
+    const isDefault = next.system === s.defaultPersona.system.trim() && next.user === s.defaultPersona.user.trim();
+    db.savePrompts(slug, isDefault ? { system: "", user: "" } : next);
+    sellers.setPersona(slug, isDefault ? s.defaultPersona : next);
+    recordVersion(db, scope, s.persona.system, s.persona.user, "restored", "New built-in persona applied automatically on deploy; the edit it replaced is in the history");
+    updated.push(slug);
+  }
+  return updated;
+}
