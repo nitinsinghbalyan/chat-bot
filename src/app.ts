@@ -137,7 +137,7 @@ export function createApp(deps: AppDeps) {
     }
     const c = seller.config;
     // No SMS gateway is wired yet, so the widget shows the demo OTP hint.
-    res.json({ slug: c.slug, name: c.name, color: c.color, greeting: c.greeting ?? null, chips: c.chips ?? seller.kb.productCards.map((p) => p.canonical_name).slice(0, 4), position: c.widgetPosition, demo: true, feedback: tracing.enabled });
+    res.json({ slug: c.slug, name: c.name, color: c.color, greeting: introFor(c.name), chips: c.chips ?? seller.kb.productCards.map((p) => p.canonical_name).slice(0, 4), position: c.widgetPosition, demo: true, feedback: tracing.enabled });
   });
 
   /** Works out which catalogue page the buyer is on: a page of this site or the seller's own page. */
@@ -402,6 +402,10 @@ export function createApp(deps: AppDeps) {
 
   return app;
 }
+
+/** The chat's opening message: the same for every seller, and it asks the buyer nothing (no chips under it). */
+export const introFor = (sellerName: string) =>
+  `Welcome to ${sellerName}. I can tell you about our machines, share photos and brochures, and pass your enquiry to our team.`;
 
 /** The seller's ISQs per category, for the server to pick the chat's category (KB JSON sellers). */
 function isqSourceFor(seller: SellerContext): IsqSource {

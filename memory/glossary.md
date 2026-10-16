@@ -31,7 +31,7 @@ Shorthand and internal language for the Seller assistants project.
 | common prompts | Shared system prompt template + chat guardrails for all sellers; edit at `/admin/prompts` | `platform_prompts` table |
 | operator note | `<operator_note>`: tells the model a sentence of its last reply was replaced by a guardrail | `src/claude.ts` |
 | current page | `<current_page>`: the product or category page the buyer has open | `src/prompts.ts` |
-| lead | Verified enquiry: machine named → mobile → OTP → name → `save_lead` (saved) → ISQs → `save_lead` again (updates the same row) | `leads` table, `ChatDb.updateLead` |
+| lead | Verified enquiry: mobile (asked on the first message) → OTP → name → `save_lead` (saved) → machine if unclear → ISQs → `save_lead` again (updates the same row, summary card) | `leads` table, `ChatDb.updateLead` |
 | prompt version | A snapshot of the common prompts (system + guardrails) or a seller's persona (system + user). Sources: saved, reset, restored, built-in (shipped default recorded at startup when a deploy changed it). View = diff vs in use; Restore. Newer built-in banner on `/admin/prompts` when an edit hides a new default | `prompt_versions` table, `src/promptVersions.ts`, `src/diff.ts` |
 | trace / observation / score | Langfuse: a trace per buyer message (`chat-turn`) with observations (catalogue-search retriever, `claude round N` generations, tool calls, output-guardrails) and scores (lead_captured, lead_updated, guardrail_fired, fallback_reply, buyer_feedback). Sessions = whole chats | `src/tracing.ts` |
 | canned / fallback reply | `FALLBACK_REPLY` (API error or empty answer) and `REFUSAL_REPLY` (model declined); scored `fallback_reply` in Langfuse | `src/claude.ts` |

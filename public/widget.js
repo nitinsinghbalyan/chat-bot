@@ -400,7 +400,8 @@
   }
 
   function greeting(c) {
-    return c.greeting || "Hi! I'm the " + c.name + " assistant. Tell me what you're looking for and I'll help you find the right product.";
+    // The same welcome for every seller (sent by the server); it asks the buyer nothing.
+    return c.greeting || "Welcome to " + c.name + ". I can tell you about our machines, share photos and brochures, and pass your enquiry to our team.";
   }
   function setAskFor(kind) {
     if (state) state.askFor = kind;
@@ -456,7 +457,6 @@
       if (rowChips) addChips(rowChips, i === last && state.chips ? { live: true } : { picked: h.picked });
       if (i === lastSummary) addFeedback(h);
     });
-    if (state.history.length === 0) addChips(c.chips, { live: true, prefix: "I'm looking for a " });
     setAskFor(state.askFor);
   }
 

@@ -220,7 +220,7 @@ const SUMMARY_SHOWN =
 export function describeLeadStatus(lead: LeadState): string {
   switch (lead.stage) {
     case "none":
-      return "No contact details captured yet.";
+      return "No contact details captured yet: ask for the buyer's 10-digit mobile number now (answer any question first, in one line).";
     case "otp_sent":
       return `OTP sent to mobile ${maskMobile(lead.mobile!)}. Waiting for the buyer to type the OTP (${MAX_OTP_ATTEMPTS - lead.otpAttempts} attempts left).`;
     case "verified":
@@ -337,7 +337,7 @@ export function executeTool(
       }
       return {
         content:
-          "Enquiry saved. Thank the buyer in a few words, then ask the first qualification question you still need (with show_options). After the last answer, call save_lead again with complete set to true.",
+          "Enquiry saved. Thank the buyer in a few words, then ask which machine they need if that isn't clear yet, else the first qualification question you still need (with show_options). After the last answer, call save_lead again with complete set to true.",
         isError: false,
       };
     }
