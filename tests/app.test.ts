@@ -110,6 +110,12 @@ describe("chat API", () => {
   it("serves each seller's widget settings", async () => {
     const res = await fetch(`${base}/api/sellers/${ALPHA}`);
     expect(await res.json()).toMatchObject({ slug: ALPHA, name: "Alpha Presses", color: "#aa3300", chips: ["Press Brake"], position: "right" });
+    // The same welcome for every seller, and it asks the buyer nothing.
+    for (const slug of [ALPHA, BETA]) {
+      const { greeting, name } = await (await fetch(`${base}/api/sellers/${slug}`)).json();
+      expect(greeting).toBe(`Welcome to ${name}. I can tell you about our machines, share photos and brochures, and pass your enquiry to our team.`);
+      expect(greeting).not.toContain("?");
+    }
     expect((await fetch(`${base}/api/sellers/nobody`)).status).toBe(404);
   });
 

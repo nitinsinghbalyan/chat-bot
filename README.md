@@ -61,7 +61,7 @@ The website and the bot use **the same crawled catalogue**, so the bot never con
 
 - `slug` must match the folder name.
 - `allowedOrigins` lists the websites that may embed this seller's bot.
-- `logoUrl`, `greeting` and `chips` are optional. Without `chips`, the quick replies come from the product cards.
+- `logoUrl`, `greeting` and `chips` are optional. The chat window no longer shows them: every seller's chat opens with the same welcome ("Welcome to <seller>. I can tell you about our machines, share photos and brochures, and pass your enquiry to our team."), which asks the buyer nothing and has no chips under it.
 - `widgetPosition` (`right` by default, or `left`) picks the corner for the chat bubble.
 - `tagline` and `about` are optional text for the home and About Us pages. Without them the text is built from the business card. Keep `about` to verified business card facts: Guardrail 7 rules out earnings, enquiry volume, customer count and tenure.
 
@@ -130,7 +130,7 @@ The extra text counts against the large-catalogue prompt budget.
 ## Chat features
 
 - **ISQ chips:** the bot asks one ISQ per message and calls `show_options`. The widget shows the options as tap-to-reply buttons inside the conversation, right under that message. The buyer can tap one or type their own answer; the row then stays in the chat greyed out, with the chosen option highlighted. No buttons are shown while it is collecting the mobile number, OTP or name.
-- **Order of an enquiry:** machine → mobile number → OTP → name (lead saved) → ISQs → lead updated with the answers. Replies are kept to one or two short sentences.
+- **Order of an enquiry:** welcome (no question, no chips) → on the buyer's first message, whatever it is, a one-line answer and the mobile number ask → OTP → name (lead saved) → which machine, if still unclear → ISQs → summary card (lead updated). A buyer who won't share a number isn't blocked. Replies are kept to one or two short sentences.
 - **Media and related products:** when the buyer asks for photos, a video, a brochure or PDF, or related products, the bot calls `share_media` with product ids. The server builds the cards from the KB and the crawl only, never from model text, so links can't be made up. The widget shows a swipeable carousel of up to 12 cards:
   - product cards (photo, name, category)
   - photos, which open in a viewer
