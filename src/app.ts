@@ -7,13 +7,14 @@ import type { CatalogueEntry } from "./crawler.js";
 import type { ChatDb } from "./db.js";
 import { checkInput, RateLimiter } from "./guardrails.js";
 import type { SellerContext, SellerRegistry } from "./sellers.js";
-import type { Session, SessionStore } from "./session.js";
+import { chatSessionId, type Session, type SessionStore } from "./session.js";
 import { mountAdmin } from "./admin.js";
 import { validateSystemTemplate } from "./prompts.js";
 import { activeVersionId, COMMON_SCOPE, recordStartupVersions, sellerScope } from "./promptVersions.js";
 import { maskMobile, noTracing, OTP_MASK, type Tracing } from "./tracing.js";
 import { shareMedia } from "./shareMedia.js";
 import type { FaqStore } from "./faq.js";
+import type { IsqSource } from "./isqTracker.js";
 import type { EnquirySummary } from "./tools.js";
 import { aboutPage, categoryPage, contactPage, directoryPage, notFoundPage, productPage, productsPage, searchPage, sellerHomePage } from "./site/pages.js";
 
@@ -212,15 +213,17 @@ export function createApp(deps: AppDeps) {
     try {
       const session = sessions.get(slug, sessionId);
       // Store what the buyer typed after redaction, never the raw payment/ID details.
-      db.appendTranscript({ seller: slug, sessionId: session.id, role: "buyer", text: input.text });
+      db.appendTranscript({ seller: slug, sessionId: session.id, role: "buyer", text: input.text, chatId: session.chatId });
+      // One Langfuse session per conversation (not per browser): "<seller>:<chat id>".
+      const langfuseSession = chatSessionId(session);
       const stageBefore = session.lead.stage;
       const traceCtx = {
-        sessionId: session.id,
+        sessionId: langfuseSession,
         userId: session.lead.mobile && session.lead.stage !== "otp_sent" ? maskMobile(session.lead.mobile) : undefined,
         tags: [slug, onPlatform ? "on-platform" : "embedded"],
         // While an OTP is expected, the buyer's message is the code.
         input: stageBefore === "otp_sent" ? OTP_MASK : input.text,
-        metadata: { seller: slug, pageUrl: pageUrl ?? null, leadStageBefore: stageBefore, turn: session.turns + 1, prompt: promptInfo(seller), redacted: input.redacted },
+        metadata: { seller: slug, chatId: session.chatId, browserSession: session.id, pageUrl: pageUrl ?? null, leadStageBefore: stageBefore, turn: session.turns + 1, prompt: promptInfo(seller), redacted: input.redacted },
       };
       const { result, traceId } = await tracing.trace("chat-turn", traceCtx, async (root) => {
         const result = await runTurn(
@@ -236,6 +239,7 @@ export function createApp(deps: AppDeps) {
             saveLead: (lead) => void (lead.update ? db.updateLead(lead.seller, lead.sessionId, lead) || db.insertLead(lead) : db.insertLead(lead)),
             logGuardrail: (id, interventions) => db.logGuardrailEvents(slug, id, interventions),
             trace: tracing,
+            isqs: seller.uploaded ? isqSourceFor(seller) : null,
             faq: deps.faq?.forSeller(seller.kb, { ...seller.terms, mcats: seller.mcatUse.matched }, seller.config.name) ?? null,
           },
           { onText: (text) => send("text", { text }) },
@@ -257,6 +261,7 @@ export function createApp(deps: AppDeps) {
             chatCostUsd: roundUsd(chat.costUsd),
             chatTokens: chatTokens(chat),
             chatTurns: chat.turns,
+            ...(result.isq ? { isqCategory: result.isq.category, isqSource: result.isq.mcat ? `mcat: ${result.isq.mcat}` : result.isq.source } : {}),
             ...(chat.costKnown ? {} : { costIncomplete: "a model without a known price was used" }),
           },
           ...(result.fallbackReply ? { level: "WARNING" as const, statusMessage: "Buyer got a canned fallback reply" } : {}),
@@ -270,8 +275,8 @@ export function createApp(deps: AppDeps) {
         if (tracing.enabled) {
           // One score per chat, replaced every message, so the Langfuse session shows the running total.
           tracing.score({
-            sessionId: session.id,
-            id: chatCostScoreId(session.id),
+            sessionId: langfuseSession,
+            id: chatCostScoreId(langfuseSession),
             name: "chat_cost_usd",
             value: roundUsd(chat.costUsd),
             dataType: "NUMERIC",
@@ -283,7 +288,7 @@ export function createApp(deps: AppDeps) {
       sessions.save(session);
       const sharedNote = result.cards.length ? `\n[Shared: ${result.cards.map((c) => `${c.type} "${c.title}"`).join(", ")}]` : "";
       const summaryNote = result.summary ? `\n[Summary: ${summaryLine(result.summary)}]` : "";
-      db.appendTranscript({ seller: slug, sessionId: session.id, role: "bot", text: result.text + sharedNote + summaryNote, guardrails: result.interventions.map((i) => i.rule), traceId: traceId || undefined });
+      db.appendTranscript({ seller: slug, sessionId: session.id, role: "bot", text: result.text + sharedNote + summaryNote, guardrails: result.interventions.map((i) => i.rule), traceId: traceId || undefined, chatId: session.chatId });
       if (traceId) send("trace", { traceId });
       if (result.cards.length) send("cards", { cards: result.cards });
       if (result.summary) send("summary", { summary: result.summary });
@@ -323,12 +328,18 @@ export function createApp(deps: AppDeps) {
       return;
     }
     // Buyers may only rate replies from their own chat.
-    if (!db.hasTrace(`${seller.config.slug}:${sessionId}`, traceId)) {
+    const chatId = db.traceChat(`${seller.config.slug}:${sessionId}`, traceId);
+    if (chatId === undefined) {
       res.status(403).json({ error: "Unknown reply" });
       return;
     }
     // The same score id per reply, so changing a vote replaces it instead of adding another.
     tracing.score({ traceId, name: "buyer_feedback", value, dataType: "NUMERIC", id: `${traceId}-buyer-feedback` });
+    // And once per chat, on its Langfuse session (feedback is asked once, under the enquiry summary).
+    if (chatId) {
+      const langfuseSession = chatSessionId({ seller: seller.config.slug, chatId });
+      tracing.score({ sessionId: langfuseSession, name: "chat_feedback", value, dataType: "NUMERIC", id: `chat-feedback-${createHash("sha256").update(langfuseSession).digest("hex").slice(0, 32)}` });
+    }
     res.sendStatus(204);
   });
 
@@ -386,6 +397,23 @@ export function createApp(deps: AppDeps) {
   app.use((_req, res) => html(res, notFoundPage(), 404));
 
   return app;
+}
+
+/** The seller's ISQs per category, for the server to pick the chat's category (KB JSON sellers). */
+function isqSourceFor(seller: SellerContext): IsqSource {
+  const view = seller.uploaded!.view;
+  const name = (c: { name: string } | undefined) => c?.name ?? null;
+  return {
+    plan: (category) => {
+      const c = view.categoryNamed(category);
+      return c ? view.isqPlan(c) : null;
+    },
+    categoryOfEntry: (e) => name(view.categoryOfEntry(e)),
+    categoryForText: (text) => {
+      const hit = seller.catalogue.search(text, 1)[0];
+      return hit ? name(view.categoryOfEntry(hit)) : null;
+    },
+  };
 }
 
 /** Adds one turn's tokens and cost to the chat's running totals. */

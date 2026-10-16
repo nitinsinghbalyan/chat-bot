@@ -54,7 +54,7 @@ describe("extra files in the registry", () => {
     expect(s.systemPrompt).toBe(before);
   });
 
-  it("with a KB JSON: adds the cards, and gives MCAT ISQs only to categories without their own", async () => {
+  it("with a KB JSON: adds the cards, and takes ISQs from the category's MCAT (by id, else equal name)", async () => {
     const { parseSellerFile } = await import("../src/sellers.js");
     const reg = load();
     const kb = kbJson();
@@ -67,8 +67,8 @@ describe("extra files in the registry", () => {
     reg.setSellerFile(ALPHA, "mcat", file(mcat.value));
     reg.setSellerFile(ALPHA, "product-cards", file(cards.value));
     const s = reg.get(ALPHA)!;
-    // Press Brakes derive their own ISQs from the products, so the "Press Brake" MCAT is not used there.
-    expect(s.systemPrompt).toMatch(/### Press Brakes[\s\S]*?ISQs \(ask one per message/);
+    // MCAT first: "Press Brakes" equals the "Press Brake" MCAT's name, so its specs replace the derived ones.
+    expect(s.systemPrompt).toMatch(/### Press Brakes[\s\S]*?ISQs \(from MCAT Press Brake\)[\s\S]*?1\. Bending Length\? Options: 2500 mm \/ 3200 mm/);
     expect(s.systemPrompt).toMatch(/### Hydraulic Shearing Machines[\s\S]*?ISQs \(from MCAT Hydraulic Shearing Machine\)[\s\S]*?1\. Cutting Length\? Options: 8 ft \/ 10 ft/);
     expect(s.systemPrompt).toContain("# Product cards (uploaded)");
     expect(s.kb.productCards.map((c) => c.product_id)).toContain("shear");

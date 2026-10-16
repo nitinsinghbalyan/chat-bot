@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Catalogue } from "./catalogue.js";
 import { formatCatalogueHits } from "./catalogue.js";
 import { formatFaqHits, type FaqIndex } from "./faq.js";
+import { markAnswered, markAsked, specQuestionsText, updateCategory, type IsqSource } from "./isqTracker.js";
 import { config } from "./config.js";
 import type { CatalogueEntry } from "./crawler.js";
 import { OutputFilter, REPLACEMENTS, type Intervention } from "./guardrails.js";
@@ -32,6 +33,8 @@ export interface ChatDeps {
   trace?: TraceSink;
   /** The common FAQ rows that apply to this seller, searched per buyer message. */
   faq?: FaqIndex | null;
+  /** The seller's ISQs per category (KB JSON sellers): the server picks the chat's category each turn. */
+  isqs?: IsqSource | null;
 }
 
 export interface TurnCallbacks {
@@ -53,6 +56,8 @@ export interface TurnResult {
   costKnown: boolean;
   /** The enquiry summary card to show (from save_lead with complete set). */
   summary?: EnquirySummary;
+  /** The machine category whose ISQs this turn used, and their source, for the trace. */
+  isq?: { category: string; source: string; mcat?: string };
   /** save_lead outcomes this turn, for trace scores. */
   leadEvents?: Array<"captured" | "updated">;
   /** True when the buyer got a canned reply (API error, refusal or empty answer). */
@@ -74,9 +79,10 @@ function retrieve(
   page?: CatalogueEntry | null,
   trace: TraceSink = noTracing,
   forTrace: (t: string) => string = (t) => t,
-): CatalogueEntry[] {
+): { hits: CatalogueEntry[]; ownHits: boolean } {
   const obs = trace.start("catalogue-search", "retriever", { input: { query: forTrace(buyerText), currentPage: page?.url ?? null } });
   let hits = catalogue.search(buyerText);
+  const ownHits = hits.length > 0;
   let query = buyerText;
   // Follow-ups like "what is its price?" don't name the machine, so fall back to the last product query.
   if (hits.length === 0 && session.lastQuery) hits = catalogue.search((query = `${session.lastQuery} ${buyerText}`));
@@ -89,7 +95,21 @@ function retrieve(
     metadata: { searchedFor: forTrace(query), usedLastQuery: query !== buyerText, catalogueSize: catalogue.size },
   });
   obs.end();
-  return hits;
+  return { hits, ownHits };
+}
+
+/**
+ * The history plus the buyer's new turn. When the last turn ended right after show_options, the
+ * history ends with the tool results (a user message); the buyer's text is added to that message,
+ * after the results, so user and assistant turns keep alternating.
+ */
+export function withBuyerTurn(history: Anthropic.Beta.BetaMessageParam[], userContent: string): Anthropic.Beta.BetaMessageParam[] {
+  const text = { type: "text" as const, text: userContent };
+  const last = history.at(-1);
+  if (last?.role === "user" && Array.isArray(last.content) && last.content.every((b) => b.type === "tool_result")) {
+    return [...history.slice(0, -1), { role: "user", content: [...last.content, text] }];
+  }
+  return [...history, { role: "user", content: [text] }];
 }
 
 /** The OTP the buyer typed never goes into a trace. */
@@ -144,7 +164,12 @@ export async function runTurn(
   const leadStageBefore = session.lead.stage;
   // While an OTP is expected, the buyer's message is the code: keep it out of the trace.
   const traceText = (t: string) => (leadStageBefore === "otp_sent" ? t.split(buyerText).join(OTP_MASK) : t);
-  const hits = retrieve(session, deps.catalogue, buyerText, opts.pageEntry, trace, traceText);
+  const { hits, ownHits } = retrieve(session, deps.catalogue, buyerText, opts.pageEntry, trace, traceText);
+  // The chat's machine category, and only its spec questions for the bot.
+  const isqs = deps.isqs ?? null;
+  if (isqs) updateCategory(session.lead, isqs, { buyerText, page: opts.pageEntry, hits, ownHits });
+  const plan = () => (isqs && session.lead.category ? isqs.plan(session.lead.category) : null);
+  const turnPlan = plan();
   let faqHits: ReturnType<FaqIndex["search"]> = [];
   if (deps.faq?.size && leadStageBefore !== "otp_sent") {
     const obs = trace.start("faq-search", "retriever", { input: { query: buyerText }, metadata: { faqRows: deps.faq.size } });
@@ -160,10 +185,11 @@ export async function runTurn(
     operatorNotes: session.pendingNotes,
     sellerInstructions: deps.sellerInstructions,
     faq: formatFaqHits(faqHits),
+    specQuestions: turnPlan ? specQuestionsText(turnPlan, session.lead.askedIsqs) : undefined,
   });
 
   // Work on a copy so a failed or refused turn leaves the stored history untouched.
-  const messages: Anthropic.Beta.BetaMessageParam[] = [...session.messages, { role: "user", content: [{ type: "text", text: userContent }] }];
+  const messages = withBuyerTurn(session.messages, userContent);
 
   const filter = new OutputFilter({
     // Guardrail 1: the bot never states a price, so no amount is ever allowed through.
@@ -270,7 +296,15 @@ export async function runTurn(
         const stageBefore = session.lead.stage;
         const tool = trace.start(tu.name, "tool", { input: tu.name === "verify_otp" ? { otp: OTP_MASK } : tu.input });
         const r = executeTool(session, tu.name, tu.input, { saveLead: deps.saveLead, pageUrl: opts.pageUrl, shareMedia: deps.shareMedia });
-        if (r.ui?.chips) chips = r.ui.chips;
+        if (r.ui?.chips) {
+          chips = r.ui.chips;
+          markAsked(session.lead, plan(), r.ui.chips);
+        }
+        if (tu.name === "save_lead" && !r.isError && isqs) {
+          const input = tu.input as { product?: string; specs?: Array<{ label?: string }> };
+          if (!session.lead.category && input.product) session.lead.category = isqs.categoryForText(input.product) ?? undefined;
+          markAnswered(session.lead, plan(), (input.specs ?? []).map((x) => x.label ?? ""));
+        }
         if (r.ui?.summary) summary = r.ui.summary;
         if (r.ui?.cards) for (const c of r.ui.cards) if (cards.length < 12 && !cards.some((x) => x.url === c.url && x.type === c.type)) cards.push(c);
         if (tu.name === "save_lead" && !r.isError) leadEvents.push(stageBefore === "captured" ? "updated" : "captured");
@@ -284,6 +318,10 @@ export async function runTurn(
       });
       messages.push({ role: "user", content: results });
       roundInput = results;
+      // A question plus its reply buttons is a complete reply: end the turn now instead of making
+      // another Claude call, so the chips show straight away. The tool results stay in history and
+      // the buyer's next message joins them (see withBuyerTurn).
+      if (shown.trim() && toolUses.every((tu) => tu.name === "show_options") && results.every((r) => !r.is_error)) break;
     }
   } catch (err) {
     logApiError(err);
@@ -313,7 +351,9 @@ export async function runTurn(
   }
   const askFor = askForAfterTurn(session, shown);
   // Buttons only make sense when the buyer isn't being asked for a mobile number, OTP or name.
-  return { text: shown, askFor, chips: askFor ? [] : chips, cards, interventions: filter.interventions, usage, ...cost, leadEvents, fallbackReply: canned, summary };
+  const used = plan();
+  const isq = used ? { category: used.label, source: used.source, ...(used.mcat ? { mcat: used.mcat } : {}) } : undefined;
+  return { text: shown, askFor, chips: askFor ? [] : chips, cards, interventions: filter.interventions, usage, ...cost, leadEvents, fallbackReply: canned, summary, isq };
 }
 
 function apiErrorMessage(err: unknown): string {

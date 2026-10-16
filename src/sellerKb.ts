@@ -347,9 +347,61 @@ function hostOf(u: string | undefined): string | null {
 }
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-interface Isq {
+export interface Isq {
   question: string;
   options: string[];
+}
+
+/** The spec questions a category's buyers are asked, and where they came from. */
+export interface IsqPlan {
+  category: string;
+  /** The category, plus the other categories of its MCAT family. */
+  label: string;
+  mcatId: string | null;
+  source: "mcat" | "derived";
+  mcat?: string;
+  isqs: Isq[];
+}
+
+/** Spec rows that aren't questions a buyer can answer (on top of brand, model and price). */
+const SPEC_NOT_A_QUESTION = /usage|application|machine\s*type|^type$|^product\s*type$|^model\s*name/i;
+const normKey = (s: string) => s.toLowerCase().replace(/[-_/]+/g, " ").replace(/\s+/g, " ").trim();
+
+/**
+ * ISQs from products' specifications: each attribute whose values differ becomes a question with
+ * those values as options. Cleaned, because exports are messy: non-questions (usage, machine type)
+ * are skipped, "Semi-Automatic" and "Semi Automatic" are one option, bare numbers ("6 00") and long
+ * values are dropped, one-off values are dropped in families of 20 or more products, and an attribute must appear
+ * on at least a quarter of the products. Up to 4 questions with up to 6 options, most common first.
+ */
+export function deriveIsqs(productsSpecs: Array<Array<[string, string]>>): Isq[] {
+  const stats = new Map<string, { label: string; count: number; values: Map<string, { label: string; n: number }> }>();
+  for (const specs of productsSpecs) {
+    const seenHere = new Set<string>();
+    for (const [name, value] of specs) {
+      if (SPEC_NOT_ASKED.test(name) || SPEC_NOT_A_QUESTION.test(name)) continue;
+      const key = normKey(name);
+      const s = stats.get(key) ?? { label: name, count: 0, values: new Map<string, { label: string; n: number }>() };
+      if (!seenHere.has(key)) s.count++;
+      seenHere.add(key);
+      for (const raw of value.split(/\s*,\s*/)) {
+        const v = raw.trim();
+        if (!v || v.length > 30 || /^[\d\s.]+$/.test(v)) continue;
+        const k = normKey(v);
+        const prev = s.values.get(k);
+        s.values.set(k, { label: prev?.label ?? v, n: (prev?.n ?? 0) + 1 });
+      }
+      stats.set(key, s);
+    }
+  }
+  const n = productsSpecs.length;
+  return [...stats.values()]
+    .filter((s) => n < 4 || s.count * 4 >= n)
+    .map((s) => ({ ...s, options: [...s.values.values()].filter((v) => n < 20 || v.n > 1).sort((a, b) => b.n - a.n) }))
+    .filter((s) => s.options.length >= 2)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 4)
+    .map((s) => ({ question: s.label, options: s.options.slice(0, 6).map((v) => v.label) }));
 }
 
 export interface KbViewOptions {
@@ -424,39 +476,39 @@ export class KbView {
     return p.specifications.filter((s) => s.name && s.value && !FORBIDDEN_SPEC_KEYS.test(s.name) && !PRICE_KEY.test(s.name)).map((s) => [s.name, s.value]);
   }
 
-  /** ISQs for a category: attributes whose values differ across its products, with those values as options. */
+  /** ISQs derived from a category's products (pooled over its MCAT family): see deriveIsqs. */
   isqs(c: SellerKb["categories"][number]): Isq[] {
-    const stats = new Map<string, { label: string; count: number; values: Map<string, { label: string; n: number }> }>();
-    for (const p of this.productsIn(c)) {
-      for (const [name, value] of this.specs(p)) {
-        if (SPEC_NOT_ASKED.test(name)) continue;
-        const key = name.toLowerCase().replace(/\s+/g, " ");
-        const s = stats.get(key) ?? { label: name, count: 0, values: new Map<string, { label: string; n: number }>() };
-        s.count++;
-        for (const v of value.split(/\s*,\s*/)) {
-          if (!v || v.length > 40) continue;
-          // "Mild Steel" and "MILD STEEL" are one option; keep the first spelling seen.
-          const k = v.toLowerCase();
-          const prev = s.values.get(k);
-          s.values.set(k, { label: prev?.label ?? v, n: (prev?.n ?? 0) + 1 });
-        }
-        stats.set(key, s);
-      }
-    }
-    return [...stats.values()]
-      .filter((s) => s.values.size >= 2)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5)
-      .map((s) => ({
-        question: s.label,
-        options: [...s.values.values()]
-          .sort((a, b) => b.n - a.n)
-          .slice(0, 8)
-          .map((v) => v.label),
-      }));
+    return deriveIsqs(this.familyProducts(c).map((p) => this.specs(p)));
   }
 
-  // ---- media ----
+  private mcatIdCache = new Map<SellerKb["categories"][number], string | null>();
+
+  /** The MCAT id most of a category's products share (export taxonomy `glmcat_ids`), or null. */
+  mcatIdOf(c: SellerKb["categories"][number]): string | null {
+    if (this.mcatIdCache.has(c)) return this.mcatIdCache.get(c)!;
+    const products = this.productsIn(c);
+    const counts = new Map<string, number>();
+    for (const p of products) for (const id of new Set(idsIn(p.taxonomy?.glmcat_ids))) counts.set(id, (counts.get(id) ?? 0) + 1);
+    let best: string | null = null;
+    let n = 0;
+    for (const [id, k] of counts) if (k > n) [best, n] = [id, k];
+    const id = best && n * 2 >= products.length ? best : null;
+    this.mcatIdCache.set(c, id);
+    return id;
+  }
+
+  /** Categories that are the same machine: same MCAT id (a category without one is its own family). */
+  family(c: SellerKb["categories"][number]): SellerKb["categories"] {
+    const id = this.mcatIdOf(c);
+    return id ? this.kb.categories.filter((x) => this.mcatIdOf(x) === id) : [c];
+  }
+
+  familyProducts(c: SellerKb["categories"][number]): KbProduct[] {
+    const seen = new Set<KbProduct>();
+    return this.family(c).flatMap((x) => this.productsIn(x).filter((p) => !seen.has(p) && seen.add(p)));
+  }
+
+    // ---- media ----
 
   private tagged(p: KbProduct, kind: "IMAGE" | "VIDEO") {
     return this.kb.photo_gallery.filter((g) => g.sub_type.toUpperCase() === kind && g.tagged_products.some((t) => t.DISPLAY_ID === p.product_id));
@@ -688,32 +740,49 @@ export class KbView {
     return lines.join("\n");
   }
 
+  private planCache = new Map<SellerKb["categories"][number], IsqPlan>();
+
   /**
-   * The MCAT that gives a category its ISQs when its products give none: matched by the MCAT ids
-   * in the products' taxonomy, else by name (the category's or its products' taxonomy category).
+   * The spec questions for a category, the same for every category of one MCAT family:
+   * 1. the uploaded MCAT file's specs for the family's MCAT id;
+   * 2. else an MCAT whose name equals the category's (normalised: "Iron Worker" = "Ironworker");
+   * 3. else ISQs derived from the family's products, cleaned (see deriveIsqs).
    */
-  mcatFor(c: SellerKb["categories"][number]): McatSpec | undefined {
-    const mcats = this.options.mcats;
-    if (!mcats?.length) return undefined;
-    const products = this.productsIn(c);
-    const ids = products.flatMap((p) => [...idsIn(p.taxonomy?.glmcat_ids), ...idsIn(p.taxonomy?.glcat_ids)]);
-    const names = [c.name, ...new Set(products.map((p) => p.taxonomy?.category_name ?? "").filter(Boolean))];
-    return findMcat(mcats, names, ids);
+  isqPlan(c: SellerKb["categories"][number]): IsqPlan {
+    const hit = this.planCache.get(c);
+    if (hit) return hit;
+    const fam = this.family(c);
+    const id = this.mcatIdOf(c);
+    const mcats = (this.options.mcats ?? []).filter((m) => m.specs.length);
+    const label = fam.length > 1 ? `${c.name} (with ${fam.filter((x) => x !== c).map((x) => x.name).join(", ")})` : c.name;
+    const m = (id && mcats.find((x) => x.id === id)) || findMcat(mcats, fam.map((x) => x.name));
+    const plan: IsqPlan = m
+      ? { category: c.name, label, mcatId: id, source: "mcat", mcat: m.name, isqs: m.specs.slice(0, 4).map((x) => ({ question: x.name, options: x.options.slice(0, 6) })) }
+      : { category: c.name, label, mcatId: id, source: "derived", isqs: this.isqs(c) };
+    this.planCache.set(c, plan);
+    return plan;
   }
 
-  /** The category's ISQs: derived from its products, else (filling the gap) from the matching MCAT. */
-  categoryIsqs(c: SellerKb["categories"][number]): { isqs: Isq[]; mcat?: string } {
-    const own = this.isqs(c);
-    if (own.length) return { isqs: own };
-    const m = this.mcatFor(c);
-    return m ? { isqs: m.specs.map((s) => ({ question: s.name, options: s.options })), mcat: m.name } : { isqs: [] };
+  /** The category a catalogue entry (product or category page) belongs to. */
+  categoryOfEntry(e: { kind: string; slug: string; category?: string }): SellerKb["categories"][number] | undefined {
+    if (e.kind === "product") {
+      const p = this.product(e.slug);
+      if (p) return this.categoryOf(p);
+    }
+    const name = (e.category || "").toLowerCase();
+    return name ? this.kb.categories.find((c) => c.name.toLowerCase() === name) : undefined;
   }
 
-  /** Categories that got their ISQs from an MCAT, for the admin summary. */
+  categoryNamed(name: string): SellerKb["categories"][number] | undefined {
+    const n = name.toLowerCase();
+    return this.kb.categories.find((c) => c.name.toLowerCase() === n);
+  }
+
+  /** Categories whose ISQs come from an MCAT, for the admin summary. */
   mcatFilledCategories(): Array<{ category: string; mcat: string }> {
     return this.kb.categories.flatMap((c) => {
-      const r = this.categoryIsqs(c);
-      return r.mcat ? [{ category: c.name, mcat: r.mcat }] : [];
+      const r = this.isqPlan(c);
+      return r.source === "mcat" ? [{ category: c.name, mcat: r.mcat! }] : [];
     });
   }
 
@@ -724,7 +793,7 @@ export class KbView {
 
   private categoryGuide(c: SellerKb["categories"][number], maxProducts: number): string {
     const products = this.productsIn(c);
-    const { isqs, mcat } = this.categoryIsqs(c);
+    const { isqs, mcat } = this.isqPlan(c);
     const lines = [`### ${c.name}`];
     const desc = cleanText(c.description);
     if (desc) lines.push(maxProducts === Infinity ? desc : desc.slice(0, 300));

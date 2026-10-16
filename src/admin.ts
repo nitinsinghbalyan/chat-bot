@@ -16,7 +16,7 @@ import { FAQ_LIMIT_BYTES, parseFaq, type FaqStore } from "./faq.js";
 import { isSellerFileKind, SELLER_FILES, type SellerFileKind } from "./sellerFiles.js";
 import { parseSellerFile, sellerConfigSchema, SLUG_RE, type SellerContext, type SellerRegistry } from "./sellers.js";
 import { esc } from "./site/html.js";
-import type { ConnectionTest, TracingStatus } from "./tracing.js";
+import { langfuseSessionUrl, type ConnectionTest, type TracingStatus } from "./tracing.js";
 
 /** Maximum characters for each brand persona prompt. */
 export const PERSONA_LIMITS = { system: 4000, user: 2000 } as const;
@@ -1021,8 +1021,10 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
 
   app.get("/admin/leads.csv", requireAdmin, (req, res) => {
     const cols = ["createdAt", "seller", "name", "mobile", "product", "requirements", "quantity", "city", "pageUrl", "sessionId"] as const;
-    const lines = [cols.join(",")];
-    for (const lead of db.listLeads(10_000, sellerFilter(req))) lines.push(cols.map((c) => csvCell(lead[c] ?? "")).join(","));
+    const lines = [[...cols, "langfuseSession"].join(",")];
+    for (const lead of db.listLeads(10_000, sellerFilter(req))) {
+      lines.push([...cols.map((c) => csvCell(lead[c] ?? "")), csvCell(lead.chatId ? `${lead.seller}:${lead.chatId}` : "")].join(","));
+    }
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="leads${sellerFilter(req) ? `-${sellerFilter(req)}` : ""}.csv"`);
     res.send("﻿" + lines.join("\r\n") + "\r\n");
@@ -1035,7 +1037,7 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
     const rows = leads
       .map(
         (l) =>
-          `<tr><td>${esc(fmtIST(l.createdAt))}</td><td>${esc(name(l.seller))}</td><td>${esc(l.name)}</td><td>${esc(l.mobile)}</td><td>${esc(l.product)}</td><td>${esc(l.requirements)}</td><td>${esc(l.quantity)}</td><td>${esc(l.city)}</td><td><a class="btn small" href="/admin/transcript/${encodeURIComponent(l.sessionId)}">Chat</a></td></tr>`,
+          `<tr><td>${esc(fmtIST(l.createdAt))}</td><td>${esc(name(l.seller))}</td><td>${esc(l.name)}</td><td>${esc(l.mobile)}</td><td>${esc(l.product)}</td><td>${esc(l.requirements)}</td><td>${esc(l.quantity)}</td><td>${esc(l.city)}</td><td><a class="btn small" href="/admin/transcript/${encodeURIComponent(l.sessionId)}${l.chatId ? `?chat=${encodeURIComponent(l.chatId)}` : ""}">Chat</a>${sessionLink(l.chatId ? `${l.seller}:${l.chatId}` : null)}</td></tr>`,
       )
       .join("");
     const options = [`<option value="">All sellers</option>`, ...sellers.list().map((s) => `<option value="${esc(s.config.slug)}"${s.config.slug === filter ? " selected" : ""}>${esc(s.config.name)}</option>`)].join("");
@@ -1054,18 +1056,37 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
     );
   });
 
+  /** A link to the chat's session in Langfuse, when tracing is on and the project is known. */
+  function sessionLink(langfuseSession: string | null): string {
+    const url = langfuseSession && d.tracing ? langfuseSessionUrl(d.tracing, langfuseSession) : null;
+    return url ? ` <a class="btn small" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(langfuseSession!)}">Langfuse ↗</a>` : "";
+  }
+
   app.get("/admin/transcript/:sessionId", requireAdmin, (req, res) => {
     const id = String(req.params.sessionId);
     const seller = sellers.get(id.split(":")[0]);
-    const lines = db
-      .transcript(id)
+    const onlyChat = typeof req.query.chat === "string" ? req.query.chat : null;
+    const all = db.transcript(id);
+    const rows = onlyChat ? all.filter((t) => t.chatId === onlyChat) : all;
+    // A browser's conversations, in order; each is one Langfuse session "<seller>:<chat id>".
+    let lastChat: string | null | undefined;
+    const lines = rows
       .map((t) => {
+        let head = "";
+        if (t.chatId !== lastChat) {
+          lastChat = t.chatId;
+          const lf = t.chatId ? `${id.split(":")[0]}:${t.chatId}` : null;
+          head = `<div class="chat-head muted small">${lf ? `Conversation · Langfuse session <code>${esc(lf)}</code>${sessionLink(lf)}` : "Conversation (from before chat ids)"}</div>`;
+        }
+        return head + render(t);
+      })
+      .join("");
+    function render(t: (typeof all)[number]) {
         const m = t.text.match(/\n\[Shared: (.*)\]$/s);
         const text = m ? t.text.slice(0, m.index) : t.text;
         const shared = m ? [...m[1].matchAll(/(\w+) "([^"]*)"/g)].map((x) => `<span>${esc(x[1])}: ${esc(x[2])}</span>`).join("") : "";
         return `<div class="msg ${t.role}"><div class="meta">${t.role === "buyer" ? "Buyer" : "Assistant"} · ${esc(fmtIST(t.at))}${t.guardrails ? ` · corrected: ${esc(t.guardrails)}` : ""}</div>${esc(text)}${shared ? `<div class="shared">${shared}</div>` : ""}</div>`;
-      })
-      .join("");
+    }
     res.send(
       shell(
         "Chat",

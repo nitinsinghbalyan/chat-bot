@@ -6,12 +6,13 @@
  * nothing is sent. Buyer mobile numbers are masked before anything leaves the server, OTPs are
  * never recorded, and the system prompt is referenced by version instead of being copied.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { LangfuseClient } from "@langfuse/client";
 import { diag, DiagLogLevel } from "@opentelemetry/api";
 import { ExportResultCode, type ExportResult } from "@opentelemetry/core";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { CompressionAlgorithm } from "@opentelemetry/otlp-exporter-base";
-import type { ReadableSpan, SpanExporter } from "@opentelemetry/sdk-trace-base";
+import type { ReadableSpan, Span, SpanExporter, SpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { propagateAttributes, startActiveObservation, startObservation } from "@langfuse/tracing";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
@@ -68,6 +69,9 @@ export interface TracingStatus {
   state: "off" | "ok" | "auth_failed" | "unreachable";
   /** The Langfuse host traces go to, e.g. cloud.langfuse.com. */
   host: string | null;
+  /** Full base URL and project id, for links to sessions in the Langfuse UI (known once the keys check passed). */
+  baseUrl?: string;
+  projectId?: string;
   message: string;
   /** The Langfuse server version, from /api/public/health. */
   version?: string;
@@ -202,18 +206,59 @@ export const LANGFUSE_US = "https://us.cloud.langfuse.com";
 type LangfuseEnv = Pick<typeof config, "LANGFUSE_PUBLIC_KEY" | "LANGFUSE_SECRET_KEY" | "LANGFUSE_BASE_URL" | "LANGFUSE_ENVIRONMENT">;
 
 /** Asks Langfuse whether it accepts the keys (GET /api/public/projects). */
+let probedProjectId: string | undefined;
 async function probe(baseUrl: string, publicKey: string, secretKey: string, fetchImpl: typeof fetch): Promise<"ok" | "auth_failed" | "unreachable"> {
   try {
     const r = await fetchImpl(`${baseUrl}/api/public/projects`, {
       headers: { Authorization: `Basic ${Buffer.from(`${publicKey}:${secretKey}`).toString("base64")}` },
       signal: AbortSignal.timeout(8000),
     });
-    if (r.ok) return "ok";
+    if (r.ok) {
+      const body = (await r.json().catch(() => null)) as { data?: Array<{ id?: unknown }> } | null;
+      probedProjectId = typeof body?.data?.[0]?.id === "string" ? body.data[0].id : undefined;
+      return "ok";
+    }
     return r.status === 401 || r.status === 403 ? "auth_failed" : "unreachable";
   } catch {
     return "unreachable";
   }
 }
+
+/** A link to a session (one chat) in the Langfuse UI, when the project is known. */
+export function langfuseSessionUrl(status: TracingStatus, sessionId: string): string | null {
+  return status.baseUrl && status.projectId ? `${status.baseUrl}/project/${status.projectId}/sessions/${encodeURIComponent(sessionId)}` : null;
+}
+
+/** The chat a trace belongs to, set by `trace()` for every span started inside it. */
+const traceScope = new AsyncLocalStorage<{ sessionId: string; userId?: string }>();
+
+/**
+ * Stamps the session and user on every span under both attribute names: the current one
+ * ("session.id") and the one older Langfuse servers read ("langfuse.session.id"). Without the
+ * second, a self-hosted Langfuse that predates the new name shows traces without a session.
+ */
+export class SessionStampProcessor implements SpanProcessor {
+  onStart(span: Span): void {
+    const scope = traceScope.getStore();
+    if (!scope) return;
+    span.setAttribute("session.id", scope.sessionId);
+    span.setAttribute("langfuse.session.id", scope.sessionId);
+    if (scope.userId) {
+      span.setAttribute("user.id", scope.userId);
+      span.setAttribute("langfuse.user.id", scope.userId);
+    }
+  }
+  onEnd(): void {}
+  forceFlush() {
+    return Promise.resolve();
+  }
+  shutdown() {
+    return Promise.resolve();
+  }
+}
+
+/** Runs `fn` with the chat's session (and user) attached to every span it starts. */
+export const withTraceScope = <T>(scope: { sessionId: string; userId?: string }, fn: () => T): T => traceScope.run(scope, fn);
 
 /**
  * Works out where traces should go and whether Langfuse accepts the keys. With no
@@ -459,7 +504,7 @@ export async function initTracing(env: LangfuseEnv = config, fetchImpl: typeof f
   const release = process.env.RENDER_GIT_COMMIT?.slice(0, 12);
   const version = await langfuseVersion(baseUrl, fetchImpl);
   const tooOld = versionWarning(version);
-  const status: TracingStatus = { state, host: host(baseUrl), message: tooOld ?? message, version, exports: 0, spansExported: 0, exportErrors: 0 };
+  const status: TracingStatus = { state, host: host(baseUrl), baseUrl, projectId: state === "ok" ? probedProjectId : undefined, message: tooOld ?? message, version, exports: 0, spansExported: 0, exportErrors: 0 };
   // Uploads are counted by RecordingExporter; anything else OpenTelemetry reports goes to the log.
   diag.setLogger(
     { error: (m, ...a) => console.error("[tracing]", [m, ...a].map(describeError).join(" ")), warn: (m, ...a) => console.warn("[tracing]", m, ...a), info() {}, debug() {}, verbose() {} },
@@ -476,7 +521,7 @@ export async function initTracing(env: LangfuseEnv = config, fetchImpl: typeof f
     // Last line of defence: nothing leaves the server with a buyer's mobile number in it.
     mask: ({ data }) => maskPII(data),
   });
-  const provider = new NodeTracerProvider({ spanProcessors: [processor] });
+  const provider = new NodeTracerProvider({ spanProcessors: [new SessionStampProcessor(), processor] });
   provider.register();
   const client = new LangfuseClient({ publicKey: env.LANGFUSE_PUBLIC_KEY, secretKey: env.LANGFUSE_SECRET_KEY, baseUrl });
 
@@ -489,12 +534,14 @@ export async function initTracing(env: LangfuseEnv = config, fetchImpl: typeof f
   if (state === "auth_failed" || tooOld) console.error(line);
   else console.log(line);
   const trace: Tracing["trace"] = (name, ctx, fn) =>
+    withTraceScope({ sessionId: ctx.sessionId, userId: ctx.userId }, () =>
       propagateAttributes({ traceName: name, sessionId: ctx.sessionId, userId: ctx.userId, tags: ctx.tags }, () =>
         startActiveObservation(name, async (root) => {
           root.update({ input: ctx.input, metadata: ctx.metadata });
           return fn({ ...wrap(root), traceId: root.traceId });
         }),
-      );
+      ),
+    );
   const auth = { publicKey: env.LANGFUSE_PUBLIC_KEY, secretKey: env.LANGFUSE_SECRET_KEY };
 
   return {

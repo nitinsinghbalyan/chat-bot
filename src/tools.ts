@@ -173,6 +173,8 @@ export interface Lead {
   quantity: string;
   city: string;
   pageUrl?: string;
+  /** The conversation the lead came from; the chat's Langfuse session is "<seller>:<chatId>". */
+  chatId?: string;
   /** True when save_lead runs again after the ISQs: update this session's lead instead of adding one. */
   update?: boolean;
 }
@@ -311,6 +313,7 @@ export function executeTool(
         quantity: input.quantity.trim(),
         city: input.city.trim(),
         pageUrl: opts.pageUrl,
+        chatId: session.chatId,
       };
       if (lead.stage === "captured" && lead.mobile && lead.name) {
         opts.saveLead({ createdAt: new Date().toISOString(), seller: session.seller, sessionId: session.id, mobile: lead.mobile, name: lead.name, ...fields, update: true });
