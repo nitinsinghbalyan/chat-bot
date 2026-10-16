@@ -37,7 +37,7 @@ function fakeTracing() {
   let n = 0;
   const tracing: Tracing = {
     enabled: true,
-    status: { state: "ok", host: "langfuse.example.com", message: "Langfuse accepted the keys.", version: "3.120.0", exports: 2, spansExported: 14, exportErrors: 0, lastExportAt: "2026-10-15T05:00:00Z", lastExportOk: true },
+    status: { state: "ok", host: "langfuse.example.com", baseUrl: "https://langfuse.example.com", projectId: "p1", message: "Langfuse accepted the keys.", version: "3.120.0", exports: 2, spansExported: 14, exportErrors: 0, lastExportAt: "2026-10-15T05:00:00Z", lastExportOk: true },
     testConnection: async () => {
       const r = {
         at: "2026-10-15T05:01:00Z",
@@ -107,7 +107,10 @@ describe("tracing on", () => {
     expect(traceId).toBe(t.traces[0].root.traceId);
     const tr = t.traces[0];
     expect(tr.name).toBe("chat-turn");
-    expect(tr.ctx).toMatchObject({ sessionId: `${ALPHA}:on-session-1`, tags: [ALPHA, "on-platform"], metadata: { seller: ALPHA, leadStageBefore: "none", turn: 1 } });
+    // One Langfuse session per conversation: "<seller>:<chat id>", not the browser id.
+    expect(tr.ctx.sessionId).toMatch(new RegExp(`^${ALPHA}:[0-9a-f-]{36}$`));
+    expect(tr.ctx).toMatchObject({ tags: [ALPHA, "on-platform"], metadata: { seller: ALPHA, browserSession: `${ALPHA}:on-session-1`, leadStageBefore: "none", turn: 1 } });
+    expect(tr.ctx.metadata.chatId).toBe(tr.ctx.sessionId.slice(ALPHA.length + 1));
     expect(tr.ctx.metadata.prompt).toMatchObject({ commonPrompt: "v1", knowledgeBase: "KB folder" });
     expect(tr.root.attrs.output).toMatchObject({ reply: "OK." });
     expect(t.observations).toContain("catalogue-search");
@@ -117,7 +120,10 @@ describe("tracing on", () => {
   it("records buyer feedback only for replies in the buyer's own chat", async () => {
     const own = t.traces[0].root.traceId;
     expect((await feedback(s.base, { seller: ALPHA, sessionId: "on-session-1", traceId: own, value: -1 })).status).toBe(204);
-    expect(t.scores.at(-1)).toMatchObject({ traceId: own, name: "buyer_feedback", value: -1, id: `${own}-buyer-feedback` });
+    expect(t.scores.at(-2)).toMatchObject({ traceId: own, name: "buyer_feedback", value: -1, id: `${own}-buyer-feedback` });
+    // Also once per chat, on the chat's Langfuse session.
+    expect(t.scores.at(-1)).toMatchObject({ sessionId: t.traces[0].ctx.sessionId, name: "chat_feedback", value: -1 });
+    expect(t.scores.at(-1)!.id).toMatch(/^chat-feedback-[0-9a-f]{32}$/);
     // Another chat can't rate it; bad values are refused.
     expect((await feedback(s.base, { seller: ALPHA, sessionId: "other-session-9", traceId: own, value: 1 })).status).toBe(403);
     expect((await feedback(s.base, { seller: ALPHA, sessionId: "on-session-1", traceId: own, value: 5 })).status).toBe(400);
@@ -131,7 +137,9 @@ describe("tracing on", () => {
     const costs = t.scores.slice(before).filter((x) => x.name === "chat_cost_usd");
     expect(costs).toHaveLength(2);
     // Scored on the session (not a trace), with the same id each time so the value is replaced.
-    expect(costs[0]).toMatchObject({ sessionId: `${ALPHA}:cost-session-1`, dataType: "NUMERIC" });
+    expect(costs[0]).toMatchObject({ sessionId: t.traces.at(-1)!.ctx.sessionId, dataType: "NUMERIC" });
+    // Both messages of the chat share one Langfuse session.
+    expect(t.traces.at(-2)!.ctx.sessionId).toBe(t.traces.at(-1)!.ctx.sessionId);
     expect(costs[0].traceId).toBeUndefined();
     expect(costs[1].id).toBe(costs[0].id);
     expect(costs[0].id).toMatch(/^chat-cost-[0-9a-f]{32}$/);
@@ -145,7 +153,9 @@ describe("tracing on", () => {
     expect(last.chatCostUsd).toBeCloseTo(0.000024, 9);
     // Another chat starts from zero.
     await chat(s.base, "cost-session-2", "hello");
-    expect(t.scores.filter((x) => x.name === "chat_cost_usd").at(-1)).toMatchObject({ sessionId: `${ALPHA}:cost-session-2`, comment: "1 buyer message, 2 tokens" });
+    const other = t.scores.filter((x) => x.name === "chat_cost_usd").at(-1)!;
+    expect(other).toMatchObject({ comment: "1 buyer message, 2 tokens" });
+    expect(other.sessionId).not.toBe(costs[0].sessionId);
   });
 
   it("shows uploads on /health and runs the Langfuse test from admin", async () => {
@@ -163,5 +173,13 @@ describe("tracing on", () => {
     expect(page).toContain("hasn&#39;t stored it");
     expect(page).toContain("Not returned by the API after 20s (last answer HTTP 404)");
     expect(page).toContain('href="https://langfuse.example.com/project/p1/traces/abc"');
+  });
+
+  it("links each conversation in the admin transcript to its Langfuse session", async () => {
+    const auth = { Authorization: `Basic ${Buffer.from(`a:${ADMIN_PW}`).toString("base64")}` };
+    const lf = t.traces[0].ctx.sessionId as string;
+    const page = await (await fetch(`${s.base}/admin/transcript/${encodeURIComponent(`${ALPHA}:on-session-1`)}`, { headers: auth })).text();
+    expect(page).toContain(`Langfuse session <code>${lf}</code>`);
+    expect(page).toContain(`href="https://langfuse.example.com/project/p1/sessions/${encodeURIComponent(lf)}"`);
   });
 });

@@ -217,3 +217,23 @@ describe("runConnectionTest", () => {
     expect((await noTracing.testConnection()).verdict).toMatch(/Tracing is off/);
   });
 });
+
+describe("session stamping", () => {
+  it("puts the chat's session and user on every span under both attribute names", async () => {
+    const { SessionStampProcessor, withTraceScope } = await import("../src/tracing.js");
+    const p = new SessionStampProcessor();
+    const attrs: Record<string, unknown> = {};
+    const span = { setAttribute: (k: string, v: unknown) => void (attrs[k] = v) } as any;
+    p.onStart(span);
+    expect(attrs).toEqual({});
+    withTraceScope({ sessionId: "alpha:chat-1", userId: "xxxxxx3210" }, () => p.onStart(span));
+    expect(attrs).toEqual({ "session.id": "alpha:chat-1", "langfuse.session.id": "alpha:chat-1", "user.id": "xxxxxx3210", "langfuse.user.id": "xxxxxx3210" });
+    // Carried across awaits inside the scope.
+    const later: Record<string, unknown> = {};
+    await withTraceScope({ sessionId: "alpha:chat-2" }, async () => {
+      await new Promise((r) => setTimeout(r, 1));
+      p.onStart({ setAttribute: (k: string, v: unknown) => void (later[k] = v) } as any);
+    });
+    expect(later).toEqual({ "session.id": "alpha:chat-2", "langfuse.session.id": "alpha:chat-2" });
+  });
+});

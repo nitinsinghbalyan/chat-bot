@@ -198,7 +198,15 @@ describe("chips and media", () => {
     const r = await runTurn(session, "I need a press brake", d);
     expect(r.chips).toEqual(["CNC", "NC"]);
     expect(r.text).toBe("Which control type do you need?");
-    expect(requests[1].messages.at(-1).content[0]).toMatchObject({ type: "tool_result", is_error: false });
+    // Question + buttons is a whole reply: one Claude call, so the chips show at once.
+    expect(requests).toHaveLength(1);
+    expect(session.messages.at(-1)).toMatchObject({ role: "user", content: [{ type: "tool_result", tool_use_id: "c1", is_error: false }] });
+    // The buyer's answer joins that tool-result message, so turns still alternate.
+    await runTurn(session, "CNC", d);
+    const sent = requests[1].messages;
+    expect(sent.map((m: any) => m.role)).toEqual(["user", "assistant", "user"]);
+    expect(sent.at(-1).content.map((b: any) => b.type)).toEqual(["tool_result", "text"]);
+    expect(sent.at(-1).content[1].text).toContain("CNC");
   });
 
   it("never shows buttons while collecting the OTP", async () => {

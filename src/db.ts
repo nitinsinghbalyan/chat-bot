@@ -20,6 +20,8 @@ export interface StoredSession {
   lastSeen: number;
   /** Running token and cost totals for the chat (see ChatUsage in session.ts). */
   usage?: unknown;
+  /** Unique id of this conversation (a browser's chats after an expiry or New chat get new ones). */
+  chatId?: string;
 }
 
 export interface StoredLead extends Lead {
@@ -38,6 +40,8 @@ export interface TranscriptLine {
   role: "buyer" | "bot";
   text: string;
   guardrails?: string[];
+  /** The conversation this line belongs to (see Session.chatId). */
+  chatId?: string;
   /** Langfuse trace id of the bot reply (when tracing is on), so buyer feedback can be checked. */
   traceId?: string;
 }
@@ -134,6 +138,12 @@ export class ChatDb {
     if (!(this.db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>).some((c) => c.name === "usage")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN usage TEXT");
     }
+    // One id per conversation, so each chat is its own Langfuse session and transcript (older rows have none).
+    for (const table of ["sessions", "transcript", "leads"]) {
+      if (!(this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).some((c) => c.name === "chat_id")) {
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN chat_id TEXT`);
+      }
+    }
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS leads_seller ON leads(seller, id);
       CREATE INDEX IF NOT EXISTS guardrail_events_seller ON guardrail_events(seller, id);
@@ -173,17 +183,18 @@ export class ChatDb {
       createdAt: row.created_at,
       lastSeen: row.last_seen,
       usage: row.usage ? JSON.parse(row.usage) : undefined,
+      chatId: row.chat_id ?? undefined,
     };
   }
 
   saveSession(s: StoredSession) {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, seller, messages, lead, seen_catalogue, pending_notes, last_query, turns, created_at, last_seen, usage)
-         VALUES (@id, @seller, @messages, @lead, @seenCatalogue, @pendingNotes, @lastQuery, @turns, @createdAt, @lastSeen, @usage)
+        `INSERT INTO sessions (id, seller, messages, lead, seen_catalogue, pending_notes, last_query, turns, created_at, last_seen, usage, chat_id)
+         VALUES (@id, @seller, @messages, @lead, @seenCatalogue, @pendingNotes, @lastQuery, @turns, @createdAt, @lastSeen, @usage, @chatId)
          ON CONFLICT(id) DO UPDATE SET messages = excluded.messages, lead = excluded.lead, seen_catalogue = excluded.seen_catalogue,
            pending_notes = excluded.pending_notes, last_query = excluded.last_query, turns = excluded.turns, last_seen = excluded.last_seen,
-           usage = excluded.usage`,
+           usage = excluded.usage, chat_id = excluded.chat_id, created_at = excluded.created_at`,
       )
       .run({
         ...s,
@@ -192,6 +203,7 @@ export class ChatDb {
         seenCatalogue: JSON.stringify(s.seenCatalogue),
         pendingNotes: JSON.stringify(s.pendingNotes),
         usage: s.usage === undefined ? null : JSON.stringify(s.usage),
+        chatId: s.chatId ?? null,
       });
   }
 
@@ -202,25 +214,31 @@ export class ChatDb {
 
   appendTranscript(line: TranscriptLine) {
     this.db
-      .prepare("INSERT INTO transcript (seller, session_id, role, text, guardrails, at, trace_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(line.seller, line.sessionId, line.role, line.text, line.guardrails?.length ? line.guardrails.join(",") : null, new Date().toISOString(), line.traceId ?? null);
+      .prepare("INSERT INTO transcript (seller, session_id, role, text, guardrails, at, trace_id, chat_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(line.seller, line.sessionId, line.role, line.text, line.guardrails?.length ? line.guardrails.join(",") : null, new Date().toISOString(), line.traceId ?? null, line.chatId ?? null);
   }
 
   /** Whether this session has a bot reply with this trace id (buyers may only rate their own replies). */
   hasTrace(sessionId: string, traceId: string): boolean {
-    return !!this.db.prepare("SELECT 1 FROM transcript WHERE session_id = ? AND trace_id = ? AND role = 'bot' LIMIT 1").get(sessionId, traceId);
+    return this.traceChat(sessionId, traceId) !== undefined;
   }
 
-  transcript(sessionId: string): Array<{ role: string; text: string; guardrails: string | null; at: string }> {
-    return this.db.prepare("SELECT role, text, guardrails, at FROM transcript WHERE session_id = ? ORDER BY id").all(sessionId) as any[];
+  /** The chat a bot reply's trace belongs to: its chat id, null for rows from before chat ids, undefined if not this session's. */
+  traceChat(sessionId: string, traceId: string): string | null | undefined {
+    const row = this.db.prepare("SELECT chat_id FROM transcript WHERE session_id = ? AND trace_id = ? AND role = 'bot' LIMIT 1").get(sessionId, traceId) as { chat_id: string | null } | undefined;
+    return row ? row.chat_id : undefined;
+  }
+
+  transcript(sessionId: string): Array<{ role: string; text: string; guardrails: string | null; at: string; chatId: string | null }> {
+    return this.db.prepare("SELECT role, text, guardrails, at, chat_id AS chatId FROM transcript WHERE session_id = ? ORDER BY id").all(sessionId) as any[];
   }
 
   insertLead(lead: Lead): number {
     return Number(
       this.db
         .prepare(
-          `INSERT INTO leads (created_at, seller, session_id, mobile, name, product, requirements, quantity, city, page_url)
-           VALUES (@createdAt, @seller, @sessionId, @mobile, @name, @product, @requirements, @quantity, @city, @pageUrl)`,
+          `INSERT INTO leads (created_at, seller, session_id, mobile, name, product, requirements, quantity, city, page_url, chat_id)
+           VALUES (@createdAt, @seller, @sessionId, @mobile, @name, @product, @requirements, @quantity, @city, @pageUrl, @chatId)`,
         )
         .run({
           createdAt: lead.createdAt,
@@ -233,6 +251,7 @@ export class ChatDb {
           quantity: lead.quantity,
           city: lead.city,
           pageUrl: lead.pageUrl ?? null,
+          chatId: lead.chatId ?? null,
         }).lastInsertRowid,
     );
   }
@@ -265,6 +284,7 @@ export class ChatDb {
       quantity: r.quantity,
       city: r.city,
       pageUrl: r.page_url ?? undefined,
+      chatId: r.chat_id ?? undefined,
     }));
   }
 

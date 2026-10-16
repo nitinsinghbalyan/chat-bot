@@ -99,7 +99,14 @@ What the bot is given from it:
 
 **Large catalogues:** a JSON whose bot text fits in about 300,000 characters (Jayshree's 143 products is about 170,000) goes into the bot's system prompt in full. A bigger one, with thousands of products or long descriptions, is still accepted (up to 20,000 products and a 40 MB file). The system prompt then keeps the business card, every category with its ISQs and the product names and ids, or, if even that is too long, the first few products per category. Each buyer message then pulls in the full details of the best-matching products (specifications, description and the id for sharing media) through the catalogue search. The upload result says when this applies.
 
-**ISQs:** the export has no question list, so they are derived per category. Each specification whose values differ across the category's products (for example Control Type: CNC / NC) becomes a question, and its values become the options. Brand, model and country of origin are skipped, and each category gets up to 5 ISQs with up to 8 options each.
+**ISQs (spec questions):** worked out per **MCAT family**. Categories whose products mostly share an MCAT id (`taxonomy.glmcat_ids`) are one machine, so "CNC PRESS BRAKE" and "Cnc Press Brake Machine" ask the same questions. A family's questions come from, in order:
+1. the uploaded MCAT file's specs for its MCAT id;
+2. an MCAT whose name equals the category's ("Iron Worker Machine" = "Ironworker Machine"; containing a name is not enough);
+3. otherwise, the specs of the family's products: each attribute whose values differ becomes a question.
+
+Derived questions are cleaned. Brand, model, country of origin, usage/application and machine type are skipped. Spellings are merged ("Semi-Automatic" = "Semi Automatic"). Bare numbers and long values are dropped, an attribute must appear on a quarter of the products, and each family gets up to 4 questions with up to 6 options.
+
+**The server picks the machine each turn.** It goes by the product or category page the buyer is on, else the best catalogue match for what they typed, else the product saved with the lead. It gives the bot only that category's questions, inside `<spec_questions>`, marking what was already asked and which comes next. An answer ("6 mm", a tapped option) never switches the machine; naming another machine does.
 
 ## Extra seller files and the common FAQ
 
@@ -108,7 +115,7 @@ Each seller's **Manage** panel on `/admin` has an **Extra files** block with thr
 | File | Format | How the bot uses it |
 |---|---|---|
 | Business card | Markdown (`.md`) | Added under the business card as "More from the seller's business card". Lines about GST, bank, turnover, staff, ratings, prices, payment or delivery terms are left out (the upload notes say how many). Numbers on contact lines are added to the numbers the bot may share. |
-| MCAT specifications | JSON: `[{"mcat_id", "mcat_name", "specifications": [{"name", "options": [...]}]}]` | **Fills ISQ gaps only.** A category whose products give no ISQs, or a product card without qualification questions, gets the matching MCAT's specs as ISQs, with up to 8 options each. Brand, model, price, finance and usage fields are dropped. An MCAT matches by its id in the export's `taxonomy.glmcat_ids`, or by name. The seller's category must be the MCAT or a kind of it ("Metal Sheet Bending Machine" is a "Bending Machine"; a seller listing "Bending Machine" doesn't get "Bar Bending Machine"). Unmatched MCATs are ignored. The panel lists the matches and where ISQs were added. |
+| MCAT specifications | JSON: `[{"mcat_id", "mcat_name", "specifications": [{"name", "options": [...]}]}]` | **First source of spec questions** (see ISQs above). A category takes its MCAT family's specs from this file by MCAT id, else from an MCAT with an equal name, up to 4 questions with 6 options each. Product cards keep their own questions and use an MCAT only when they have none. Brand, model, price, finance and usage fields are dropped, and unmatched MCATs are ignored. The panel lists the matches. |
 | Product cards | JSON, the KB folder's `product_cards.json` format | With a KB JSON: added after its products as "Product cards (uploaded)". For a KB-folder seller: replaces the folder's `product_cards.json`. Broken or duplicate cards are skipped with a note. |
 
 The extra text counts against the large-catalogue prompt budget.
@@ -235,7 +242,7 @@ If step 3 passes and step 4 fails, the Langfuse server accepted the data but isn
 
 Production uses a **self-hosted Langfuse** (`langfuse.intermesh.net`), set with `LANGFUSE_BASE_URL`.
 
-**One trace per buyer message** (`chat-turn`), grouped in Langfuse **Sessions** by chat (`<seller>:<browser id>`), tagged with the seller and `on-platform` or `embedded`. User id is the buyer's masked mobile once verified. Each trace holds:
+**One trace per buyer message** (`chat-turn`), grouped in Langfuse **Sessions** by conversation: `<seller>:<chat id>`. The chat id is a new uuid for every conversation, so a chat after 2 hours idle or **New chat** gets its own session even in the same browser. Every span carries the session and user under both `session.id`/`user.id` and the older `langfuse.session.id`/`langfuse.user.id`, so self-hosted Langfuse versions that predate the new names still group them. The admin transcript shows each conversation's Langfuse session id, with a link, and the leads CSV has a `langfuseSession` column, tagged with the seller and `on-platform` or `embedded`. User id is the buyer's masked mobile once verified. Each trace holds:
 
 | Observation | Type | What it shows |
 |---|---|---|
@@ -250,7 +257,7 @@ Trace metadata also has `turnCostUsd`, and the chat's running `chatCostUsd`, `ch
 
 **Per-chat cost:** each Langfuse session (chat) has a `chat_cost_usd` score, the total USD cost of every Claude call in the chat so far. It is replaced after every buyer message, with a comment such as "6 buyer messages, 575,120 tokens". The running totals are kept with the chat in the `sessions` table, so they survive restarts. Costs come from the price table in `src/tracing.ts`. A call to a model missing from that table counts as zero and is flagged "some calls unpriced". Langfuse's Sessions view also adds up the per-call costs.
 
-**Scores:** `lead_captured`, `lead_updated`, `summary_shown`, `guardrail_fired` (count), `fallback_reply` (the buyer got a canned reply), `chat_cost_usd` (per session, above), and `buyer_feedback`: when tracing is on, the widget shows 👍 / 👎 under each reply (+1 / −1; changing the vote replaces the score). Buyers can only rate replies from their own chat.
+**Scores:** `lead_captured`, `lead_updated`, `summary_shown`, `guardrail_fired` (count), `fallback_reply` (the buyer got a canned reply), `chat_cost_usd` (per session, above), and buyer feedback: when tracing is on, the widget asks "Was this helpful? 👍 👎" **once per chat, under the enquiry summary card**. A vote is recorded as `buyer_feedback` on that reply's trace and `chat_feedback` on the chat's session (+1 / −1; changing the vote replaces both). Buyers can only rate their own chat.
 
 **Privacy:** mobile numbers are masked as `xxxxxx3210` everywhere in a trace (also by the exporter as a last check), OTPs are never recorded, and payment or ID details are already removed from buyer messages before the bot sees them. Names are kept.
 

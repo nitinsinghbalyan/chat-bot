@@ -98,7 +98,7 @@
     ".chips.live .chip:hover{background:var(--c);color:#fff}" +
     ".chips.used .chip{cursor:default;opacity:.45;border-color:#cfd6e2;color:#6b7588}" +
     ".chips.used .chip.picked{opacity:1;border-color:var(--c);color:var(--c)}" +
-    ".fb{display:flex;flex-shrink:0;gap:2px;align-self:flex-start;margin:-4px 0 0 4px}" +
+    ".fb{display:flex;flex-shrink:0;gap:2px;align-items:center;align-self:flex-start;margin:0 0 0 4px;font-size:12px;color:#6b7588}.fb span{margin-right:4px}" +
     ".fb button{border:0;background:transparent;cursor:pointer;font-size:13px;line-height:1;padding:3px 5px;border-radius:6px;opacity:.45;filter:grayscale(1)}" +
     ".fb button:hover{opacity:.9;background:#e9edf3}.fb button.on{opacity:1;filter:none;background:#e9edf3}" +
     "form{display:flex;gap:8px;padding:10px;border-top:1px solid #e3e8f0;background:#fff}" +
@@ -308,12 +308,17 @@
     log.appendChild(box);
     log.scrollTop = log.scrollHeight;
   }
-  /** 👍 / 👎 under a bot reply (only when the server records feedback); the vote is kept in history. */
-  function addFeedback(entry, after) {
+  /**
+   * "Was this helpful? 👍 👎", once per chat: under the latest enquiry summary (only when the
+   * server records feedback). The vote is kept for the chat and sent with that reply's trace.
+   */
+  function addFeedback(entry) {
     var c = configs[current];
-    if (!c || !c.feedback || !entry || !entry.traceId) return;
+    if (!c || !c.feedback || !entry || !entry.traceId || !entry.summary) return;
+    Array.prototype.forEach.call(log.querySelectorAll(".fb"), function (x) { x.remove(); });
     var row = document.createElement("div");
     row.className = "fb";
+    row.appendChild(el("span", "", "Was this helpful?"));
     [
       [1, "\uD83D\uDC4D", "Helpful"],
       [-1, "\uD83D\uDC4E", "Not helpful"],
@@ -323,12 +328,12 @@
       b.textContent = o[1];
       b.title = o[2];
       b.setAttribute("aria-label", o[2]);
-      b.setAttribute("aria-pressed", entry.vote === o[0] ? "true" : "false");
-      if (entry.vote === o[0]) b.className = "on";
+      b.setAttribute("aria-pressed", state.vote === o[0] ? "true" : "false");
+      if (state.vote === o[0]) b.className = "on";
       b.onclick = function () {
-        if (entry.vote === o[0]) return;
-        entry.vote = o[0];
-        Array.prototype.forEach.call(row.children, function (x) {
+        if (state.vote === o[0]) return;
+        state.vote = o[0];
+        Array.prototype.forEach.call(row.querySelectorAll("button"), function (x) {
           x.className = "";
           x.setAttribute("aria-pressed", "false");
         });
@@ -345,8 +350,8 @@
       };
       row.appendChild(b);
     });
-    if (after && after.parentNode) after.parentNode.insertBefore(row, after.nextSibling);
-    else log.appendChild(row);
+    log.appendChild(row);
+    log.scrollTop = log.scrollHeight;
   }
 
   /**
@@ -438,14 +443,18 @@
     log.innerHTML = "";
     addMsg("bot", greeting(c));
     var last = state.history.length - 1;
+    var lastSummary = -1;
+    state.history.forEach(function (h, i) {
+      if (h.summary) lastSummary = i;
+    });
     state.history.forEach(function (h, i) {
       if (h.text) addMsg(h.who, h.text);
-      if (h.who === "bot") addFeedback(h);
       addCards(h.cards);
       addSummary(h.summary);
       // Older saved chats kept the last options only in state.chips.
       var rowChips = h.chips || (i === last && h.who === "bot" ? state.chips : null);
       if (rowChips) addChips(rowChips, i === last && state.chips ? { live: true } : { picked: h.picked });
+      if (i === lastSummary) addFeedback(h);
     });
     if (state.history.length === 0) addChips(c.chips, { live: true, prefix: "I'm looking for a " });
     setAskFor(state.askFor);
@@ -568,9 +577,9 @@
         if (replyChips) entry.chips = replyChips;
         if (replyTrace) entry.traceId = replyTrace;
         state.history.push(entry);
-        addFeedback(entry, botEl);
         state.chips = replyChips;
         addChips(replyChips, { live: true });
+        addFeedback(entry);
         sending = false;
         sendBtn.disabled = false;
         newBtn.disabled = false;

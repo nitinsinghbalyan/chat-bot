@@ -40,6 +40,9 @@ Shorthand and internal language for the Seller assistants project.
 | chat cost | `chat_cost_usd` Langfuse **session** score: running USD total of a chat's Claude calls, same score id so it's replaced each message; totals kept in `sessions.usage` | `src/app.ts` |
 | extra files | Per-seller optional uploads in Manage: business card .md, MCAT specs JSON, product cards JSON (DATA_DIR/sellers/<slug>/files/) | `src/sellerFiles.ts`, `SellerRegistry.compose` |
 | MCAT | IndiaMART micro-category; the MCAT specs file gives ISQs to categories/cards without their own | `findMcat`, `namesMatch` |
+| MCAT family | Categories whose products mostly share one MCAT id; they ask the same ISQs | `KbView.isqPlan` |
+| spec_questions | Per-turn block with only the chat's category's ISQs, asked/next marked | `src/isqTracker.ts` |
+| chat id | Unique id per conversation; Langfuse session = `<seller>:<chatId>`; in transcript/leads `chat_id` | `Session.chatId` |
 | common FAQ | One Excel/CSV for all sellers on /admin/prompts; rows scoped by Category; searched per message into `<faq>` | `src/faq.ts` |
 | Test Langfuse | /admin button: server version → keys → upload a test trace → is it stored; the failing step names the cause | `runConnectionTest` in `src/tracing.ts` |
 | langfuse.intermesh.net | The self-hosted Langfuse production traces go to | `LANGFUSE_BASE_URL` on Render |

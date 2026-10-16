@@ -332,6 +332,10 @@ describe("knowledge base upload", () => {
     );
     const { body } = await chat(ALPHA, "show me photos of the cnc press brake", { origin: base, sessionId: "kb-upload-1", pageUrl: `${base}/s/${ALPHA}/` });
     expect(requests[0].system[0].text).toContain("Product id: cnc-press-brake-a1b2c3d");
+    // The server picked the machine's category and gives the bot only its spec questions.
+    const turn = requests[0].messages.at(-1).content.at(-1).text as string;
+    expect(turn).toContain("<spec_questions>\nMachine category: Press Brakes.");
+    expect(turn).toContain("1. Control Type? Options: CNC / NC");
     expect(requests[0].system[0].text).not.toContain("4,50,000");
     expect(body).toContain("event: cards");
     expect(body).toContain('"url":"https://img.alphapresses.example/cnc.jpg"');

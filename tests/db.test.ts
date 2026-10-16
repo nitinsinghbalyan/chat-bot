@@ -61,6 +61,26 @@ describe("ChatDb", () => {
     expect(db.guardrailEvents()[0]).toMatchObject({ seller: "alpha", session_id: "alpha:s1", rule: "G1_price" });
   });
 
+  it("gives every conversation its own chat id, also after a chat expires", async () => {
+    const db = new ChatDb(":memory:");
+    const store = new SessionStore(db, 1000);
+    const first = store.get("alpha", "browser-x");
+    store.save(first);
+    expect(first.chatId).toMatch(/^[0-9a-f-]{36}$/);
+    // Same browser, same chat: same id, also after a restart.
+    expect(new SessionStore(db, 1000).get("alpha", "browser-x").chatId).toBe(first.chatId);
+    // After the chat expires, the browser's next message starts a new conversation.
+    first.lastSeen = Date.now() - 5000;
+    const second = store.get("alpha", "browser-x");
+    expect(second.chatId).not.toBe(first.chatId);
+    db.appendTranscript({ seller: "alpha", sessionId: second.id, role: "bot", text: "hi", traceId: "t1", chatId: second.chatId });
+    expect(db.transcript(second.id)[0].chatId).toBe(second.chatId);
+    expect(db.traceChat(second.id, "t1")).toBe(second.chatId);
+    expect(db.traceChat(second.id, "t2")).toBeUndefined();
+    db.insertLead({ createdAt: "x", seller: "alpha", sessionId: second.id, mobile: "9", name: "n", product: "p", requirements: "", quantity: "", city: "", chatId: second.chatId });
+    expect(db.listLeads()[0].chatId).toBe(second.chatId);
+  });
+
   it("keeps a chat's running cost with its session", () => {
     const db = new ChatDb(":memory:");
     const store = new SessionStore(db);
@@ -113,6 +133,8 @@ describe("migration from the single-seller database", () => {
     const session = new SessionStore(db).get("jayshree-machinetools", "browser-1");
     expect(session.turns).toBe(3);
     expect(session.lead.stage).toBe("captured");
+    // Sessions from before chat ids get one.
+    expect(session.chatId).toMatch(/^[0-9a-f-]{36}$/);
     // Sessions from before chat costs start from zero.
     expect(session.usage).toMatchObject({ costUsd: 0, turns: 0, costKnown: true });
     expect(db.listLeads(10, "jayshree-machinetools")).toEqual([expect.objectContaining({ seller: "jayshree-machinetools", sessionId: "jayshree-machinetools:browser-1" })]);

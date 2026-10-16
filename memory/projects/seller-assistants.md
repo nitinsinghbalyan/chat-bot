@@ -54,7 +54,10 @@
 | Detailed summary after requirement gathering = server-built card from the saved enquiry (not bot-written text), buyer can correct it | Nitin (Oct 2026) |
 | Per-chat cost in Langfuse only (session score + trace metadata), not in admin | Nitin |
 | Catalogue from crawling the sitemap | Nitin |
-| Extra per-seller files (business card .md, MCAT specs JSON, product cards JSON) **merge** with the KB JSON; MCAT specs **only fill ISQ gaps** (earlier "MCAT not used" reversed, Oct 2026) | Nitin |
+| Extra per-seller files (business card .md, MCAT specs JSON, product cards JSON) **merge** with the KB JSON (earlier "MCAT not used" reversed, Oct 2026) | Nitin |
+| ISQ source: **MCAT first** (by the products' MCAT id, else equal name), else cleaned derived ISQs pooled per MCAT family; **server picks the category per turn** (`<spec_questions>`) | Nitin (Oct 16) |
+| 👍/👎 only once per chat, under the summary card | Nitin |
+| Every trace has a unique per-conversation session id `<seller>:<chatId>` (audit); stamped under new and legacy attribute names | Nitin |
 | Common FAQ Excel (Question, Answer, optional Category), searched per message as `<faq>`, scoped per seller by category; guardrails win | Nitin |
 | SQLite on a Render disk; Render hosting | Nitin |
 | Multi-seller; KB supplied per seller | Nitin |
@@ -93,6 +96,7 @@
 | #15 | Enquiry summary card, per-chat cost score, Langfuse key check / region auto-detect / visible tracing status |
 | #16 | Langfuse upload counters, server version, **Test Langfuse** button on /admin |
 | #17 | Extra seller files (business card .md, MCAT specs, product cards) and the common FAQ Excel |
+| #18 | Feedback once per chat (under the summary), instant chips (no extra Claude call after show_options), ISQs per MCAT family with the server picking the category per turn, unique Langfuse session per conversation |
 
 ## Open items / ideas
 - Real SMS OTP (replace the demo check in `src/tools.ts`; stop sending `demo: true` from `/api/sellers/:slug`).

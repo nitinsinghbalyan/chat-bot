@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { CatalogueEntry } from "./crawler.js";
 import type { ChatDb, StoredSession } from "./db.js";
@@ -12,6 +13,12 @@ export interface LeadState {
   otpSends: number;
   /** True once the buyer has been shown the enquiry summary card. */
   summarized?: boolean;
+  /** The machine category the chat is about (KB JSON sellers), set by the server each turn. */
+  category?: string;
+  /** That category's ISQs already asked (by question). */
+  askedIsqs?: string[];
+  /** The reply buttons last shown, so a tapped answer isn't mistaken for a new machine. */
+  lastOptions?: string[];
 }
 
 /** Running totals for one chat: every Claude call's tokens and cost, for the Langfuse chat cost score. */
@@ -33,6 +40,11 @@ export interface Session {
   /** "<seller>:<browser session id>", so one browser chatting with two sellers has two chats. */
   id: string;
   seller: string;
+  /**
+   * This conversation's own id. The browser id in `id` outlives a chat (after 2 hours idle or
+   * New chat a new conversation starts), so traces, transcripts and leads are grouped by this.
+   */
+  chatId: string;
   messages: Anthropic.Beta.BetaMessageParam[];
   lead: LeadState;
   /** Catalogue entries retrieved over the whole conversation (price/link whitelist for output guardrails). */
@@ -49,6 +61,9 @@ export interface Session {
 const TTL_MS = 2 * 60 * 60 * 1000;
 const MAX_SESSIONS = 5000;
 
+/** The Langfuse session id of a conversation: unique per chat, readable per seller. */
+export const chatSessionId = (s: Pick<Session, "seller" | "chatId">) => `${s.seller}:${s.chatId}`;
+
 export function sessionKey(seller: string, sessionId: string): string {
   return `${seller}:${sessionId}`;
 }
@@ -57,6 +72,7 @@ function newSession(id: string, seller: string): Session {
   return {
     id,
     seller,
+    chatId: randomUUID(),
     messages: [],
     lead: { stage: "none", otpAttempts: 0, otpSends: 0 },
     seenCatalogue: new Map(),
@@ -73,6 +89,7 @@ function fromStored(s: StoredSession): Session {
   return {
     id: s.id,
     seller: s.seller,
+    chatId: s.chatId ?? randomUUID(),
     messages: s.messages as Session["messages"],
     lead: s.lead as LeadState,
     seenCatalogue: new Map(s.seenCatalogue as Array<[string, CatalogueEntry]>),
@@ -128,6 +145,7 @@ export class SessionStore {
       createdAt: s.createdAt,
       lastSeen: s.lastSeen,
       usage: s.usage,
+      chatId: s.chatId,
     });
   }
 

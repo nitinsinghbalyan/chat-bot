@@ -217,15 +217,25 @@ export interface SellerTerms {
   mcatIds: Set<string>;
 }
 
+/** Same name once normalised (case, plurals, spacing): "Iron Worker Machines" = "Ironworker Machine". */
+export function namesEqual(a: string, b: string): boolean {
+  const ca = tokens(a).join("");
+  return !!ca && ca === tokens(b).join("");
+}
+
+/**
+ * The MCAT for a category or card: by MCAT id, else by an exactly equal name. Containment is not
+ * enough for spec questions ("Bending Machine" for rebar is not "Metal Sheet Bending Machine").
+ */
 export function findMcat(mcats: McatSpec[], names: string[], ids: Iterable<string> = []): McatSpec | undefined {
   const idSet = new Set(ids);
   const withSpecs = mcats.filter((m) => m.specs.length);
-  return withSpecs.find((m) => m.id && idSet.has(m.id)) ?? withSpecs.find((m) => names.some((n) => namesMatch(m.name, n)));
+  return withSpecs.find((m) => m.id && idSet.has(m.id)) ?? withSpecs.find((m) => names.some((n) => namesEqual(m.name, n)));
 }
 
-/** The MCATs that match anything the seller deals in. */
+/** The MCATs that match anything the seller deals in (by id or equal name). */
 export function matchingMcats(mcats: McatSpec[], terms: SellerTerms): McatSpec[] {
-  return mcats.filter((m) => (m.id && terms.mcatIds.has(m.id)) || terms.names.some((n) => namesMatch(m.name, n)));
+  return mcats.filter((m) => (m.id && terms.mcatIds.has(m.id)) || terms.names.some((n) => namesEqual(m.name, n)));
 }
 
 /** The ISQ lines for a card or category, in the same shape the KB JSON's ISQs use. */
