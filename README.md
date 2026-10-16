@@ -130,7 +130,7 @@ The extra text counts against the large-catalogue prompt budget.
 ## Chat features
 
 - **ISQ chips:** the bot asks one ISQ per message and calls `show_options`. The widget shows the options as tap-to-reply buttons inside the conversation, right under that message. The buyer can tap one or type their own answer; the row then stays in the chat greyed out, with the chosen option highlighted. No buttons are shown while it is collecting the mobile number, OTP or name.
-- **Order of an enquiry:** welcome (no question, no chips) → on the buyer's first message, whatever it is, a one-line answer and the mobile number ask → OTP → name (lead saved) → which machine, if still unclear → ISQs → summary card (lead updated). A buyer who won't share a number isn't blocked. Replies are kept to one or two short sentences.
+- **Order of an enquiry:** welcome (no question, no chips) → on the buyer's first message, whatever it is, only a short mobile number ask ("Please share your 10-digit mobile number.") → OTP → name (lead saved) → which machine, if still unclear → ISQs → summary card (lead updated). A buyer who won't share a number isn't blocked. Replies are kept to one or two short sentences.
 - **Media and related products:** when the buyer asks for photos, a video, a brochure or PDF, or related products, the bot calls `share_media` with product ids. The server builds the cards from the KB and the crawl only, never from model text, so links can't be made up. The widget shows a swipeable carousel of up to 12 cards:
   - product cards (photo, name, category)
   - photos, which open in a viewer

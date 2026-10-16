@@ -5,7 +5,7 @@
 
 ## What it does
 - Answers buyers' discovery and enquiry questions **on the seller's behalf**, grounded in the seller's KB, within 9 guardrails.
-- Enquiry order: fixed welcome (same text for every seller, asks nothing, no chips) → mobile asked on the buyer's **first message**, whatever it is → OTP (demo `12345`) → name (lead saved) → which machine, if still unclear → ISQs one at a time as tap-to-reply chips **inline in the chat** (the server picks the machine's category each turn and gives the bot only its questions in `<spec_questions>`; chips arrive with the question, no extra Claude call) → lead updated with the answers → **enquiry summary card** ("Your enquiry": machine, each spec, quantity, city, name, masked mobile) + "Anything to change?" with All correct / Change a detail chips; a correction updates the lead and shows a new card. A buyer who won't share a number isn't blocked.
+- Enquiry order: fixed welcome (same text for every seller, asks nothing, no chips) → mobile asked on the buyer's **first message**, whatever it is, and that reply is **only** the ask ("Please share your 10-digit mobile number."; no "Yes, we make…") → OTP (demo `12345`) → name (lead saved) → which machine, if still unclear → ISQs one at a time as tap-to-reply chips **inline in the chat** (the server picks the machine's category each turn and gives the bot only its questions in `<spec_questions>`; chips arrive with the question, no extra Claude call) → lead updated with the answers → **enquiry summary card** ("Your enquiry": machine, each spec, quantity, city, name, masked mobile) + "Anything to change?" with All correct / Change a detail chips; a correction updates the lead and shows a new card. A buyer who won't share a number isn't blocked.
 - Replies are brief: 1–2 short sentences (~40 words), answer first, no filler, options only as chips.
 - Shares photos, videos, PDFs and related products as a carousel.
 - Handles large catalogues: over ~300k characters the system prompt keeps categories, ISQs and a product index; details come per message from the catalogue search.
@@ -102,6 +102,7 @@
 | #18 | Feedback once per chat (under the summary), instant chips (no extra Claude call after show_options), ISQs per MCAT family with the server picking the category per turn, unique Langfuse session per conversation |
 | #19 | Built-in prompts and personas apply automatically on deploy; Jayshree persona asks the `<spec_questions>`; memory refresh |
 | #20 | New journey: fixed welcome without chips, mobile on the first message, machine asked after the name if unclear |
+| #21 | First reply asks only for the mobile number (no machine confirmation) |
 
 ## Open items / ideas
 - **Langfuse (self-hosted `langfuse.intermesh.net`):** after #16/#18, check that traces appear grouped by conversation. If not, **Test Langfuse** on /admin names the failing step (server version, upload refused, or accepted but not stored, which is for the intermesh Langfuse admins).

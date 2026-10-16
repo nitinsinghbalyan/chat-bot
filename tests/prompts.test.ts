@@ -33,7 +33,7 @@ describe("system prompt", () => {
   });
 
   it("asks for the mobile on the first message, then OTP, then the name", () => {
-    expect(sys).toContain("1. Mobile number first: on the buyer's first message, whatever it is");
+    expect(sys).toContain("1. Mobile number first: on the buyer's first message, whatever it is, reply only with a short request for their mobile number");
     expect(sys).toContain("2. OTP, then name");
     expect(sys.indexOf("1. Mobile number first")).toBeLessThan(sys.indexOf("3. Machine: if it still isn't clear"));
     expect(sys).toContain("don't introduce yourself or greet at length");

@@ -19,6 +19,7 @@
 - Asks for a project memory update after each milestone.
 - Wants Claude to make prompt changes itself and have them go live on deploy, without manual steps in admin.
 - Audits chats in Langfuse: every trace must sit in a unique per-conversation session.
+- Wants the first reply to be only the mobile number ask; no confirming the machine first.
 - Wants the chat to feel fast: chips with the message, no extra round trips; feedback asked once, not on every reply.
 - Wants spec questions that fit the buyer's machine (category), not a mix across categories.
 - Asks capacity and model questions ("which model", "is the context window enough"): answer with the configured values and sourced numbers, and say what is an estimate.
