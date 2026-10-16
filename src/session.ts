@@ -19,6 +19,8 @@ export interface LeadState {
   askedIsqs?: string[];
   /** The reply buttons last shown, so a tapped answer isn't mistaken for a new machine. */
   lastOptions?: string[];
+  /** A simulated chat (the simulator API): its lead is saved as a test lead. */
+  test?: boolean;
 }
 
 /** Running totals for one chat: every Claude call's tokens and cost, for the Langfuse chat cost score. */

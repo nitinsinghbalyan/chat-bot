@@ -8,6 +8,8 @@ Shorthand and internal language for the Seller assistants project.
 | seller | One business with its own bot, website `/s/<slug>/` and leads | `SellerContext` in `src/sellers.ts` |
 | slug | Seller id in URLs, lowercase letters, digits and dashes (`SLUG_RE`) | `seller.json` |
 | seller row / Manage | One line per seller on `/admin` (badges, leads, products, categories, updated, View site); **Manage** expands the KB upload, crawl, persona and Delete controls. Opens itself after `?added=`, `?kb=`, `?crawl=` or `#seller-<slug>` | `sellerRow()` in `src/admin.ts` |
+| bot key / simulator API | Per-seller `sa_live_…` key (header `X-Bot-Key`) for chat simulators like the AI Assistant Auditor; `POST /api/v1/bots/<slug>/chat` returns one JSON reply per message. Simulated leads are **test** leads; traces tagged `eval` | `docs/SIMULATOR_API.md`, `src/botKeys.ts` |
+| AI Assistant Auditor | Nitin's scenario simulator (IndiaMART) that runs saved buyer scenarios against vendor bots (NIVA, Maxi, now Seller assistants) | Not in this repo |
 | directory | Public home `/`: list of sellers, **Visit site** only (plus **Edit prompts** for admins) | `directoryPage` |
 | seller site / mini-site | Generated website: Home, About Us, Products, category, product, Contact, search | `src/site/pages.ts` |
 | widget | Embeddable chat bubble, bottom-right; `SellerChat.open/close/reset` | `public/widget.js` |

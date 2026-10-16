@@ -177,6 +177,8 @@ export interface Lead {
   chatId?: string;
   /** True when save_lead runs again after the ISQs: update this session's lead instead of adding one. */
   update?: boolean;
+  /** From a simulated chat (the simulator API), not a real buyer. */
+  test?: boolean;
 }
 
 export type LeadSink = (lead: Lead) => void;

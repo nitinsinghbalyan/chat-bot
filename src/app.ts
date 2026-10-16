@@ -3,6 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { runTurn, type TurnResult } from "./claude.js";
 import { config, paths } from "./config.js";
+import { hashBotKey, looksLikeBotKey } from "./botKeys.js";
 import type { CatalogueEntry } from "./crawler.js";
 import type { ChatDb } from "./db.js";
 import { checkInput, RateLimiter } from "./guardrails.js";
@@ -107,7 +108,20 @@ export function createApp(deps: AppDeps) {
     next();
   }
 
-  app.use("/api", cors);
+  // The simulator API is called server to server (or from any site) with a key, so any origin may call it.
+  app.use("/api/v1", (req, res, next) => {
+    if (req.headers.origin) {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Bot-Key");
+    }
+    if (req.method === "OPTIONS") {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
+  app.use("/api", (req, res, next) => (req.path.startsWith("/v1/") ? next() : cors(req, res, next)));
 
   app.get("/health", (_req, res) => {
     res.json({
@@ -175,6 +189,106 @@ export function createApp(deps: AppDeps) {
     return info;
   }
 
+  /**
+   * One buyer message: runs the bot, traces it and saves the transcript. Shared by the widget's
+   * streaming route and the simulator's JSON route (`sim` set), so both behave the same.
+   */
+  async function chatTurn(
+    req: Request,
+    seller: SellerContext,
+    sessionId: string,
+    text: string,
+    t: { redacted: unknown; pageUrl?: string; onText?: (text: string) => void; test?: boolean; sim?: Record<string, string> },
+  ) {
+    const slug = seller.config.slug;
+    const pageUrl = t.pageUrl;
+    // The buyer is on this platform's generated site (not the seller's own website).
+    const onPlatform = sameHost(req, pageUrl);
+    const session = sessions.get(slug, sessionId);
+    if (t.test) session.lead.test = true;
+    // Store what the buyer typed after redaction, never the raw payment/ID details.
+    db.appendTranscript({ seller: slug, sessionId: session.id, role: "buyer", text: text, chatId: session.chatId });
+    // One Langfuse session per conversation (not per browser): "<seller>:<chat id>".
+    const langfuseSession = chatSessionId(session);
+    const stageBefore = session.lead.stage;
+    const traceCtx = {
+      sessionId: langfuseSession,
+      userId: session.lead.mobile && session.lead.stage !== "otp_sent" ? maskMobile(session.lead.mobile) : undefined,
+      tags: t.sim ? [slug, "eval", "simulator"] : [slug, onPlatform ? "on-platform" : "embedded"],
+      // While an OTP is expected, the buyer's message is the code.
+      input: stageBefore === "otp_sent" ? OTP_MASK : text,
+      metadata: { seller: slug, chatId: session.chatId, browserSession: session.id, pageUrl: pageUrl ?? null, leadStageBefore: stageBefore, turn: session.turns + 1, prompt: promptInfo(seller), redacted: t.redacted, ...(t.sim ? { source: "simulator", ...t.sim } : {}) },
+    };
+    const { result, traceId } = await tracing.trace("chat-turn", traceCtx, async (root) => {
+      const result = await runTurn(
+        session,
+        text,
+        {
+          client: deps.client,
+          kb: seller.kb,
+          catalogue: seller.catalogue,
+          systemPrompt: seller.systemPrompt,
+          sellerInstructions: seller.persona.user,
+          shareMedia: (ids, kinds, related) => shareMedia(seller, ids, kinds, related, { siteOrigin: onPlatform ? `${req.protocol}://${req.headers.host}` : null }),
+          saveLead: (lead) => {
+            const l = session.lead.test ? { ...lead, test: true } : lead;
+            void (l.update ? db.updateLead(l.seller, l.sessionId, l) || db.insertLead(l) : db.insertLead(l));
+          },
+          logGuardrail: (id, interventions) => db.logGuardrailEvents(slug, id, interventions),
+          trace: tracing,
+          isqs: seller.uploaded ? isqSourceFor(seller) : null,
+          faq: deps.faq?.forSeller(seller.kb, { ...seller.terms, mcats: seller.mcatUse.matched }, seller.config.name) ?? null,
+        },
+        { onText: t.onText ?? (() => {}) },
+        { pageUrl, pageEntry: pageEntryFor(seller, pageUrl) },
+      );
+      const chat = addChatUsage(session, result);
+      root.update({
+        output: {
+          reply: result.text,
+          chips: result.chips,
+          cards: result.cards.map((c) => `${c.type}: ${c.title}`),
+          askFor: result.askFor,
+          ...(result.summary ? { summary: result.summary } : {}),
+        },
+        metadata: {
+          leadStageAfter: session.lead.stage,
+          usage: result.usage,
+          turnCostUsd: roundUsd(result.costUsd),
+          chatCostUsd: roundUsd(chat.costUsd),
+          chatTokens: chatTokens(chat),
+          chatTurns: chat.turns,
+          ...(result.isq ? { isqCategory: result.isq.category, isqSource: result.isq.mcat ? `mcat: ${result.isq.mcat}` : result.isq.source } : {}),
+          ...(chat.costKnown ? {} : { costIncomplete: "a model without a known price was used" }),
+        },
+        ...(result.fallbackReply ? { level: "WARNING" as const, statusMessage: "Buyer got a canned fallback reply" } : {}),
+      });
+      if (tracing.enabled && root.traceId) {
+        for (const e of result.leadEvents ?? []) tracing.score({ traceId: root.traceId, name: e === "captured" ? "lead_captured" : "lead_updated", value: 1, dataType: "BOOLEAN" });
+        if (result.interventions.length) tracing.score({ traceId: root.traceId, name: "guardrail_fired", value: result.interventions.length, dataType: "NUMERIC" });
+        if (result.fallbackReply) tracing.score({ traceId: root.traceId, name: "fallback_reply", value: 1, dataType: "BOOLEAN" });
+        if (result.summary) tracing.score({ traceId: root.traceId, name: "summary_shown", value: 1, dataType: "BOOLEAN" });
+      }
+      if (tracing.enabled) {
+        // One score per chat, replaced every message, so the Langfuse session shows the running total.
+        tracing.score({
+          sessionId: langfuseSession,
+          id: chatCostScoreId(langfuseSession),
+          name: "chat_cost_usd",
+          value: roundUsd(chat.costUsd),
+          dataType: "NUMERIC",
+          comment: `${chat.turns} buyer message${chat.turns === 1 ? "" : "s"}, ${chatTokens(chat).toLocaleString("en-US")} tokens${chat.costKnown ? "" : " (some calls unpriced)"}`,
+        });
+      }
+      return { result, traceId: root.traceId };
+    });
+    sessions.save(session);
+    const sharedNote = result.cards.length ? `\n[Shared: ${result.cards.map((c) => `${c.type} "${c.title}"`).join(", ")}]` : "";
+    const summaryNote = result.summary ? `\n[Summary: ${summaryLine(result.summary)}]` : "";
+    db.appendTranscript({ seller: slug, sessionId: session.id, role: "bot", text: result.text + sharedNote + summaryNote, guardrails: result.interventions.map((i) => i.rule), traceId: traceId || undefined, chatId: session.chatId });
+    return { session, result, traceId };
+  }
+
   app.post("/api/chat", async (req, res) => {
     const seller = typeof req.body?.seller === "string" ? sellers.get(req.body.seller) : undefined;
     if (!seller) {
@@ -188,8 +302,6 @@ export function createApp(deps: AppDeps) {
     const slug = seller.config.slug;
     const sessionId = typeof req.body?.sessionId === "string" && SESSION_ID_RE.test(req.body.sessionId) ? req.body.sessionId : randomUUID();
     const pageUrl = typeof req.body?.pageUrl === "string" ? req.body.pageUrl.slice(0, 300) : undefined;
-    // The buyer is on this platform's generated site (not the seller's own website).
-    const onPlatform = sameHost(req, pageUrl);
 
     const input = checkInput(req.body?.message);
     if (!input.ok) {
@@ -215,84 +327,7 @@ export function createApp(deps: AppDeps) {
 
     send("session", { sessionId });
     try {
-      const session = sessions.get(slug, sessionId);
-      // Store what the buyer typed after redaction, never the raw payment/ID details.
-      db.appendTranscript({ seller: slug, sessionId: session.id, role: "buyer", text: input.text, chatId: session.chatId });
-      // One Langfuse session per conversation (not per browser): "<seller>:<chat id>".
-      const langfuseSession = chatSessionId(session);
-      const stageBefore = session.lead.stage;
-      const traceCtx = {
-        sessionId: langfuseSession,
-        userId: session.lead.mobile && session.lead.stage !== "otp_sent" ? maskMobile(session.lead.mobile) : undefined,
-        tags: [slug, onPlatform ? "on-platform" : "embedded"],
-        // While an OTP is expected, the buyer's message is the code.
-        input: stageBefore === "otp_sent" ? OTP_MASK : input.text,
-        metadata: { seller: slug, chatId: session.chatId, browserSession: session.id, pageUrl: pageUrl ?? null, leadStageBefore: stageBefore, turn: session.turns + 1, prompt: promptInfo(seller), redacted: input.redacted },
-      };
-      const { result, traceId } = await tracing.trace("chat-turn", traceCtx, async (root) => {
-        const result = await runTurn(
-          session,
-          input.text,
-          {
-            client: deps.client,
-            kb: seller.kb,
-            catalogue: seller.catalogue,
-            systemPrompt: seller.systemPrompt,
-            sellerInstructions: seller.persona.user,
-            shareMedia: (ids, kinds, related) => shareMedia(seller, ids, kinds, related, { siteOrigin: onPlatform ? `${req.protocol}://${req.headers.host}` : null }),
-            saveLead: (lead) => void (lead.update ? db.updateLead(lead.seller, lead.sessionId, lead) || db.insertLead(lead) : db.insertLead(lead)),
-            logGuardrail: (id, interventions) => db.logGuardrailEvents(slug, id, interventions),
-            trace: tracing,
-            isqs: seller.uploaded ? isqSourceFor(seller) : null,
-            faq: deps.faq?.forSeller(seller.kb, { ...seller.terms, mcats: seller.mcatUse.matched }, seller.config.name) ?? null,
-          },
-          { onText: (text) => send("text", { text }) },
-          { pageUrl, pageEntry: pageEntryFor(seller, pageUrl) },
-        );
-        const chat = addChatUsage(session, result);
-        root.update({
-          output: {
-            reply: result.text,
-            chips: result.chips,
-            cards: result.cards.map((c) => `${c.type}: ${c.title}`),
-            askFor: result.askFor,
-            ...(result.summary ? { summary: result.summary } : {}),
-          },
-          metadata: {
-            leadStageAfter: session.lead.stage,
-            usage: result.usage,
-            turnCostUsd: roundUsd(result.costUsd),
-            chatCostUsd: roundUsd(chat.costUsd),
-            chatTokens: chatTokens(chat),
-            chatTurns: chat.turns,
-            ...(result.isq ? { isqCategory: result.isq.category, isqSource: result.isq.mcat ? `mcat: ${result.isq.mcat}` : result.isq.source } : {}),
-            ...(chat.costKnown ? {} : { costIncomplete: "a model without a known price was used" }),
-          },
-          ...(result.fallbackReply ? { level: "WARNING" as const, statusMessage: "Buyer got a canned fallback reply" } : {}),
-        });
-        if (tracing.enabled && root.traceId) {
-          for (const e of result.leadEvents ?? []) tracing.score({ traceId: root.traceId, name: e === "captured" ? "lead_captured" : "lead_updated", value: 1, dataType: "BOOLEAN" });
-          if (result.interventions.length) tracing.score({ traceId: root.traceId, name: "guardrail_fired", value: result.interventions.length, dataType: "NUMERIC" });
-          if (result.fallbackReply) tracing.score({ traceId: root.traceId, name: "fallback_reply", value: 1, dataType: "BOOLEAN" });
-          if (result.summary) tracing.score({ traceId: root.traceId, name: "summary_shown", value: 1, dataType: "BOOLEAN" });
-        }
-        if (tracing.enabled) {
-          // One score per chat, replaced every message, so the Langfuse session shows the running total.
-          tracing.score({
-            sessionId: langfuseSession,
-            id: chatCostScoreId(langfuseSession),
-            name: "chat_cost_usd",
-            value: roundUsd(chat.costUsd),
-            dataType: "NUMERIC",
-            comment: `${chat.turns} buyer message${chat.turns === 1 ? "" : "s"}, ${chatTokens(chat).toLocaleString("en-US")} tokens${chat.costKnown ? "" : " (some calls unpriced)"}`,
-          });
-        }
-        return { result, traceId: root.traceId };
-      });
-      sessions.save(session);
-      const sharedNote = result.cards.length ? `\n[Shared: ${result.cards.map((c) => `${c.type} "${c.title}"`).join(", ")}]` : "";
-      const summaryNote = result.summary ? `\n[Summary: ${summaryLine(result.summary)}]` : "";
-      db.appendTranscript({ seller: slug, sessionId: session.id, role: "bot", text: result.text + sharedNote + summaryNote, guardrails: result.interventions.map((i) => i.rule), traceId: traceId || undefined, chatId: session.chatId });
+      const { session, result, traceId } = await chatTurn(req, seller, sessionId, input.text, { redacted: input.redacted, pageUrl, onText: (text) => send("text", { text }) });
       if (traceId) send("trace", { traceId });
       if (result.cards.length) send("cards", { cards: result.cards });
       if (result.summary) send("summary", { summary: result.summary });
@@ -305,6 +340,93 @@ export function createApp(deps: AppDeps) {
     } finally {
       busy.delete(key);
       res.end();
+    }
+  });
+
+  // ---- Simulator API: one JSON reply per buyer message, for chat simulators (see docs/SIMULATOR_API.md) ----
+
+  const perKey = new RateLimiter(120, 60_000);
+
+  /** Checks the X-Bot-Key header against the bot in the URL; sends the error and returns null when it fails. */
+  function simulatorSeller(req: Request, res: Response): SellerContext | null {
+    const raw = req.headers["x-bot-key"];
+    const key = looksLikeBotKey(raw) ? db.findBotKey(hashBotKey(raw)) : null;
+    if (!key) {
+      res.status(401).json({ error: "Missing or invalid X-Bot-Key" });
+      return null;
+    }
+    const seller = sellers.get(String(req.params.slug));
+    if (!seller) {
+      res.status(404).json({ error: "Unknown bot slug" });
+      return null;
+    }
+    if (key.seller !== seller.config.slug) {
+      res.status(403).json({ error: "This X-Bot-Key does not match the bot slug" });
+      return null;
+    }
+    if (!perKey.allow(String(key.id))) {
+      res.status(429).json({ error: "Too many requests for this key. Please slow down." });
+      return null;
+    }
+    db.touchBotKey(key.id);
+    return seller;
+  }
+
+  app.get("/api/v1/bots/:slug", (req, res) => {
+    const seller = simulatorSeller(req, res);
+    if (!seller) return;
+    res.json({ slug: seller.config.slug, name: seller.config.name, greeting: introFor(seller.config.name), demoOtp: config.DEMO_OTP });
+  });
+
+  app.post("/api/v1/bots/:slug/chat", async (req, res) => {
+    const seller = simulatorSeller(req, res);
+    if (!seller) return;
+    const slug = seller.config.slug;
+    const given = req.body?.sessionId;
+    if (given !== undefined && (typeof given !== "string" || !SESSION_ID_RE.test(given))) {
+      res.status(400).json({ error: "sessionId must be 8 to 64 letters, digits, - or _" });
+      return;
+    }
+    const sessionId: string = given ?? randomUUID();
+    const input = checkInput(req.body?.message);
+    if (!input.ok) {
+      res.status(400).json({ error: input.error, sessionId });
+      return;
+    }
+    // Simulated chats live apart from browser chats, so a simulator can never continue a real buyer's chat.
+    const internalId = `sim-${sessionId}`;
+    const key = `${slug}:${internalId}`;
+    if (!perSession.allow(key)) {
+      res.status(429).json({ error: "Too many messages in this conversation. Please slow down.", sessionId });
+      return;
+    }
+    if (busy.has(key)) {
+      res.status(409).json({ error: "The previous message in this conversation is still being answered.", sessionId });
+      return;
+    }
+    const meta = req.body?.meta && typeof req.body.meta === "object" ? req.body.meta : {};
+    const sim: Record<string, string> = {};
+    for (const k of ["runId", "scenarioId", "label"]) if (typeof meta[k] === "string" && meta[k]) sim[k] = meta[k].slice(0, 120);
+    const pageUrl = typeof req.body?.pageUrl === "string" ? req.body.pageUrl.slice(0, 300) : undefined;
+    busy.add(key);
+    try {
+      const { session, result, traceId } = await chatTurn(req, seller, internalId, input.text, { redacted: input.redacted, pageUrl, test: true, sim });
+      res.json({
+        sessionId,
+        reply: result.text,
+        chips: result.chips,
+        cards: result.cards.map((c) => ({ type: c.type, title: c.title, url: c.url })),
+        ...(result.summary ? { summary: result.summary } : {}),
+        askFor: result.askFor,
+        leadStage: session.lead.stage,
+        ...(traceId ? { traceId } : {}),
+        test: true,
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Something went wrong. Please try again.", sessionId });
+    } finally {
+      busy.delete(key);
     }
   });
 

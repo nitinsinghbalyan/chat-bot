@@ -17,6 +17,7 @@ chat-bot/
 │
 ├── docs/
 │   ├── ARCHITECTURE.md        System design: context, buyer journey, chat turn, knowledge, prompts, guardrails, data, routes
+│   ├── SIMULATOR_API.md       For chat simulators (AI Assistant Auditor): keys, JSON chat endpoint, errors, test leads
 │   └── REPO_STRUCTURE.md      This file
 │
 ├── memory/                    Long-term project memory (CLAUDE.md is the short version)
@@ -54,12 +55,13 @@ chat-bot/
 ├── src/
 │   ├── server.ts         ~80  Entry point: config, DB, registry, tracing, crawl schedule, graceful shutdown (flushes traces)
 │   ├── config.ts         ~70  Reads environment variables (DATA_DIR, ADMIN_PASSWORD, model, LANGFUSE_*, …)
-│   ├── app.ts           ~450  Express app: public API (/api/sellers, /api/chat SSE, OTP, feedback), sites, /health, fixed intro text
+│   ├── app.ts           ~560  Express app: chat turn (shared), widget API (SSE), simulator API (/api/v1, JSON), feedback, sites, /health
+│   ├── botKeys.ts        ~20  Simulator API keys: generate, hash, shape check
 │   ├── claude.ts        ~370  The chat turn loop: builds per-turn blocks, streams Claude, runs tools, ends on show_options
 │   ├── tools.ts         ~345  Tool definitions and handlers: save_lead, show_options, share_media; lead status text; summary card
 │   ├── guardrails.ts    ~260  Code guardrails that back the prompt: price scrub, phone allow-list, OTP/save rules, logging
 │   ├── session.ts       ~160  In-memory chat state: chat id, lead stage, category, asked ISQs, usage and cost
-│   ├── db.ts            ~410  SQLite (better-sqlite3): sessions, transcript, leads, guardrail events, prompts, versions; migrations
+│   ├── db.ts            ~480  SQLite (better-sqlite3): sessions, transcript, leads (+ test flag), guardrail events, prompts, versions, bot keys; migrations
 │   ├── isqTracker.ts    ~100  Server-side category per turn and asked/answered ISQs; builds <spec_questions>
 │   ├── faq.ts           ~240  Common FAQ: parse Excel/CSV, search per message (stopwords, stemming), build <faq>
 │   │
@@ -77,7 +79,7 @@ chat-bot/
 │   ├── shareMedia.ts    ~175  Resolves share_media ids to cards from the KB JSON and catalogue
 │   │
 │   ├── tracing.ts       ~580  Langfuse (OTLP): one trace per buyer message, session <seller>:<chatId>, cost score, test button
-│   ├── admin.ts        ~1090  /admin pages: seller rows + Manage, uploads, crawls, personas, common prompts, FAQ, leads, versions
+│   ├── admin.ts        ~1160  /admin pages: seller rows + Manage, uploads, crawls, personas, simulator keys, common prompts, FAQ, leads, versions
 │   └── site/
 │       ├── html.ts       ~60  Escaping helpers and safe URL checks
 │       └── pages.ts     ~635  Server-rendered directory (/) and seller websites (/s/<slug>/…)
@@ -97,6 +99,7 @@ chat-bot/
     ├── promptVersions.test.ts Versions, restore, auto-apply of newer defaults
     ├── db.test.ts             Schema, migrations, queries
     ├── feedback.test.ts       Feedback vote and Langfuse scores
+    ├── simulatorApi.test.ts   Simulator API: key checks, JSON journey, test leads, admin keys
     ├── tracing.test.ts        Spans, session ids, masking, export errors
     ├── crawler.test.ts        Sitemap parsing and page extraction
     ├── catalogue.test.ts      Catalogue search

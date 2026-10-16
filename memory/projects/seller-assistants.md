@@ -64,6 +64,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | Claude changes prompts itself in the repo; built-ins apply over older admin edits on deploy (no "Use the new built-in" click) | Nitin (Oct 16) |
 | Every trace has a unique per-conversation session id `<seller>:<chatId>` (audit); stamped under new and legacy attribute names | Nitin |
 | Common FAQ Excel (Question, Answer, optional Category), searched per message as `<faq>`, scoped per seller by category; guardrails win | Nitin |
+| Simulator API for the AI Assistant Auditor: new vendor there (not NIVA impersonation), per-seller `X-Bot-Key` keys made in admin (hash stored, shown once), one JSON reply per message at `/api/v1/bots/<slug>/chat`; simulated leads saved as **test** (hidden on Leads by default), traces tagged `eval` | Nitin (Oct 16) |
 | SQLite on a Render disk; Render hosting | Nitin |
 | Multi-seller; KB supplied per seller | Nitin |
 | Widget bottom-right (was bottom-left) | Nitin |
@@ -106,6 +107,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | #20 | New journey: fixed welcome without chips, mobile on the first message, machine asked after the name if unclear |
 | #21 | First reply asks only for the mobile number (no machine confirmation) |
 | #22 | Docs: `docs/ARCHITECTURE.md` (system, journey, chat turn, knowledge/ISQ/FAQ, prompts, guardrails, tracing, data, routes) and `docs/REPO_STRUCTURE.md` |
+| #23 | Simulator API (`docs/SIMULATOR_API.md`): bot keys in admin, JSON chat endpoint, test leads, `eval` trace tag; chat turn shared by widget and API |
 
 ## Open items / ideas
 - **Langfuse (self-hosted `langfuse.intermesh.net`):** after #16/#18, check that traces appear grouped by conversation. If not, **Test Langfuse** on /admin names the failing step (server version, upload refused, or accepted but not stored, which is for the intermesh Langfuse admins).
@@ -116,4 +118,5 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 - Large-catalogue answers (index/partial modes) are untested with the live model.
 - Check on production that seller photos (imimg.com) load; they can't be seen from cloud sessions.
 - The seller's own site rate-limits the Render crawler; low priority since the JSON covers the website.
+- **Simulator:** Nitin generates a key per seller on /admin and the Auditor team adds a "Seller assistants" vendor (Base URL, bot slug, X-Bot-Key) per `docs/SIMULATOR_API.md`. Auditor code is not in this repo.
 - Ideas (not built): per-chat cost readout on the admin transcript page; a `persona.json` for each new seller; an About page from the export's `company_pages`.
