@@ -63,3 +63,4 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 - Never `pkill -f src/server.ts`: it kills the shell. Find PIDs with `ps -eo pid,args | grep -E "node.*src/server\.ts"`.
 - Playwright: `$(npm root -g)/playwright/index.mjs` with `executablePath: "/opt/pw-browsers/chromium"`.
 → More: memory/context/stack.md
+→ Architecture and flows: docs/ARCHITECTURE.md; file tree: docs/REPO_STRUCTURE.md

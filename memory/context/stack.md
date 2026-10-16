@@ -56,3 +56,4 @@ Don't call them `CLAUDE_*`: the harness sets `CLAUDE_EFFORT`, which once clashed
 - Trace session checks: record the stand-in Langfuse's OTLP bodies and count `"key":"session.id"` and `"key":"langfuse.session.id"` per span; both should hold one `<seller>:<uuid>` per conversation.
 - Tracing checks: run `e2e/fake-langfuse.mjs` (records OTLP and score requests) on port 3470 and start the app with `LANGFUSE_BASE_URL=http://127.0.0.1:3470`, test keys, `LANGFUSE_FLUSH_AT=1` and `NO_PROXY=127.0.0.1`.
 - Admin browser checks: add 3+ sellers through the API so the seller filter box shows (it appears above 3).
+- Architecture and flows are in `docs/ARCHITECTURE.md`; the file tree is in `docs/REPO_STRUCTURE.md`. Update them when adding files or changing the journey.

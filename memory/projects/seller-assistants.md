@@ -16,6 +16,8 @@
 - Tracing health is visible: startup key check (EU then US cloud auto-detect), `/health` `tracing.state`, red banner on `/admin` when keys are rejected, `[tracing] export failed` in logs.
 
 ## Architecture (where things live)
+Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `docs/REPO_STRUCTURE.md`. Keep both updated when files or flows change.
+
 | Area | Files |
 |------|-------|
 | HTTP: chat API (SSE), website routes | `src/app.ts` |
@@ -103,6 +105,7 @@
 | #19 | Built-in prompts and personas apply automatically on deploy; Jayshree persona asks the `<spec_questions>`; memory refresh |
 | #20 | New journey: fixed welcome without chips, mobile on the first message, machine asked after the name if unclear |
 | #21 | First reply asks only for the mobile number (no machine confirmation) |
+| #22 | Docs: `docs/ARCHITECTURE.md` (system, journey, chat turn, knowledge/ISQ/FAQ, prompts, guardrails, tracing, data, routes) and `docs/REPO_STRUCTURE.md` |
 
 ## Open items / ideas
 - **Langfuse (self-hosted `langfuse.intermesh.net`):** after #16/#18, check that traces appear grouped by conversation. If not, **Test Langfuse** on /admin names the failing step (server version, upload refused, or accepted but not stored, which is for the intermesh Langfuse admins).

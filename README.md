@@ -11,6 +11,8 @@ Each bot answers buyers' discovery and enquiry questions on its seller's behalf.
 
 ## How it works
 
+Diagrams of the whole system are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ```
 kb/sellers/<seller>/ (KB you supply) ──► SellerRegistry ──► per seller: KB, cached system prompt, catalogue
 sitemap.xml ──► crawler ──► catalogue.json ──► (a) the seller's mini-website  (b) the bot's retrieval
@@ -383,6 +385,8 @@ npm run eval      # live scenarios against the real model for Jayshree, one or m
 `npm run eval` calls the Claude API and costs a small amount per run.
 
 ## Project layout
+
+Full file tree with each file's job: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md). System design and flows (journey, chat turn, ISQs, data, routes): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ```
 kb/sellers/<slug>/   KB you supply per seller (+ optional persona.json, seller_kb.json, catalogue)
