@@ -28,6 +28,18 @@ export interface StoredLead extends Lead {
   id: number;
 }
 
+/** A simulator API key (only its hash is stored; the key itself is shown once when generated). */
+export interface BotKey {
+  id: number;
+  seller: string;
+  /** The first characters of the key, so admins can tell keys apart. */
+  prefix: string;
+  label: string;
+  createdAt: string;
+  lastUsedAt?: string;
+  revokedAt?: string;
+}
+
 /** A seller's brand persona: added to the system prompt, and to every buyer turn. */
 export interface SellerPersona {
   system: string;
@@ -118,6 +130,17 @@ CREATE TABLE IF NOT EXISTS seller_prompts (
   user_persona    TEXT NOT NULL DEFAULT '',
   updated_at      TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS bot_keys (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  seller        TEXT NOT NULL,
+  key_hash      TEXT NOT NULL UNIQUE,
+  prefix        TEXT NOT NULL,
+  label         TEXT NOT NULL DEFAULT '',
+  created_at    TEXT NOT NULL,
+  last_used_at  TEXT,
+  revoked_at    TEXT
+);
 `;
 
 /** SQLite store for chat sessions, transcripts, leads and guardrail events. */
@@ -143,6 +166,10 @@ export class ChatDb {
       if (!(this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).some((c) => c.name === "chat_id")) {
         this.db.exec(`ALTER TABLE ${table} ADD COLUMN chat_id TEXT`);
       }
+    }
+    // Leads from simulated chats (the simulator API) are kept but hidden from the Leads page by default.
+    if (!(this.db.prepare("PRAGMA table_info(leads)").all() as Array<{ name: string }>).some((c) => c.name === "test")) {
+      this.db.exec("ALTER TABLE leads ADD COLUMN test INTEGER NOT NULL DEFAULT 0");
     }
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS leads_seller ON leads(seller, id);
@@ -237,8 +264,8 @@ export class ChatDb {
     return Number(
       this.db
         .prepare(
-          `INSERT INTO leads (created_at, seller, session_id, mobile, name, product, requirements, quantity, city, page_url, chat_id)
-           VALUES (@createdAt, @seller, @sessionId, @mobile, @name, @product, @requirements, @quantity, @city, @pageUrl, @chatId)`,
+          `INSERT INTO leads (created_at, seller, session_id, mobile, name, product, requirements, quantity, city, page_url, chat_id, test)
+           VALUES (@createdAt, @seller, @sessionId, @mobile, @name, @product, @requirements, @quantity, @city, @pageUrl, @chatId, @test)`,
         )
         .run({
           createdAt: lead.createdAt,
@@ -252,6 +279,7 @@ export class ChatDb {
           city: lead.city,
           pageUrl: lead.pageUrl ?? null,
           chatId: lead.chatId ?? null,
+          test: lead.test ? 1 : 0,
         }).lastInsertRowid,
     );
   }
@@ -266,12 +294,12 @@ export class ChatDb {
     return true;
   }
 
-  listLeads(limit = 500, seller?: string): StoredLead[] {
-    const rows = (
-      seller
-        ? this.db.prepare("SELECT * FROM leads WHERE seller = ? ORDER BY id DESC LIMIT ?").all(seller, limit)
-        : this.db.prepare("SELECT * FROM leads ORDER BY id DESC LIMIT ?").all(limit)
-    ) as Record<string, any>[];
+  /** Newest first. Leads from simulated chats only with `includeTest`. */
+  listLeads(limit = 500, seller?: string, opts: { includeTest?: boolean } = {}): StoredLead[] {
+    const where = [seller ? "seller = @seller" : "", opts.includeTest ? "" : "test = 0"].filter(Boolean);
+    const rows = this.db
+      .prepare(`SELECT * FROM leads ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY id DESC LIMIT @limit`)
+      .all({ seller: seller ?? null, limit }) as Record<string, any>[];
     return rows.map((r) => ({
       id: r.id,
       createdAt: r.created_at,
@@ -285,13 +313,47 @@ export class ChatDb {
       city: r.city,
       pageUrl: r.page_url ?? undefined,
       chatId: r.chat_id ?? undefined,
+      ...(r.test ? { test: true } : {}),
     }));
   }
 
-  /** Lead count per seller slug. */
+  /** Lead count per seller slug (real buyers only, not simulated chats). */
   leadCounts(): Record<string, number> {
-    const rows = this.db.prepare("SELECT seller, COUNT(*) AS n FROM leads GROUP BY seller").all() as Array<{ seller: string; n: number }>;
+    const rows = this.db.prepare("SELECT seller, COUNT(*) AS n FROM leads WHERE test = 0 GROUP BY seller").all() as Array<{ seller: string; n: number }>;
     return Object.fromEntries(rows.map((r) => [r.seller, r.n]));
+  }
+
+  /** Number of leads from simulated chats, per seller. */
+  testLeadCount(seller?: string): number {
+    const row = (seller
+      ? this.db.prepare("SELECT COUNT(*) AS n FROM leads WHERE test = 1 AND seller = ?").get(seller)
+      : this.db.prepare("SELECT COUNT(*) AS n FROM leads WHERE test = 1").get()) as { n: number };
+    return row.n;
+  }
+
+  createBotKey(seller: string, keyHash: string, prefix: string, label: string): number {
+    return Number(
+      this.db.prepare("INSERT INTO bot_keys (seller, key_hash, prefix, label, created_at) VALUES (?, ?, ?, ?, ?)").run(seller, keyHash, prefix, label, new Date().toISOString()).lastInsertRowid,
+    );
+  }
+
+  /** The active (not revoked) key with this hash. */
+  findBotKey(keyHash: string): BotKey | null {
+    const r = this.db.prepare("SELECT * FROM bot_keys WHERE key_hash = ? AND revoked_at IS NULL").get(keyHash) as Record<string, any> | undefined;
+    return r ? botKeyRow(r) : null;
+  }
+
+  /** A seller's keys, newest first (revoked ones included). */
+  listBotKeys(seller: string): BotKey[] {
+    return (this.db.prepare("SELECT * FROM bot_keys WHERE seller = ? ORDER BY id DESC").all(seller) as Record<string, any>[]).map(botKeyRow);
+  }
+
+  revokeBotKey(seller: string, id: number): boolean {
+    return this.db.prepare("UPDATE bot_keys SET revoked_at = ? WHERE id = ? AND seller = ? AND revoked_at IS NULL").run(new Date().toISOString(), id, seller).changes > 0;
+  }
+
+  touchBotKey(id: number) {
+    this.db.prepare("UPDATE bot_keys SET last_used_at = ? WHERE id = ?").run(new Date().toISOString(), id);
   }
 
   logGuardrailEvents(seller: string, sessionId: string, events: Array<{ rule: string; original: string }>) {
@@ -410,4 +472,14 @@ const toVersion = (r: Record<string, any>, number: number): PromptVersion => ({
   source: r.source,
   note: r.note ?? "",
   createdAt: r.created_at,
+});
+
+const botKeyRow = (r: Record<string, any>): BotKey => ({
+  id: r.id,
+  seller: r.seller,
+  prefix: r.prefix,
+  label: r.label,
+  createdAt: r.created_at,
+  ...(r.last_used_at ? { lastUsedAt: r.last_used_at } : {}),
+  ...(r.revoked_at ? { revokedAt: r.revoked_at } : {}),
 });

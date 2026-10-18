@@ -224,6 +224,10 @@ A replaced sentence becomes a short hand-off line. The model is told about the c
 
 To send real OTPs, replace the demo check in `src/tools.ts` with your SMS provider's calls, and stop returning `demo: true` from `/api/sellers/:slug` in `src/app.ts`.
 
+## Simulator API (chat simulators such as the AI Assistant Auditor)
+
+A simulator can run scripted buyer chats against any seller's bot, one JSON reply per message: `POST /api/v1/bots/<slug>/chat` with an `X-Bot-Key` header. Generate keys per seller on `/admin` → **Manage** → **Simulator API**. Each key is shown once and can be revoked. Simulated chats run the real journey. Their leads are saved as **test** leads, which the Leads page hides unless you tick **Show test chats**, and their traces are tagged `eval`. Full reference: [docs/SIMULATOR_API.md](docs/SIMULATOR_API.md).
+
 ## Tracing (Langfuse)
 
 Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to send traces to Langfuse, plus `LANGFUSE_BASE_URL` (or `LANGFUSE_HOST`) for a self-hosted Langfuse. Without the keys nothing is sent. On Render, add them under Environment and redeploy. The release is the deployed git commit (`RENDER_GIT_COMMIT`), and the environment is `LANGFUSE_ENVIRONMENT`, else `NODE_ENV`.

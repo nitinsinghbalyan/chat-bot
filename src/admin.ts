@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import type { ChatDb, PromptVersion, SellerPersona } from "./db.js";
+import { generateBotKey } from "./botKeys.js";
 import { diffLines } from "./diff.js";
 import { activeVersionId, COMMON_SCOPE, recordVersion, sellerScope } from "./promptVersions.js";
 import { defaultSystemTemplate, REQUIRED_PLACEHOLDERS, sharedGuardrails, validateSystemTemplate } from "./prompts.js";
@@ -308,7 +309,33 @@ export function mountAdmin(app: Express, d: AdminDeps) {
     return `<section class="block files"><h3>Extra files <span class="muted small">(optional)</span></h3>${items.join("")}</section>`;
   }
 
-  function sellerRow(s: SellerContext, leads: number): string {
+  /** Keys for the simulator API (docs/SIMULATOR_API.md): how to connect, the seller's keys, generate and revoke. */
+  function keysBlock(s: SellerContext, origin: string): string {
+    const slug = esc(s.config.slug);
+    const keys = db.listBotKeys(s.config.slug);
+    const active = keys.filter((k) => !k.revokedAt);
+    const tests = db.testLeadCount(s.config.slug);
+    const list = keys.length
+      ? `<ul class="keys">${keys
+          .map(
+            (k) =>
+              `<li${k.revokedAt ? ' class="revoked"' : ""}><code>${esc(k.prefix)}…</code>${k.label ? ` <span>${esc(k.label)}</span>` : ""} <span class="muted small">created ${esc(ago(k.createdAt))}${k.revokedAt ? ` · revoked ${esc(ago(k.revokedAt))}` : k.lastUsedAt ? ` · last used ${esc(ago(k.lastUsedAt))}` : " · never used"}</span>${
+                k.revokedAt
+                  ? ""
+                  : ` <form class="inline" method="post" action="/admin/sellers/${slug}/keys/${k.id}/revoke" onsubmit="return confirm('Revoke this key? Simulators using it stop working at once.')"><button class="btn small" type="submit">Revoke</button></form>`
+              }</li>`,
+          )
+          .join("")}</ul>`
+      : '<p class="muted small">No keys yet.</p>';
+    return `<section class="block">
+  <h3>Simulator API <span class="muted small">(${plural(active.length, "active key")})</span></h3>
+  <p class="muted small">For chat simulators such as the AI Assistant Auditor: base URL <code>${esc(origin)}</code>, bot slug <code>${slug}</code>, header <code>X-Bot-Key</code>. Simulated chats run the real journey; their leads are saved as test leads${tests ? ` (${tests} so far, on the <a href="/admin/leads?seller=${slug}&amp;test=1">Leads</a> page with Show test chats)` : ""}.</p>
+  ${list}
+  <form class="inline keygen" method="post" action="/admin/sellers/${slug}/keys"><input name="label" maxlength="60" placeholder="Label (optional), e.g. Auditor" aria-label="Key label"><button class="btn small" type="submit">Generate key</button></form>
+</section>`;
+  }
+
+  function sellerRow(s: SellerContext, leads: number, origin: string): string {
     const slug = esc(s.config.slug);
     const u = s.uploaded;
     const persona = personaState(s);
@@ -374,7 +401,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
       <div class="stat"><b>${u?.summary.videos ?? "–"}</b><span>Videos</span></div>
       <div class="stat"><b>${u?.summary.documents ?? "–"}</b><span>PDFs</span></div>
     </div>
-    <div class="blocks">${kbBlock}${filesBlock}${catalogueBlock}${personaBlock}</div>
+    <div class="blocks">${kbBlock}${filesBlock}${catalogueBlock}${personaBlock}${keysBlock(s, origin)}</div>
     ${
       s.source === "admin"
         ? `<footer class="srow-foot"><form class="inline" method="post" action="/admin/sellers/${slug}/delete" onsubmit="return confirm('Delete ${esc(s.config.name).replace(/'/g, "\\'")}? Its website and bot stop working. Leads and chats are kept.')"><button class="btn danger small" type="submit">Delete seller</button></form></footer>`
@@ -410,7 +437,7 @@ ${
     ? `${list.length > 3 ? `<input id="seller-filter" class="filter" type="search" placeholder="Filter sellers by name or slug" aria-label="Filter sellers">` : ""}
 <div class="srows">
   <div class="srows-head" aria-hidden="true"><span>Seller</span><span>Status</span><span>Totals</span><span>Updated</span><span></span></div>
-  ${list.map((s) => sellerRow(s, counts[s.config.slug] ?? 0)).join("")}
+  ${list.map((s) => sellerRow(s, counts[s.config.slug] ?? 0, `${req.protocol}://${req.headers.host}`)).join("")}
 </div>
 <p class="muted small empty-filter" hidden>No seller matches that filter.</p>`
     : `<div class="panel empty">No sellers yet. <a href="/admin/sellers/new">Add the first one</a> by uploading its JSON.</div>`
@@ -1008,13 +1035,47 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
     res.redirect(303, "/admin/prompts?saved=1");
   });
 
+  // ---- Simulator API keys ----
+
+  app.post("/admin/sellers/:seller/keys", requireAdmin, sameOriginPost, express.urlencoded({ extended: false, limit: "4kb" }), (req, res) => {
+    const s = sellers.get(String(req.params.seller));
+    if (!s) return notFound(res);
+    const label = String(req.body?.label ?? "").trim().slice(0, 60);
+    const { key, hash, prefix } = generateBotKey();
+    db.createBotKey(s.config.slug, hash, prefix, label);
+    const slug = esc(s.config.slug);
+    // The key is shown on this page only: just its hash is stored.
+    res.setHeader("Cache-Control", "no-store");
+    res.send(
+      shell(
+        "New simulator key",
+        `<div class="crumb"><a href="/admin#seller-${slug}">← Sellers</a></div><div class="page-head"><div><h1>New simulator key</h1><p class="muted">${esc(s.config.name)}${label ? ` · ${esc(label)}` : ""}</p></div></div>
+<div class="panel newkey">
+  <p><b>Copy this key now.</b> It is shown only once; if you lose it, revoke it and generate another.</p>
+  <div class="keybox"><code id="newkey">${esc(key)}</code><button class="btn small" type="button" onclick="navigator.clipboard.writeText(document.getElementById('newkey').textContent).then(()=>{this.textContent='Copied'})">Copy</button></div>
+  <table class="kv"><tr><th>Base URL</th><td><code>${esc(`${req.protocol}://${req.headers.host}`)}</code></td></tr><tr><th>Bot slug</th><td><code>${slug}</code></td></tr><tr><th>Header</th><td><code>X-Bot-Key: ${esc(key)}</code></td></tr><tr><th>Chat endpoint</th><td><code>POST /api/v1/bots/${slug}/chat</code></td></tr></table>
+  <p class="muted small">See docs/SIMULATOR_API.md in the repo for the request and reply format.</p>
+</div>`,
+        "sellers",
+      ),
+    );
+  });
+
+  app.post("/admin/sellers/:seller/keys/:id/revoke", requireAdmin, sameOriginPost, (req, res) => {
+    const s = sellers.get(String(req.params.seller));
+    if (!s) return notFound(res);
+    db.revokeBotKey(s.config.slug, Number(req.params.id));
+    res.redirect(303, `/admin#seller-${encodeURIComponent(s.config.slug)}`);
+  });
+
   // ---- Leads and transcripts ----
 
   app.get("/admin/leads.csv", requireAdmin, (req, res) => {
     const cols = ["createdAt", "seller", "name", "mobile", "product", "requirements", "quantity", "city", "pageUrl", "sessionId"] as const;
-    const lines = [[...cols, "langfuseSession"].join(",")];
-    for (const lead of db.listLeads(10_000, sellerFilter(req))) {
-      lines.push([...cols.map((c) => csvCell(lead[c] ?? "")), csvCell(lead.chatId ? `${lead.seller}:${lead.chatId}` : "")].join(","));
+    const lines = [[...cols, "langfuseSession", ...(req.query.test === "1" ? ["test"] : [])].join(",")];
+    const withTest = req.query.test === "1";
+    for (const lead of db.listLeads(10_000, sellerFilter(req), { includeTest: withTest })) {
+      lines.push([...cols.map((c) => csvCell(lead[c] ?? "")), csvCell(lead.chatId ? `${lead.seller}:${lead.chatId}` : ""), ...(withTest ? [lead.test ? "test" : ""] : [])].join(","));
     }
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="leads${sellerFilter(req) ? `-${sellerFilter(req)}` : ""}.csv"`);
@@ -1024,19 +1085,25 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
   app.get("/admin/leads", requireAdmin, (req, res) => {
     const filter = sellerFilter(req);
     const name = (slug: string) => sellers.get(slug)?.config.name ?? slug;
-    const leads = db.listLeads(500, filter);
+    const withTest = req.query.test === "1";
+    const leads = db.listLeads(500, filter, { includeTest: withTest });
+    const tests = db.testLeadCount(filter);
+    const qs = (o: Record<string, string | undefined>) => {
+      const p = new URLSearchParams(Object.entries(o).filter((e): e is [string, string] => !!e[1]));
+      return p.size ? `?${p}` : "";
+    };
     const rows = leads
       .map(
         (l) =>
-          `<tr><td>${esc(fmtIST(l.createdAt))}</td><td>${esc(name(l.seller))}</td><td>${esc(l.name)}</td><td>${esc(l.mobile)}</td><td>${esc(l.product)}</td><td>${esc(l.requirements)}</td><td>${esc(l.quantity)}</td><td>${esc(l.city)}</td><td><a class="btn small" href="/admin/transcript/${encodeURIComponent(l.sessionId)}${l.chatId ? `?chat=${encodeURIComponent(l.chatId)}` : ""}">Chat</a>${sessionLink(l.chatId ? `${l.seller}:${l.chatId}` : null)}</td></tr>`,
+          `<tr><td>${esc(fmtIST(l.createdAt))}</td><td>${esc(name(l.seller))}</td><td>${esc(l.name)}${l.test ? ' <span class="badge info">Test</span>' : ""}</td><td>${esc(l.mobile)}</td><td>${esc(l.product)}</td><td>${esc(l.requirements)}</td><td>${esc(l.quantity)}</td><td>${esc(l.city)}</td><td><a class="btn small" href="/admin/transcript/${encodeURIComponent(l.sessionId)}${l.chatId ? `?chat=${encodeURIComponent(l.chatId)}` : ""}">Chat</a>${sessionLink(l.chatId ? `${l.seller}:${l.chatId}` : null)}</td></tr>`,
       )
       .join("");
     const options = [`<option value="">All sellers</option>`, ...sellers.list().map((s) => `<option value="${esc(s.config.slug)}"${s.config.slug === filter ? " selected" : ""}>${esc(s.config.name)}</option>`)].join("");
     res.send(
       shell(
         filter ? `Leads: ${name(filter)}` : "Leads",
-        `<div class="page-head"><div><h1>Leads</h1><p class="muted">${plural(leads.length, "verified lead")}${filter ? ` for ${esc(name(filter))}` : ""}, newest first</p></div></div>
-<form method="get" class="toolbar"><select name="seller" aria-label="Seller" onchange="this.form.submit()">${options}</select><a class="btn" href="/admin/leads.csv${filter ? `?seller=${encodeURIComponent(filter)}` : ""}">Download CSV</a></form>
+        `<div class="page-head"><div><h1>Leads</h1><p class="muted">${plural(leads.length, "verified lead")}${filter ? ` for ${esc(name(filter))}` : ""}${withTest ? ", test chats included" : ""}, newest first</p></div></div>
+<form method="get" class="toolbar"><select name="seller" aria-label="Seller" onchange="this.form.submit()">${options}</select><label class="check"><input type="checkbox" name="test" value="1"${withTest ? " checked" : ""} onchange="this.form.submit()"> Show test chats${tests ? ` (${tests})` : ""}</label><a class="btn" href="/admin/leads.csv${esc(qs({ seller: filter, test: withTest ? "1" : undefined }))}">Download CSV</a></form>
 <div class="table-wrap">${
           rows
             ? `<table><thead><tr><th>When</th><th>Seller</th><th>Name</th><th>Mobile</th><th>Product</th><th>Requirement</th><th>Qty</th><th>City</th><th></th></tr></thead><tbody>${rows}</tbody></table>`

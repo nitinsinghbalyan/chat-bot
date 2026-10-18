@@ -34,6 +34,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 | **seller row / Manage** | `/admin` lists sellers as one-line rows; **Manage** expands the controls |
 | **model** | `claude-sonnet-5-5`, effort low, 1M context; system prompt ~43k tokens (Jayshree), cached |
 | **demo OTP** | `12345`; no SMS gateway yet |
+| **simulator API / bot key** | For the AI Assistant Auditor: per-seller `X-Bot-Key` from /admin → Manage; `POST /api/v1/bots/<slug>/chat` (JSON); leads saved as **test**, traces tagged `eval`. docs/SIMULATOR_API.md |
 → Full glossary: memory/glossary.md
 
 ## Projects

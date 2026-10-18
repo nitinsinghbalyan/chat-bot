@@ -232,11 +232,12 @@ flowchart LR
 |---|---|---|
 | `sessions` | Live chat state | `id` (`<seller>:<browserId>`), `chat_id`, messages, lead (JSON: stage, mobile, name, category, asked ISQs), seen catalogue, usage (tokens, cost) |
 | `transcript` | What buyers typed (redacted) and what they saw | `session_id`, `chat_id`, role, text, guardrails, `trace_id` |
-| `leads` | Verified enquiries | seller, `session_id`, `chat_id`, mobile, name, product, requirements, quantity, city, page_url |
+| `leads` | Verified enquiries | seller, `session_id`, `chat_id`, mobile, name, product, requirements, quantity, city, page_url, `test` (1 = from the simulator API, hidden on the Leads page by default) |
 | `guardrail_events` | Output-filter replacements | seller, session, rule, original |
 | `platform_prompts` | Admin edits of the common system prompt and guardrails | key, value, updated_at |
 | `seller_prompts` | Admin-saved brand personas | seller, system, user |
 | `prompt_versions` | History of all of the above plus shipped defaults | scope (`common` / `seller:<slug>`), a, b, source, note |
+| `bot_keys` | Simulator API keys | seller, `key_hash` (sha256; the key itself is shown once), prefix, label, created / last used / revoked |
 
 Files on the data disk:
 - `sellers/<slug>/seller_kb.json` (uploaded KB JSON)
@@ -253,8 +254,9 @@ Files on the data disk:
 |---|---|
 | Health | `GET /health` (sellers, model, tracing status) |
 | Chat API | `GET /api/sellers/:seller` (widget settings, fixed intro) · `POST /api/chat` (SSE) · `POST /api/feedback` |
+| Simulator API (`X-Bot-Key`, any origin; see [SIMULATOR_API.md](SIMULATOR_API.md)) | `GET /api/v1/bots/:slug` (name, welcome, demo OTP) · `POST /api/v1/bots/:slug/chat` (one JSON reply per message; chat saved as test, traces tagged `eval`) |
 | Website | `GET /` (directory, visit-only) · `/s/:seller/` · `/about` · `/products` · `/contact` · `/c/:slug` · `/p/:slug` · `/search` |
-| Admin (Basic auth, same-origin POSTs) | `/admin` (seller rows, tracing test) · `/admin/sellers/new` · `/admin/sellers/:seller/kb` (+ `.json`, delete) · `/admin/sellers/:seller/files/:kind` (+ delete) · `/admin/sellers/:seller/recrawl` · `/admin/sellers/:seller/prompts` · `/admin/prompts` · `/admin/prompts/versions/:id` (+ restore) · `/admin/faq` (+ download, delete) · `/admin/tracing/test` · `/admin/leads` (+ `.csv`) · `/admin/transcript/:sessionId` |
+| Admin (Basic auth, same-origin POSTs) | `/admin` (seller rows, tracing test) · `/admin/sellers/new` · `/admin/sellers/:seller/kb` (+ `.json`, delete) · `/admin/sellers/:seller/files/:kind` (+ delete) · `/admin/sellers/:seller/recrawl` · `/admin/sellers/:seller/prompts` · `/admin/sellers/:seller/keys` (+ `/:id/revoke`) · `/admin/prompts` · `/admin/prompts/versions/:id` (+ restore) · `/admin/faq` (+ download, delete) · `/admin/tracing/test` · `/admin/leads` (+ `.csv`) · `/admin/transcript/:sessionId` |
 | Static | `public/` (widget.js, site.css, admin.css, demo.html) |
 
 ---
