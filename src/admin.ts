@@ -13,7 +13,7 @@ import { diffLines } from "./diff.js";
 import { activeVersionId, COMMON_SCOPE, recordVersion, sellerScope } from "./promptVersions.js";
 import { defaultSystemTemplate, REQUIRED_PLACEHOLDERS, sharedGuardrails, validateSystemTemplate } from "./prompts.js";
 import { SELLER_KB_TEMPLATE, validateSellerKb } from "./sellerKb.js";
-import { FAQ_LIMIT_BYTES, parseFaq, type FaqStore } from "./faq.js";
+import { FAQ_LIMIT_BYTES, parseFaq, unknownSellerNames, type FaqStore } from "./faq.js";
 import { isSellerFileKind, SELLER_FILES, type SellerFileKind } from "./sellerFiles.js";
 import { parseSellerFile, sellerConfigSchema, SLUG_RE, type SellerContext, type SellerRegistry } from "./sellers.js";
 import { esc } from "./site/html.js";
@@ -278,8 +278,8 @@ export function mountAdmin(app: Express, d: AdminDeps) {
   function extraFilesBlock(s: SellerContext): string {
     const slug = esc(s.config.slug);
     const hints: Record<SellerFileKind, string> = {
-      "business-card": "Added to the business card the bot uses. GST, bank, turnover, staff, ratings, prices and terms are left out.",
-      mcat: "Spec questions (ISQs) for categories and product cards that have none, from the MCATs that match this seller.",
+      "business-card": "The seller's policy card. Every section becomes a handling rule for the bot; GST numbers, bank, turnover, staff and ratings are left out and amounts, percentages and payment or delivery terms are removed.",
+      mcat: "Spec questions per MCAT, generated for this seller. The bot asks the specs of the buyer's product's MCAT that this seller's products carry; see Knowledge mapping below.",
       "product-cards": s.uploaded ? "Added to the products from the knowledge base JSON." : "Replaces the KB folder's product_cards.json.",
     };
     const items = (Object.keys(SELLER_FILES) as SellerFileKind[]).map((kind) => {
@@ -332,6 +332,44 @@ export function mountAdmin(app: Express, d: AdminDeps) {
   <p class="muted small">For chat simulators such as the AI Assistant Auditor: base URL <code>${esc(origin)}</code>, bot slug <code>${slug}</code>, header <code>X-Bot-Key</code>. Simulated chats run the real journey; their leads are saved as test leads${tests ? ` (${tests} so far, on the <a href="/admin/leads?seller=${slug}&amp;test=1">Leads</a> page with Show test chats)` : ""}.</p>
   ${list}
   <form class="inline keygen" method="post" action="/admin/sellers/${slug}/keys"><input name="label" maxlength="60" placeholder="Label (optional), e.g. Auditor" aria-label="Key label"><button class="btn small" type="submit">Generate key</button></form>
+</section>`;
+  }
+
+  /** The Knowledge mapping block: how the KB JSON, MCAT file, product cards, FAQs and policy card join up for this seller. */
+  function mappingBlock(s: SellerContext): string {
+    const m = s.mapping;
+    const slug = esc(s.config.slug);
+    if (!m) return `<section class="block"><h3>Knowledge mapping</h3><p class="muted small">Upload the knowledge base JSON to see how categories, MCATs, product cards and FAQs join up.</p></section>`;
+    const mcatName = (x: { id: string; name: string | null; products: number; inFile: boolean }) => `${x.name ? esc(x.name) : `MCAT ${esc(x.id)}`}${x.inFile ? "" : ' <span class="badge warn" title="Not in the MCAT file">missing</span>'} <span class="muted small">(${x.products})</span>`;
+    const rows = m.categories
+      .map(
+        (c) => `<tr${c.flags.length ? ' class="flagged"' : ""}><td>${esc(c.name)}<br><span class="muted small">${plural(c.products, "product")}</span></td><td>${c.mainMcat ? mcatName(c.mainMcat) : '<span class="muted">none</span>'}${
+          c.otherMcats.length ? `<br><span class="muted small">+ ${c.otherMcats.slice(0, 4).map(mcatName).join(", ")}${c.otherMcats.length > 4 ? ` and ${c.otherMcats.length - 4} more` : ""}</span>` : ""
+        }</td><td>${
+          c.questions.isqs.length
+            ? `<span class="badge ${c.questions.source === "mcat" ? "ok" : "info"}">${c.questions.source === "mcat" ? "MCAT file" : "derived"}</span> <ol class="isqs">${c.questions.isqs.map((q) => `<li>${esc(q.question)} <span class="muted small">${esc(q.options.join(" / "))}</span></li>`).join("")}</ol>`
+            : '<span class="badge warn">no questions</span>'
+        }${c.flags.length ? `<div class="muted small">${c.flags.map(esc).join("; ")}</div>` : ""}</td></tr>`,
+      )
+      .join("");
+    const cardRows = m.cards.length
+      ? `<details class="notes"><summary>${plural(m.cards.length, "product card")}: ${m.cards.filter((c) => c.how !== "none").length} mapped</summary><ul>${m.cards
+          .map((c) => `<li>${esc(c.name)} → ${c.how === "none" ? '<span class="badge warn">no match</span>' : `${esc(c.category ?? "no category")}${c.mcat ? ` · ${esc(c.mcat.name ?? `MCAT ${c.mcat.id}`)}` : ""} <span class="muted small">(by ${c.how})</span>`}</li>`)
+          .join("")}</ul></details>`
+      : "";
+    const mf = m.mcatFile;
+    const fileLine = mf.uploaded
+      ? `MCAT file: ${mf.entries} entries, ${mf.usedById} used by the products' MCAT ids${mf.usedByName.length ? `, ${mf.usedByName.length} by name` : ""}${mf.unused.length ? `, ${mf.unused.length} unused` : ""}${mf.missing.length ? `; <b>${mf.missing.length} MCAT id${mf.missing.length === 1 ? "" : "s"} missing from the file</b>` : ""}.`
+      : "No MCAT file uploaded.";
+    const faqLine = `FAQs: ${plural(m.faqs.product, "product FAQ")} in the KB JSON${m.faqs.productPriced ? ` (${m.faqs.productPriced} left out for stating a price)` : ""}.`;
+    const cardLine = m.policyCard ? `Policy card: ${plural(m.policyCard.sections.length, "section")} kept (${esc(m.policyCard.sections.join(", "))})${m.policyCard.stripped ? `, ${m.policyCard.stripped} amounts or terms removed` : ""}.` : "No policy card uploaded.";
+    return `<section class="block mapping">
+  <h3>Knowledge mapping <span class="muted small">(${plural(m.categories.length, "category", "categories")} · ${m.flags.length ? `${plural(m.flags.length, "note")}` : "all mapped"})</span></h3>
+  <p class="muted small">Each category's main MCAT and the questions asked when only the category is known. When the buyer names a product, its own MCAT's questions are used instead. <a href="/admin/sellers/${slug}/mapping.json">mapping.json</a></p>
+  ${m.flags.length ? `<ul class="flags">${m.flags.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
+  <p class="muted small">${fileLine} ${faqLine} ${cardLine}${m.looseProducts ? ` ${plural(m.looseProducts, "product")} in no category.` : ""}</p>
+  <details class="notes"><summary>Categories, MCATs and questions</summary><div class="table-wrap"><table class="map"><thead><tr><th>Category</th><th>MCATs</th><th>Questions</th></tr></thead><tbody>${rows}</tbody></table></div></details>
+  ${cardRows}
 </section>`;
   }
 
@@ -401,7 +439,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
       <div class="stat"><b>${u?.summary.videos ?? "–"}</b><span>Videos</span></div>
       <div class="stat"><b>${u?.summary.documents ?? "–"}</b><span>PDFs</span></div>
     </div>
-    <div class="blocks">${kbBlock}${filesBlock}${catalogueBlock}${personaBlock}${keysBlock(s, origin)}</div>
+    <div class="blocks">${kbBlock}${filesBlock}${mappingBlock(s)}${catalogueBlock}${personaBlock}${keysBlock(s, origin)}</div>
     ${
       s.source === "admin"
         ? `<footer class="srow-foot"><form class="inline" method="post" action="/admin/sellers/${slug}/delete" onsubmit="return confirm('Delete ${esc(s.config.name).replace(/'/g, "\\'")}? Its website and bot stop working. Leads and chats are kept.')"><button class="btn danger small" type="submit">Delete seller</button></form></footer>`
@@ -442,7 +480,7 @@ ${
 <p class="muted small empty-filter" hidden>No seller matches that filter.</p>`
     : `<div class="panel empty">No sellers yet. <a href="/admin/sellers/new">Add the first one</a> by uploading its JSON.</div>`
 }
-<p class="note">The knowledge base JSON is the seller export (version 3.0: <code>seller</code>, <code>company_pages</code>, <code>photo_gallery</code>, <code>categories</code>, <code>products</code>). Prices, delivery and payment terms, turnover, staff numbers, year of establishment, GST, bank and rating details in it are never given to the bot. The website still shows listed starting prices.</p>
+<p class="note">The knowledge base JSON is the seller export (version 5.0, or 3.0: <code>seller</code>, <code>company_pages</code>, <code>photo_gallery</code>, <code>categories</code>, <code>products</code> with their <code>faqs</code>). Prices, delivery and payment terms, turnover, staff numbers, year of establishment, GST, bank and rating details in it are never given to the bot. The website still shows listed starting prices.</p>
 ${DROPZONE_SCRIPT}${ROWS_SCRIPT}`,
         "sellers",
       ),
@@ -674,20 +712,22 @@ ${DROPZONE_SCRIPT}
     const perSeller = f
       ? sellers
           .list()
-          .map((s) => `${esc(s.config.name)}: ${faq.forSeller(s.kb, { ...s.terms, mcats: s.mcatUse.matched }, s.config.name)?.size ?? 0}`)
+          .map((s) => `${esc(s.config.name)}: ${faq.forSeller(s.kb, { ...s.terms, mcats: s.mcatUse.matched }, s.config.name, { slug: s.config.slug, sellerId: s.uploaded?.view.kb.seller.seller_id })?.size ?? 0}`)
           .join(" · ")
       : "";
+    const unknown = f ? unknownSellerNames(f.rows, sellers.list().map((s) => ({ name: s.config.name, slug: s.config.slug, sellerId: s.uploaded?.view.kb.seller.seller_id }))) : [];
     const preview = f
-      ? `<details class="notes"><summary>First ${Math.min(10, f.rows.length)} of ${plural(f.rows.length, "row")}</summary><table class="faq-preview"><thead><tr><th>Question</th><th>Answer</th><th>Category</th></tr></thead><tbody>${f.rows
+      ? `<details class="notes"><summary>First ${Math.min(10, f.rows.length)} of ${plural(f.rows.length, "row")}</summary><table class="faq-preview"><thead><tr><th>Question</th><th>Answer</th><th>Seller / category</th></tr></thead><tbody>${f.rows
           .slice(0, 10)
-          .map((r) => `<tr><td>${esc(r.question)}</td><td>${esc(r.answer)}</td><td>${esc(r.categories.join(", ") || "all sellers")}</td></tr>`)
+          .map((r) => `<tr><td>${esc(r.question)}</td><td>${esc(r.answer)}</td><td>${esc([...(r.sellers ?? []), ...r.categories].join(", ") || "all sellers")}</td></tr>`)
           .join("")}</tbody></table></details>`
       : "";
     return `<section class="panel" id="faq">
-<div class="row"><div><h2>Common FAQ (Excel)</h2><p class="muted small">One sheet for every seller with the columns <b>Question</b>, <b>Answer</b> and an optional <b>Category</b>. A row with a category is used only for sellers that deal in it; <code>{seller_name}</code> is filled in. The bot looks up the rows that match each buyer message; the guardrails still apply, and rows that state a price are left out.</p></div>
+<div class="row"><div><h2>Common FAQ (Excel)</h2><p class="muted small">One sheet for every seller with the columns <b>Question</b>, <b>Answer</b> and optionally <b>Seller</b> (name, slug or IndiaMART seller id) and <b>Category</b>. A row with a seller is used only for that seller, a row with a category only for sellers that deal in it; <code>{seller_name}</code> is filled in. The bot looks up the rows that match each buyer message; the guardrails still apply, and rows that state a price are left out.</p></div>
 <div class="btn-row">${f ? `<a class="btn small" href="/admin/faq.${f.format}">Download</a><form class="inline" method="post" action="/admin/faq/delete" onsubmit="return confirm('Remove the common FAQ? The bot stops using it from the next message.')"><button class="btn small" type="submit">Remove</button></form>` : ""}</div></div>
 <p>${f ? `${esc(f.summary)} · uploaded ${esc(ago(f.uploadedAt))} <span class="muted small">(${esc(fmtIST(f.uploadedAt))})</span>` : "No FAQ uploaded."}</p>
-${perSeller ? `<p class="muted small">Rows used per seller: ${perSeller}</p>` : ""}
+${perSeller ? `<p class="muted small">Sheet rows used per seller (their own product FAQs from the KB JSON come on top): ${perSeller}</p>` : ""}
+${unknown.length ? `<p class="muted small">Rows for sellers not added here yet: ${esc(unknown.join(", "))}.</p>` : ""}
 ${f?.warnings.length ? `<details class="notes" open><summary>Notes</summary><ul>${f.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></details>` : ""}
 ${preview}
 <div class="dropzone" data-file-upload="/admin/faq" data-format="binary" data-done="/admin/prompts#faq">
@@ -1033,6 +1073,13 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
     applyCommon(system, guardrails);
     recordVersion(db, COMMON_SCOPE, sellers.common.system, sellers.common.guardrails, "saved", String(req.body?.note ?? "").trim());
     res.redirect(303, "/admin/prompts?saved=1");
+  });
+
+  app.get("/admin/sellers/:seller/mapping.json", requireAdmin, (req, res) => {
+    const s = sellers.get(String(req.params.seller));
+    if (!s) return notFound(res);
+    res.setHeader("Content-Disposition", `inline; filename="${s.config.slug}-mapping.json"`);
+    res.json(s.mapping ?? { error: "No knowledge base JSON uploaded for this seller." });
   });
 
   // ---- Simulator API keys ----

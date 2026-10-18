@@ -79,7 +79,7 @@ On Render, the push redeploys. The server then crawls every seller's sitemap on 
 
 ## Seller knowledge base (JSON upload)
 
-On `/admin`, each seller row has **Upload JSON**. The file is the seller export (`_version` 3.0, with `seller`, `company_pages`, `photo_gallery`, `categories` and `products`). **Download a template** on the same page gives a small example. The upload is checked first, and any problem is listed by field (for example `products[2].name: must not be empty`); nothing changes until the file is valid.
+On `/admin`, each seller row has **Upload JSON**. The file is the seller export (`_version` 5.0, or the older 3.0, with `seller`, `company_pages`, `photo_gallery`, `categories` and `products`; version 5.0 adds each product's `faqs` and `taxonomy.glmcat_ids`, its MCAT). **Download a template** on the same page gives a small example. The upload is checked first, and any problem is listed by field (for example `products[2].name: must not be empty`); nothing changes until the file is valid.
 
 Once uploaded, the JSON is the **main source** for both the bot and the seller's website:
 - **The bot:** it replaces `business_card.json` and `product_cards.json` for that seller.
@@ -116,15 +116,18 @@ Each seller's **Manage** panel on `/admin` has an **Extra files** block with thr
 
 | File | Format | How the bot uses it |
 |---|---|---|
-| Business card | Markdown (`.md`) | Added under the business card as "More from the seller's business card". Lines about GST, bank, turnover, staff, ratings, prices, payment or delivery terms are left out (the upload notes say how many). Numbers on contact lines are added to the numbers the bot may share. |
-| MCAT specifications | JSON: `[{"mcat_id", "mcat_name", "specifications": [{"name", "options": [...]}]}]` | **First source of spec questions** (see ISQs above). A category takes its MCAT family's specs from this file by MCAT id, else from an MCAT with an equal name, up to 4 questions with 6 options each. Product cards keep their own questions and use an MCAT only when they have none. Brand, model, price, finance and usage fields are dropped, and unmatched MCATs are ignored. The panel lists the matches. |
+| Business card / policy card | Markdown (`.md`) | Kept whole as handling rules under "Seller policy card (how to handle these topics)": Dispatch, Freight, GST, Packaging, Availability, Pricing basis, Samples, Warranty, Must escalate and so on. GSTIN, bank, turnover, staff, ratings and tenure lines are left out, the internal "Dropped" section too; money, percentages, delivery durations and payment terms inside a rule are replaced by "[amount]" or removed (the upload notes say how many). "Deals in" feeds the seller's terms; numbers on contact lines are added to the numbers the bot may share. |
+| MCAT specifications | JSON: `[{"mcat_id", "mcat_name", "specifications": [{"name", "options": [...]}]}]`, generated for the seller's MCAT ids | **The source of spec questions.** For the buyer's product (else the category's main MCAT), the bot asks the specs of that MCAT that the seller's products in it actually carry, with the seller's own options first; up to 4 questions with 6 options. Product cards keep their own questions and use an MCAT only when they have none. Brand, model, price, finance and usage fields are dropped. The **Knowledge mapping** block shows what each category asks and which MCAT ids the file lacks. |
 | Product cards | JSON, the KB folder's `product_cards.json` format | With a KB JSON: added after its products as "Product cards (uploaded)". For a KB-folder seller: replaces the folder's `product_cards.json`. Broken or duplicate cards are skipped with a note. |
 
 The extra text counts against the large-catalogue prompt budget.
 
+**Knowledge mapping** (Manage → Knowledge mapping, and `/admin/sellers/<slug>/mapping.json`): per category its main MCAT, the other MCATs it pools, the question source (MCAT file or derived from the products) and the questions; the MCAT file entries used, unused and missing; each product card mapped to a category and MCAT or flagged; product FAQ counts; the policy card sections kept. Notes at the top name what needs a look (a category with no questions, an MCAT id missing from the file, an unmatched card). `npm run kb:check` prints the same for sellers on the data disk.
+
 **Common FAQ** (`/admin/prompts`, **Common FAQ (Excel)**): one `.xlsx` (first sheet) or `.csv` for every seller, stored as `DATA_DIR/faq.xlsx` or `faq.csv`.
-- **Columns:** `Question`, `Answer` and an optional `Category`. `FAQ`/`Q`, `Response`/`A` and `MCAT`/`Product` are accepted too.
-- **Scope:** a row with a category (several can be separated by `,` or `;`) is used only for sellers that deal in it, matched like MCATs. A row without one is used for every seller. `{seller_name}` is replaced with the seller's name.
+- **Columns:** `Question`, `Answer` and optionally `Seller` and `Category`. `FAQ`/`Q`/`gl_faq_question`, `Response`/`A`/`gl_faq_answer`, `Seller Name`/`glid` and `MCAT`/`Product` are accepted too.
+- **Scope:** a row with a seller (name, URL slug or IndiaMART seller id; "Exoticasteel" matches "Exotica Steel (India)") is used only for that seller. A row with a category (several separated by `,` or `;`) is used only for sellers that deal in it, matched like MCATs. A row with neither is used for every seller. `{seller_name}` is replaced with the seller's name. The panel lists sheet sellers that match no seller here.
+- **The seller's own FAQs:** a version 5.0 KB JSON carries `faqs` per product; they join the seller's rows (marked "about <product>" in `<faq>`), with or without a common sheet.
 - **Per message:** the buyer's message is searched against the seller's rows (stopwords ignored, light stemming), and up to 3 matching rows go into that turn as `<faq>`.
 - **Guardrails:** they still win. Rows whose answer states a price are left out, and rows that mention tax, delivery, payment, discount or stock are flagged for review.
 - **Panel:** shows the rows used per seller and a preview.

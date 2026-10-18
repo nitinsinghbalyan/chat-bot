@@ -1,10 +1,12 @@
 /**
  * The common FAQ: one Excel (or CSV) sheet for all sellers, uploaded on /admin/prompts.
  *
- * Columns: Question, Answer, and an optional Category. A row with a category applies only to
- * sellers dealing in it (matched like MCATs, see namesMatch); a row without one applies to all.
- * "{seller_name}" in a row is replaced with the seller's name. Each buyer message is searched
- * against the seller's rows and the best few go into that turn as <faq>, like the catalogue.
+ * Columns: Question, Answer, and optionally Category and Seller. A row with a category applies
+ * only to sellers dealing in it (matched like MCATs, see namesMatch); a row with a seller (name,
+ * slug or IndiaMART seller id) only to that seller; a row with neither applies to all.
+ * "{seller_name}" in a row is replaced with the seller's name. A seller's own product FAQs (KB
+ * JSON version 5.0) join its rows. Each buyer message is searched against the seller's rows and
+ * the best few go into that turn as <faq>, like the catalogue.
  */
 import fs from "node:fs";
 import MiniSearch from "minisearch";
@@ -17,6 +19,10 @@ export interface FaqRow {
   answer: string;
   /** Categories this row is for (empty = every seller). */
   categories: string[];
+  /** Sellers this row is for, as written in the sheet's Seller column (empty = every seller). */
+  sellers?: string[];
+  /** Set on a seller's own product FAQ (from the KB JSON): the product it is about. */
+  product?: string;
 }
 
 export interface FaqFile {
@@ -31,13 +37,14 @@ export const FAQ_LIMIT_BYTES = 10_000_000;
 const MAX_ROWS = 5000;
 
 const HEADERS = {
-  question: /^(question|questions|faq|faqs|q|query)$/i,
-  answer: /^(answer|answers|a|response|reply)$/i,
+  question: /^(question|questions|faq|faqs|q|query|(gl_)?faq_?question)$/i,
+  answer: /^(answer|answers|a|response|reply|(gl_)?faq_?answer)$/i,
   category: /^(category|categories|mcat|mcat name|product|product category|applies to)$/i,
+  seller: /^(seller|sellers|seller[ _]?name|company|company[ _]?name|glid|seller[ _]?id)$/i,
 };
 
 /** A price amount in an answer: the bot never states prices (Guardrail 1), so such rows are left out. */
-const PRICE_AMOUNT = /(₹|\brs\.?|\binr\b)\s*\d|\d[\d,]*\s*(\/-|rupees|lakh|crore)/i;
+export const PRICE_AMOUNT = /(₹|\brs\.?|\binr\b)\s*\d|\d[\d,]*\s*(\/-|rupees|lakh|crore)/i;
 /** Topics the guardrails keep the bot away from; rows that mention them are kept but flagged for review. */
 const SENSITIVE = /\b(gst|tax|freight|shipping|deliver(y|ed)|dispatch|payment|advance|discount|stock)\b/i;
 
@@ -92,7 +99,7 @@ export async function parseFaq(buf: Buffer): Promise<ParseResult<FaqRow[]> & { f
   if (headerAt < 0) return { ok: false, errors: ['No header row found. The first row should name the columns "Question", "Answer" and (optionally) "Category".'] };
   const header = table[headerAt];
   const col = (re: RegExp) => header.findIndex((c) => re.test(c));
-  const [qi, ai, ci] = [col(HEADERS.question), col(HEADERS.answer), col(HEADERS.category)];
+  const [qi, ai, ci, si] = [col(HEADERS.question), col(HEADERS.answer), col(HEADERS.category), col(HEADERS.seller)];
   const rows: FaqRow[] = [];
   const warnings: string[] = [];
   let incomplete = 0;
@@ -113,7 +120,8 @@ export async function parseFaq(buf: Buffer): Promise<ParseResult<FaqRow[]> & { f
     }
     if (SENSITIVE.test(answer)) sensitive.push(line);
     const categories = ci >= 0 ? (r[ci] ?? "").split(/\s*[,;|\n]\s*/).filter(Boolean) : [];
-    rows.push({ question: question.slice(0, 500), answer: answer.slice(0, 2000), categories });
+    const sellers = si >= 0 ? (r[si] ?? "").split(/\s*[,;|\n]\s*/).filter(Boolean) : [];
+    rows.push({ question: question.slice(0, 500), answer: answer.slice(0, 2000), categories, ...(sellers.length ? { sellers } : {}) });
   });
   if (!rows.length) return { ok: false, errors: ["No rows with both a question and an answer."] };
   if (rows.length > MAX_ROWS) return { ok: false, errors: [`Too many rows (${rows.length}); the limit is ${MAX_ROWS}.`] };
@@ -123,24 +131,56 @@ export async function parseFaq(buf: Buffer): Promise<ParseResult<FaqRow[]> & { f
   if (sensitive.length) {
     warnings.push(`Row${sensitive.length === 1 ? "" : "s"} ${list(sensitive)} mention tax, delivery, payment, discount or stock. The bot still follows the guardrails, so it won't state those terms; check the wording.`);
   }
-  if (ci < 0) warnings.push("No Category column: every row applies to every seller.");
+  if (ci < 0 && si < 0) warnings.push("No Category or Seller column: every row applies to every seller.");
   const scoped = rows.filter((r) => r.categories.length).length;
+  const bySeller = rows.filter((r) => r.sellers?.length).length;
+  const sellerNames = [...new Set(rows.flatMap((r) => r.sellers ?? []))];
+  if (sellerNames.length) warnings.push(`Rows name ${sellerNames.length} seller${sellerNames.length === 1 ? "" : "s"} (${sellerNames.slice(0, 12).join(", ")}${sellerNames.length > 12 ? ", …" : ""}); each is matched to a seller here by name, slug or IndiaMART seller id.`);
   return {
     ok: true,
     value: rows,
     format: isXlsx ? "xlsx" : "csv",
-    summary: `${rows.length} question${rows.length === 1 ? "" : "s"}${scoped ? `, ${scoped} for specific categories` : ""}`,
+    summary: `${rows.length} question${rows.length === 1 ? "" : "s"}${bySeller ? `, ${bySeller} for specific sellers` : ""}${scoped ? `, ${scoped} for specific categories` : ""}`,
     warnings,
   };
 }
 
-/** Rows for one seller: unscoped rows, and rows whose category matches what the seller deals in. */
-export function faqRowsFor(rows: FaqRow[], terms: SellerTerms & { mcats?: string[] }, sellerName: string): FaqRow[] {
+/** Who a seller is, for the sheet's Seller column: name, URL slug and IndiaMART seller id (glid). */
+export interface SellerIdentity {
+  name: string;
+  slug?: string;
+  sellerId?: string;
+}
+
+const compact = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+/** "Exoticasteel" names "Exotica Steel (India)"; "1952135" names seller id 1952135; a slug names itself. */
+export function sellerNamed(cell: string, who: SellerIdentity): boolean {
+  const c = compact(cell);
+  if (!c) return false;
+  if (/^\d+$/.test(c)) return !!who.sellerId && c === compact(who.sellerId);
+  for (const own of [who.name, who.slug ?? ""].map(compact).filter(Boolean)) {
+    if (own === c) return true;
+    // One is the start of the other: "exoticasteel" ~ "exoticasteelindia", "sewaenterprisesnewdelhi" ~ "sewaenterprises".
+    if (c.length >= 6 && own.length >= 6 && (own.startsWith(c) || c.startsWith(own))) return true;
+  }
+  return false;
+}
+
+/** Rows for one seller: unscoped rows, rows naming this seller, and rows whose category matches what the seller deals in. */
+export function faqRowsFor(rows: FaqRow[], terms: SellerTerms & { mcats?: string[] }, sellerName: string, who: SellerIdentity = { name: sellerName }): FaqRow[] {
   const names = [...terms.names, ...(terms.mcats ?? [])];
   const fillName = (t: string) => t.replace(/\{\{?\s*(seller_name|seller|company|company_name)\s*\}?\}/gi, sellerName);
   return rows
-    .filter((r) => !r.categories.length || r.categories.some((c) => names.some((n) => namesMatch(c, n))))
+    .filter((r) => (r.sellers?.length ? r.sellers.some((s) => sellerNamed(s, who)) : true))
+    .filter((r) => !r.categories.length || r.sellers?.length || r.categories.some((c) => names.some((n) => namesMatch(c, n))))
     .map((r) => ({ ...r, question: fillName(r.question), answer: fillName(r.answer) }));
+}
+
+/** Seller names in the sheet that match none of the sellers here (sellers not added yet, or spelt differently). */
+export function unknownSellerNames(rows: FaqRow[], sellers: SellerIdentity[]): string[] {
+  const names = [...new Set(rows.flatMap((r) => r.sellers ?? []))];
+  return names.filter((n) => !sellers.some((s) => sellerNamed(n, s)));
 }
 
 /** Words that say nothing about the topic ("do you…", "what is the…"), in English and common Hinglish. */
@@ -190,9 +230,9 @@ export class FaqIndex {
   }
 }
 
-/** The FAQ rows that matched this message, for the <faq> block. */
+/** The FAQ rows that matched this message, for the <faq> block. A seller's product FAQ names its product. */
 export function formatFaqHits(rows: FaqRow[]): string {
-  return rows.map((r) => `Q: ${r.question}\nA: ${r.answer}`).join("\n\n");
+  return rows.map((r) => `Q${r.product ? ` (about ${r.product})` : ""}: ${r.question}\nA: ${r.answer}`).join("\n\n");
 }
 
 /**
@@ -230,12 +270,16 @@ export class FaqStore {
     this.version++;
   }
 
-  /** The index for a seller. `key` is the seller's current knowledge object, so a KB change rebuilds it. */
-  forSeller(key: object, terms: SellerTerms & { mcats?: string[] }, sellerName: string): FaqIndex | null {
-    if (!this.file) return null;
+  /**
+   * The index for a seller: the sheet's rows for them plus their own product FAQs (`own`). `key` is
+   * the seller's current knowledge object, so a KB change rebuilds it. Null when there is nothing.
+   */
+  forSeller(key: object, terms: SellerTerms & { mcats?: string[] }, sellerName: string, own: { rows?: FaqRow[]; slug?: string; sellerId?: string } = {}): FaqIndex | null {
+    if (!this.file && !own.rows?.length) return null;
     const hit = this.indexes.get(key);
     if (hit && hit.version === this.version) return hit.index;
-    const index = new FaqIndex(faqRowsFor(this.file.rows, terms, sellerName));
+    const sheet = this.file ? faqRowsFor(this.file.rows, terms, sellerName, { name: sellerName, slug: own.slug, sellerId: own.sellerId }) : [];
+    const index = new FaqIndex([...(own.rows ?? []), ...sheet]);
     this.indexes.set(key, { version: this.version, index });
     return index;
   }

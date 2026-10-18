@@ -1,18 +1,18 @@
 /**
  * Extra per-seller files uploaded on /admin, on top of the KB JSON or KB folder:
  *
- * - business_card.md: the seller's business card as Markdown, added to the BUSINESS CARD.
+ * - business_card.md: the seller's policy card as Markdown (Business, Dispatch, GST, Packaging, Must
+ *   escalate…), kept as handling rules with amounts and terms removed, added to the BUSINESS CARD.
  * - mcat_specifications.json: IndiaMART MCAT specifications, `[{mcat_id, mcat_name, specifications:
- *   [{name, options}]}]`. Only MCATs that match the seller's categories are used, and only to give
- *   ISQs to categories and product cards that have none.
+ *   [{name, options}]}]`, generated for the seller's MCAT ids. A category's questions are the specs
+ *   of the buyer's product's MCAT that the seller's products carry (see KbView.isqPlan).
  * - product_cards.json: product cards in the KB folder format, added to the PRODUCT CARDS.
  *
  * All three are optional and stored in DATA_DIR/sellers/<slug>/files/.
  */
 import { z } from "zod";
-import { FORBIDDEN_SPEC_KEYS } from "./crawler.js";
+import { FORBIDDEN_SPEC_KEYS, splitSentences } from "./crawler.js";
 import type { ProductCard } from "./kb.js";
-import { cleanText } from "./sellerKb.js";
 
 export type SellerFileKind = "business-card" | "mcat" | "product-cards";
 
@@ -31,45 +31,116 @@ export type ParseResult<T> = { ok: true; value: T; summary: string; warnings: st
 // ---------------------------------------------------------------------------
 
 export interface BusinessCardMd {
+  /** The card as the bot sees it: every section kept as handling rules, amounts and terms removed. */
   text: string;
   /** Numbers on "contact" lines: the bot may share these when a buyer asks for a contact. */
   phones: string[];
+  /** The "Deals in" list, for matching FAQ rows and MCATs to the seller. */
+  dealsIn: string[];
+  /** Section headings kept (## …). */
+  sections: string[];
+  /** Amounts, percentages, payment or delivery terms removed from kept lines. */
+  stripped: number;
 }
 
-/** Lines the bot must never see (Guardrails 5-8): GST, bank, turnover, staff, ratings, prices, payment and delivery terms. */
-const FORBIDDEN_LINE = /\b(gst|gstin|pan\b|cin\b|iec\b|bank|ifsc|account\s*(no|number)|turnover|revenue|employees?|staff|rating|reviews?|established|year\s+of\s+establishment|price|pricing|payment|delivery\s+time|dispatch|freight)\b/i;
+/**
+ * Lines that are identity or financial facts, never handling rules: GSTIN, PAN, bank, turnover,
+ * staff, ratings, tenure. (A line about GST policy, "GST is charged per quote", is not one of these.)
+ */
+const IDENTITY_LINE =
+  /\b(gstin|gst\s*(no|number|registration)|(pan|cin|iec|tan)\s*(no|number|card)|bank(er|ers)?\b|ifsc|account\s*(no|number)|turnover|revenue|employees?|workforce|staff\s+(strength|of)|\d+\s+staff|ratings?|reviews?|established|establishment|member\s+since|founded|incorporated)\b|\b\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]{3}\b|^\s*(?:[-*]\s*)?\*\*(gst|gstin|pan|cin|iec|tan|bank|ifsc)\*\*\s*:/i;
+/** A phone number or e-mail in a rule (only contact lines may carry them). */
+const CONTACT_IN_RULE = /(?:\+?91[\s-]?)?\d[\d\s-]{8,}\d|[\w.+-]+@[\w-]+\.[\w.]+/;
+/** Values the bot may never repeat even inside a handling rule (Guardrails 1, 5, 6): money, percentages, delivery durations. */
+const AMOUNT =
+  /(₹|\brs\.?|\binr\b)\s*[\d,]+(\.\d+)?\s*(lakh|crore|k|\/-)?(\s*(per|\/)\s*\w+)?|\b[\d,]+(\.\d+)?\s*(rupees|lakhs?|crores?|\/-)|\b\d+(\.\d+)?\s*(%|percent|per\s*cent)|\b\d+\s*(-|–|to)\s*\d+\s*(working\s+)?(days?|weeks?|months?|hours?)|\b\d+\s*(working\s+)?(days?|weeks?)\b/gi;
+/** Sentences about tenure, turnover, staff or customer counts (Guardrail 7): dropped whole. */
+const TENURE =
+  /\b(established|founded|incorporated|since\s+(19|20)\d\d|(19|20)\d\d\s+onwards|\d+\s*\+?\s*years?\s+(of\s+)?(experience|in\s+business|old)|decades?\s+of|turnover|revenue|crores?|lakhs?\s+(of\s+)?(customers|buyers|units)|employees?|workforce|staff\s+of|member\s+since|happy\s+customers|\d+\s*\+?\s*(clients|customers))\b/i;
+/** Sentences that are payment terms: dropped whole. */
+const PAYMENT_TERM = /\b(advance|against\s+delivery|credit\s+period|net\s*\d+|\blc\b|letter\s+of\s+credit|cheque|neft|rtgs|upi|cash\s+on\s+delivery|\bcod\b|pay\s+(before|after|on)\b|balance\s+(before|after|on)\b)/i;
 
+/** Strips amounts, percentages, durations and payment-term sentences from a handling rule. Returns the text and how many values went. */
+function scrubRule(line: string): { text: string; removed: number } {
+  let removed = 0;
+  // "e.g." and "i.e." are not sentence ends.
+  const sentences = splitSentences(line.replace(/\b(e\.g|i\.e)\.,?\s*/gi, "$1 ")).filter((sent) => {
+    if (PAYMENT_TERM.test(sent) || TENURE.test(sent) || CONTACT_IN_RULE.test(sent)) {
+      removed++;
+      return false;
+    }
+    return true;
+  });
+  const text = sentences
+    .join(" ")
+    .replace(AMOUNT, () => {
+      removed++;
+      return "[amount]";
+    })
+    .replace(/\s+\[amount\](\s*,?\s*(or\s+)?\[amount\])*/g, " [amount]")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return { text, removed };
+}
+
+/**
+ * Reads a seller's policy card (Markdown). Every section is kept as handling rules for the bot
+ * ("GST varies per quote: the team confirms"), with identity and financial facts dropped, money,
+ * percentages, durations and payment terms removed, and the "Dropped" section (internal notes)
+ * left out. Contact lines keep their numbers (the bot may share the listed contact).
+ */
 export function parseBusinessCardMd(raw: string): ParseResult<BusinessCardMd> {
-  const text = raw.replace(/^﻿/, "").replace(/\r\n?/g, "\n").trim();
+  const text = raw.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").trim();
   if (!text) return { ok: false, errors: ["The file is empty."] };
   if (text.length > SELLER_FILES["business-card"].limit) return { ok: false, errors: [`The file is too long (${text.length.toLocaleString("en-IN")} characters; the limit is 50,000).`] };
   const warnings: string[] = [];
   const phones = new Set<string>();
+  const dealsIn: string[] = [];
+  const sections: string[] = [];
   const kept: string[] = [];
   let dropped = 0;
+  let stripped = 0;
+  let skipSection = false;
   for (const line of text.split("\n")) {
-    if (!line.trim() || /^#{1,6}\s/.test(line)) {
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      skipSection = heading[1].length >= 2 && /^dropped\b/i.test(heading[2]);
+      if (skipSection) continue;
+      if (heading[1].length >= 2) sections.push(heading[2].trim());
       kept.push(line);
       continue;
     }
-    if (FORBIDDEN_LINE.test(line)) {
+    if (skipSection) continue;
+    if (!line.trim()) {
+      kept.push(line);
+      continue;
+    }
+    if (IDENTITY_LINE.test(line)) {
       dropped++;
       continue;
     }
-    if (/contact|phone|mobile|whatsapp|call/i.test(line)) {
-      for (const m of line.match(/(?:\+?91[\s-]?)?\d[\d\s-]{8,}\d/g) ?? []) {
+    const bullet = line.match(/^(\s*(?:[-*]|\d+\.)\s+)(.*)$/);
+    const body = bullet ? bullet[2] : line;
+    const labelled = body.trim().match(/^\*\*([^*]+)\*\*\s*:\s*(.*)$/);
+    if (/contact|phone|mobile|whatsapp|call/i.test(labelled?.[1] ?? body)) {
+      for (const m of body.match(/(?:\+?91[\s-]?)?\d[\d\s-]{8,}\d/g) ?? []) {
         const d = m.replace(/\D/g, "").replace(/^(91|0)(?=\d{10}$)/, "");
         if (d.length >= 10 && d.length <= 12) phones.add(d);
       }
       kept.push(line);
       continue;
     }
-    // Free text goes through the same filter as the KB JSON's company text.
-    const bullet = line.match(/^(\s*(?:[-*]|\d+\.)\s+)(.*)$/);
-    const body = bullet ? bullet[2] : line;
-    // Keep "**Label**: value" rows whole; filter sentences in prose.
-    const cleaned = /^\*\*[^*]+\*\*\s*:/.test(body.trim()) ? body : cleanText(body);
-    if (!cleaned.trim()) {
+    if (labelled && /^deals?\s+in$/i.test(labelled[1].trim())) {
+      dealsIn.push(...labelled[2].split(/\s*[,;|]\s*/).map((x) => x.trim()).filter(Boolean));
+      kept.push(line);
+      continue;
+    }
+    const { text: cleaned, removed } = labelled ? (() => {
+      const r = scrubRule(labelled[2]);
+      return { text: r.text ? `**${labelled[1]}**: ${r.text}` : "", removed: r.removed };
+    })() : scrubRule(body);
+    stripped += removed;
+    if (!cleaned.trim() || /^\[amount\]\.?$/.test(cleaned.trim())) {
       dropped++;
       continue;
     }
@@ -82,8 +153,16 @@ export function parseBusinessCardMd(raw: string): ParseResult<BusinessCardMd> {
     .replace(/(^|\n)#{1,6} [^\n]*\n*(?=#{1,6} |$)/g, "$1")
     .trim();
   if (!out) return { ok: false, errors: ["Nothing usable is left after removing details the bot may not share."] };
-  if (dropped) warnings.push(`${dropped} line${dropped === 1 ? "" : "s"} left out: GST, bank, turnover, staff, ratings, prices, payment or delivery terms are never given to the bot.`);
-  return { ok: true, value: { text: out, phones: [...phones] }, summary: `${out.split("\n").filter((l) => l.trim()).length} lines${phones.size ? `, contact ${[...phones].join(", ")}` : ""}`, warnings };
+  const keptSections = sections.filter((h) => out.includes(`## ${h}`));
+  if (dropped) warnings.push(`${dropped} line${dropped === 1 ? "" : "s"} left out: GST numbers, bank, turnover, staff, ratings, tenure and lines that were only an amount or a payment term are never given to the bot.`);
+  if (stripped) warnings.push(`${stripped} value${stripped === 1 ? "" : "s"} removed from kept lines (amounts, percentages, delivery durations or payment terms); the rule around each stays.`);
+  const lines = out.split("\n").filter((l) => l.trim()).length;
+  return {
+    ok: true,
+    value: { text: out, phones: [...phones], dealsIn, sections: keptSections, stripped },
+    summary: `${lines} lines in ${keptSections.length} section${keptSections.length === 1 ? "" : "s"}${keptSections.length ? ` (${keptSections.slice(0, 6).join(", ")}${keptSections.length > 6 ? ", …" : ""})` : ""}${phones.size ? `, contact ${[...phones].join(", ")}` : ""}`,
+    warnings,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -265,4 +344,4 @@ export function fillCardIsqs(cards: ProductCard[], mcats: McatSpec[]): { cards: 
 }
 
 /** "Ids" in the export's taxonomy look like ",85037, ,191925,". */
-export const idsIn = (s: string | undefined) => (s ?? "").match(/\d+/g) ?? [];
+export const idsIn = (s: string | undefined): string[] => (s ?? "").match(/\d+/g) ?? [];

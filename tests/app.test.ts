@@ -340,7 +340,7 @@ describe("knowledge base upload", () => {
     expect(requests[0].system[0].text).toContain("Product id: cnc-press-brake-a1b2c3d");
     // The server picked the machine's category and gives the bot only its spec questions.
     const turn = requests[0].messages.at(-1).content.at(-1).text as string;
-    expect(turn).toContain("<spec_questions>\nMachine category: Press Brakes.");
+    expect(turn).toContain("<spec_questions>\nMachine: Press Brakes.");
     expect(turn).toContain("1. Control Type? Options: CNC / NC");
     expect(requests[0].system[0].text).not.toContain("4,50,000");
     expect(body).toContain("event: cards");
@@ -398,7 +398,7 @@ describe("adding a seller from a KB JSON", () => {
     const admin = await (await fetch(`${base}/admin`, { headers: auth(PASSWORD) })).text();
     expect(admin).toContain('id="seller-gamma-machines"');
     expect(admin).toContain("added in admin");
-    expect(admin.split('id="seller-gamma-machines"')[1].split("</details>")[0]).toContain("Delete seller");
+    expect(admin.split('id="seller-gamma-machines"')[1].split('class="srow"')[0]).toContain("Delete seller");
   });
 
   it("adds a seller whose export has blank ids, with notes about the fixes", async () => {

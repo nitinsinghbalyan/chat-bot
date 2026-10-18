@@ -16,7 +16,7 @@ Shorthand and internal language for the Seller assistants project.
 | New chat | Refresh button in the chat header; starts a new session id | widget |
 | KB | Knowledge base. Bot sources: BUSINESS CARD, PRODUCT CARDS, SELLER CATALOGUE | `src/kb.ts`, `src/sellerKb.ts` |
 | KB folder | `kb/sellers/<slug>/`: `seller.json`, `business_card.json`, `product_cards.json`, `sitemap.xml`, optional `persona.json`, `guardrails.md`, `catalogue.json`, `seller_kb.json` | repo |
-| KB JSON / export / BotPress export | Seller export `_version` 3.0 with `seller`, `company_pages`, `photo_gallery`, `categories`, `products`. Uploaded on `/admin`; becomes the main source | `src/sellerKb.ts` |
+| KB JSON / export / master JSON / BotPress export | Seller export `_version` 5.0 (3.0 still loads) with `seller` (`seller_id` = glid), `company_pages`, `photo_gallery`, `categories`, `products` (`taxonomy.glmcat_ids` = the product's MCAT; `faqs`). Uploaded on `/admin`; becomes the main source | `src/sellerKb.ts` |
 | uploaded KB | The KB JSON stored at `DATA_DIR/sellers/<slug>/seller_kb.json` | data disk |
 | repo seller | Seller defined by a KB folder in git | `source: "repo"` |
 | admin seller | Seller added via **+ Add seller**; `seller.json` + `seller_kb.json` live on the data disk; deletable | `source: "admin"` |
@@ -25,7 +25,7 @@ Shorthand and internal language for the Seller assistants project.
 | partial crawl | A crawl that got under 80% of the existing pages; the old catalogue is kept | `MIN_CRAWL_SHARE` |
 | RAG / SELLER CATALOGUE | Top catalogue matches put into each turn's user prompt | `src/claude.ts` `retrieve` |
 | prompt budget / large catalogue | `PROMPT_BUDGET` (300k chars). KB text up to it goes in the system prompt in full; above it `promptPlan()` uses "index" (all product names) or "partial" (some per category) and details come from the catalogue search | `src/sellerKb.ts` |
-| ISQ | Item Specification Question. Derived per category from specs whose values differ across its products | `KbView.isqs` |
+| ISQ | Item Specification Question. Per MCAT within a category: the MCAT file's specs the seller's products carry (seller's options first), else derived from the products' spec values | `KbView.isqPlan` |
 | chips | Tap-to-reply buttons; the `show_options` tool (2–8 options) | `src/tools.ts`, widget |
 | cards / carousel | `share_media` tool: product, image, video and document cards plus related products; built server-side only | `src/shareMedia.ts` |
 | lightbox | In-chat viewer for photos and videos (YouTube nocookie, Vimeo, MP4) | widget |
@@ -41,10 +41,12 @@ Shorthand and internal language for the Seller assistants project.
 | enquiry summary / summary card | "Your enquiry" card shown once ISQs are done (`save_lead` with `complete: true`): machine, specs, quantity, city, name, masked mobile; scored `summary_shown` | `src/tools.ts` `enquirySummary`, `public/widget.js` `addSummary` |
 | chat cost | `chat_cost_usd` Langfuse **session** score: running USD total of a chat's Claude calls, same score id so it's replaced each message; totals kept in `sessions.usage` | `src/app.ts` |
 | extra files | Per-seller optional uploads in Manage: business card .md, MCAT specs JSON, product cards JSON (DATA_DIR/sellers/<slug>/files/) | `src/sellerFiles.ts`, `SellerRegistry.compose` |
-| MCAT | IndiaMART micro-category; the MCAT specs file gives ISQs to categories/cards without their own | `findMcat`, `namesMatch` |
+| MCAT | IndiaMART micro-category. Each product has one (`glmcat_ids`); a site category pools several; the per-seller MCAT specs file is the ISQ source | `KbView.mcatsOf`, `findMcat` |
 | built-in auto-apply | On deploy, a changed `prompts/*.md` or `persona.json` replaces an older admin edit of that part (kept in Versions) | `applyNewerBuiltIn`, `applyNewerBuiltInPersonas` |
-| MCAT family | Categories whose products mostly share one MCAT id; they ask the same ISQs | `KbView.isqPlan` |
-| spec_questions | Per-turn block with only the chat's category's ISQs, asked/next marked | `src/isqTracker.ts` |
+| main MCAT | The MCAT most of a category's products belong to; asked when only the category is known | `KbView.mainMcatOf` |
+| policy card | The business card .md: sections of handling rules (Dispatch, GST, Packaging, Must escalate…) kept whole with amounts/terms stripped | `parseBusinessCardMd` |
+| Knowledge mapping | Admin report per seller: categories → MCATs → questions, MCAT file use, cards, FAQs, policy card, flags | `src/mapping.ts` |
+| spec_questions | Per-turn block with only the chat's machine's ISQs ("Machine: <category> · <MCAT>"), asked/next marked | `src/isqTracker.ts` |
 | chat id | Unique id per conversation; Langfuse session = `<seller>:<chatId>`; in transcript/leads `chat_id` | `Session.chatId` |
 | common FAQ | One Excel/CSV for all sellers on /admin/prompts; rows scoped by Category; searched per message into `<faq>` | `src/faq.ts` |
 | Test Langfuse | /admin button: server version → keys → upload a test trace → is it stored; the failing step names the cause | `runConnectionTest` in `src/tracing.ts` |

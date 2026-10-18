@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Catalogue } from "./catalogue.js";
 import { formatCatalogueHits } from "./catalogue.js";
 import { formatFaqHits, type FaqIndex } from "./faq.js";
-import { markAnswered, markAsked, specQuestionsText, updateCategory, type IsqSource } from "./isqTracker.js";
+import { currentPlan, markAnswered, markAsked, setPlace, specQuestionsText, updateCategory, type IsqSource } from "./isqTracker.js";
 import { config } from "./config.js";
 import type { CatalogueEntry } from "./crawler.js";
 import { OutputFilter, REPLACEMENTS, type Intervention } from "./guardrails.js";
@@ -57,7 +57,7 @@ export interface TurnResult {
   /** The enquiry summary card to show (from save_lead with complete set). */
   summary?: EnquirySummary;
   /** The machine category whose ISQs this turn used, and their source, for the trace. */
-  isq?: { category: string; source: string; mcat?: string };
+  isq?: { category: string; source: string; mcat?: string; mcatId?: string };
   /** save_lead outcomes this turn, for trace scores. */
   leadEvents?: Array<"captured" | "updated">;
   /** True when the buyer got a canned reply (API error, refusal or empty answer). */
@@ -168,7 +168,7 @@ export async function runTurn(
   // The chat's machine category, and only its spec questions for the bot.
   const isqs = deps.isqs ?? null;
   if (isqs) updateCategory(session.lead, isqs, { buyerText, page: opts.pageEntry, hits, ownHits });
-  const plan = () => (isqs && session.lead.category ? isqs.plan(session.lead.category) : null);
+  const plan = () => (isqs ? currentPlan(session.lead, isqs) : null);
   const turnPlan = plan();
   let faqHits: ReturnType<FaqIndex["search"]> = [];
   if (deps.faq?.size && leadStageBefore !== "otp_sent") {
@@ -302,7 +302,7 @@ export async function runTurn(
         }
         if (tu.name === "save_lead" && !r.isError && isqs) {
           const input = tu.input as { product?: string; specs?: Array<{ label?: string }> };
-          if (!session.lead.category && input.product) session.lead.category = isqs.categoryForText(input.product) ?? undefined;
+          if (!session.lead.category && input.product) setPlace(session.lead, isqs, isqs.locateText(input.product));
           markAnswered(session.lead, plan(), (input.specs ?? []).map((x) => x.label ?? ""));
         }
         if (r.ui?.summary) summary = r.ui.summary;
@@ -352,7 +352,7 @@ export async function runTurn(
   const askFor = askForAfterTurn(session, shown);
   // Buttons only make sense when the buyer isn't being asked for a mobile number, OTP or name.
   const used = plan();
-  const isq = used ? { category: used.label, source: used.source, ...(used.mcat ? { mcat: used.mcat } : {}) } : undefined;
+  const isq = used ? { category: used.category, source: used.source, ...(used.mcat ? { mcat: used.mcat } : {}), ...(used.mcatId ? { mcatId: used.mcatId } : {}) } : undefined;
   return { text: shown, askFor, chips: askFor ? [] : chips, cards, interventions: filter.interventions, usage, ...cost, leadEvents, fallbackReply: canned, summary, isq };
 }
 

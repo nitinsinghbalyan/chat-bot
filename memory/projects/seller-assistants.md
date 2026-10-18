@@ -5,7 +5,7 @@
 
 ## What it does
 - Answers buyers' discovery and enquiry questions **on the seller's behalf**, grounded in the seller's KB, within 9 guardrails.
-- Enquiry order: fixed welcome (same text for every seller, asks nothing, no chips) → mobile asked on the buyer's **first message**, whatever it is, and that reply is **only** the ask ("Please share your 10-digit mobile number."; no "Yes, we make…") → OTP (demo `12345`) → name (lead saved) → which machine, if still unclear → ISQs one at a time as tap-to-reply chips **inline in the chat** (the server picks the machine's category each turn and gives the bot only its questions in `<spec_questions>`; chips arrive with the question, no extra Claude call) → lead updated with the answers → **enquiry summary card** ("Your enquiry": machine, each spec, quantity, city, name, masked mobile) + "Anything to change?" with All correct / Change a detail chips; a correction updates the lead and shows a new card. A buyer who won't share a number isn't blocked.
+- Enquiry order: fixed welcome (same text for every seller, asks nothing, no chips) → mobile asked on the buyer's **first message**, whatever it is, and that reply is **only** the ask ("Please share your 10-digit mobile number."; no "Yes, we make…") → OTP (demo `12345`) → name (lead saved) → which machine, if still unclear → ISQs one at a time as tap-to-reply chips **inline in the chat** (the server picks the machine's category **and MCAT** each turn and gives the bot only that MCAT's questions that the seller's products carry, in `<spec_questions>`; chips arrive with the question, no extra Claude call) → lead updated with the answers → **enquiry summary card** ("Your enquiry": machine, each spec, quantity, city, name, masked mobile) + "Anything to change?" with All correct / Change a detail chips; a correction updates the lead and shows a new card. A buyer who won't share a number isn't blocked.
 - Replies are brief: 1–2 short sentences (~40 words), answer first, no filler, options only as chips.
 - Shares photos, videos, PDFs and related products as a carousel.
 - Handles large catalogues: over ~300k characters the system prompt keeps categories, ISQs and a product index; details come per message from the catalogue search.
@@ -65,6 +65,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | Every trace has a unique per-conversation session id `<seller>:<chatId>` (audit); stamped under new and legacy attribute names | Nitin |
 | Common FAQ Excel (Question, Answer, optional Category), searched per message as `<faq>`, scoped per seller by category; guardrails win | Nitin |
 | Simulator API for the AI Assistant Auditor: new vendor there (not NIVA impersonation), per-seller `X-Bot-Key` keys made in admin (hash stored, shown once), one JSON reply per message at `/api/v1/bots/<slug>/chat`; simulated leads saved as **test** (hidden on Leads by default), traces tagged `eval` | Nitin (Oct 16) |
+| **Master JSON v5** replaces v3 (old files still load). Questions per **MCAT within a category**: the buyer's product's MCAT (else the category's main one), only the MCAT file's specs the seller's products carry, chips show all MCAT options with the seller's first; cards stay knowledge (no card-driven questions); policy card .md kept whole as handling rules with amounts/terms stripped; v5 product FAQs + FAQ sheet "Seller Name" column merged per seller; Knowledge mapping report in admin | Nitin (Oct 18) |
 | SQLite on a Render disk; Render hosting | Nitin |
 | Multi-seller; KB supplied per seller | Nitin |
 | Widget bottom-right (was bottom-left) | Nitin |
@@ -107,6 +108,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | #20 | New journey: fixed welcome without chips, mobile on the first message, machine asked after the name if unclear |
 | #21 | First reply asks only for the mobile number (no machine confirmation) |
 | #22 | Docs: `docs/ARCHITECTURE.md` (system, journey, chat turn, knowledge/ISQ/FAQ, prompts, guardrails, tracing, data, routes) and `docs/REPO_STRUCTURE.md` |
+| #24 | Master JSON v5, questions per product MCAT checked against the seller's products, policy card as handling rules, product FAQs + FAQ Seller column, Knowledge mapping report (`src/mapping.ts`) |
 | #23 | Simulator API (`docs/SIMULATOR_API.md`): bot keys in admin, JSON chat endpoint, test leads, `eval` trace tag; chat turn shared by widget and API |
 
 ## Open items / ideas
@@ -118,5 +120,6 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 - Large-catalogue answers (index/partial modes) are untested with the live model.
 - Check on production that seller photos (imimg.com) load; they can't be seen from cloud sessions.
 - The seller's own site rate-limits the Render crawler; low priority since the JSON covers the website.
+- **Re-upload after #24:** on /admin, upload each seller's v5 JSON, MCAT file, policy card .md and product cards, and the FAQ sheet (its first sheet only; the 2nd sheet holds other vendors' keys and is ignored). Then read each seller's **Knowledge mapping** block: flags name categories with no questions, MCAT ids missing from the file, unmatched cards. Seen on the real files: NI has 13 categories with no questions and 8 MCAT ids missing from its file; "SS Triply Kadhai and Bowls" appears as an empty category in Herbaveda's and Unicorn's exports (an export quirk).
 - **Simulator:** Nitin generates a key per seller on /admin and the Auditor team adds a "Seller assistants" vendor (Base URL, bot slug, X-Bot-Key) per `docs/SIMULATOR_API.md`. Auditor code is not in this repo.
 - Ideas (not built): per-chat cost readout on the admin transcript page; a `persona.json` for each new seller; an About page from the export's `company_pages`.

@@ -265,3 +265,12 @@ table.faq-preview th, table.faq-preview td { text-align: left; vertical-align: t
 label.check { display: inline-flex; align-items: center; gap: 6px; font-size: 0.9rem; }
 label.check input { width: auto; }
 .newkey { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+
+/* Knowledge mapping */
+.mapping .flags { margin: 6px 0 10px; padding-left: 18px; font-size: 0.9rem; }
+.mapping .flags li { margin: 2px 0; }
+table.map { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+table.map th, table.map td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+table.map tr.flagged td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+.mapping .isqs { margin: 6px 0 0; padding-left: 18px; }
+.mapping .isqs li { margin: 2px 0; }
