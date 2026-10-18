@@ -15,6 +15,8 @@ export interface LeadState {
   summarized?: boolean;
   /** The machine category the chat is about (KB JSON sellers), set by the server each turn. */
   category?: string;
+  /** The MCAT within that category (the buyer's product's, else the category's main one). */
+  mcatId?: string;
   /** That category's ISQs already asked (by question). */
   askedIsqs?: string[];
   /** The reply buttons last shown, so a tapped answer isn't mistaken for a new machine. */

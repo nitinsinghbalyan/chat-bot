@@ -168,6 +168,10 @@ export function createApp(deps: AppDeps) {
     return seller.catalogue.byPageUrl(u.origin + u.pathname);
   }
 
+  /** The seller's FAQ index: the common sheet's rows for them plus their own product FAQs. */
+  const faqFor = (seller: SellerContext) =>
+    deps.faq?.forSeller(seller.kb, { ...seller.terms, mcats: seller.mcatUse.matched }, seller.config.name, { rows: seller.kb.faqs, slug: seller.config.slug, sellerId: seller.uploaded?.view.kb.seller.seller_id }) ?? null;
+
   /** Which prompt versions a seller's system prompt is built from, for trace metadata (recomputed only when it changes). */
   const promptInfoCache = new Map<string, { systemPrompt: string; info: Record<string, unknown> }>();
   function promptInfo(seller: SellerContext): Record<string, unknown> {
@@ -237,7 +241,7 @@ export function createApp(deps: AppDeps) {
           logGuardrail: (id, interventions) => db.logGuardrailEvents(slug, id, interventions),
           trace: tracing,
           isqs: seller.uploaded ? isqSourceFor(seller) : null,
-          faq: deps.faq?.forSeller(seller.kb, { ...seller.terms, mcats: seller.mcatUse.matched }, seller.config.name) ?? null,
+          faq: faqFor(seller),
         },
         { onText: t.onText ?? (() => {}) },
         { pageUrl, pageEntry: pageEntryFor(seller, pageUrl) },
@@ -258,7 +262,7 @@ export function createApp(deps: AppDeps) {
           chatCostUsd: roundUsd(chat.costUsd),
           chatTokens: chatTokens(chat),
           chatTurns: chat.turns,
-          ...(result.isq ? { isqCategory: result.isq.category, isqSource: result.isq.mcat ? `mcat: ${result.isq.mcat}` : result.isq.source } : {}),
+          ...(result.isq ? { isqCategory: result.isq.category, isqMcat: result.isq.mcat ?? null, isqMcatId: result.isq.mcatId ?? null, isqSource: result.isq.source } : {}),
           ...(chat.costKnown ? {} : { costIncomplete: "a model without a known price was used" }),
         },
         ...(result.fallbackReply ? { level: "WARNING" as const, statusMessage: "Buyer got a canned fallback reply" } : {}),
@@ -529,19 +533,18 @@ export function createApp(deps: AppDeps) {
 export const introFor = (sellerName: string) =>
   `Welcome to ${sellerName}. I can tell you about our machines, share photos and brochures, and pass your enquiry to our team.`;
 
-/** The seller's ISQs per category, for the server to pick the chat's category (KB JSON sellers). */
+/** The seller's spec questions per category and MCAT, for the server to pick the chat's machine (KB JSON sellers). */
 function isqSourceFor(seller: SellerContext): IsqSource {
   const view = seller.uploaded!.view;
-  const name = (c: { name: string } | undefined) => c?.name ?? null;
   return {
-    plan: (category) => {
+    plan: (category, mcatId) => {
       const c = view.categoryNamed(category);
-      return c ? view.isqPlan(c) : null;
+      return c ? view.isqPlan(c, mcatId) : null;
     },
-    categoryOfEntry: (e) => name(view.categoryOfEntry(e)),
-    categoryForText: (text) => {
+    locate: (e) => view.locateEntry(e),
+    locateText: (text) => {
       const hit = seller.catalogue.search(text, 1)[0];
-      return hit ? name(view.categoryOfEntry(hit)) : null;
+      return hit ? view.locateEntry(hit) : null;
     },
   };
 }

@@ -3,7 +3,7 @@ import type { ProductCard } from "../src/kb.js";
 import { fillCardIsqs, findMcat, matchingMcats, namesMatch, parseBusinessCardMd, parseMcatSpecs, parseProductCards } from "../src/sellerFiles.js";
 
 describe("business card markdown", () => {
-  it("keeps the card, drops what the bot may not share, and allows the listed contact", () => {
+  it("keeps every policy section as handling rules, drops identity facts, strips amounts and terms, and allows the listed contact", () => {
     const md = `# POLICY CARD — Alpha Presses
 
 ## Business
@@ -12,22 +12,48 @@ describe("business card markdown", () => {
 - **Bank**: HDFC, account number 123456789
 - **Annual turnover**: 5-10 crore
 - **Location**: Rajkot, Gujarat
+- **Deals in**: Press Brakes, Shearing Machines, Iron Workers
 - **IndiaMART listed contact**: 080-4826-4349
 We have been manufacturing presses since 1995. We make heavy-duty press brakes.
+
+## GST
+GST applicability is conflicted (some quotes include GST while others charge 18% GST extra). Must NOT quote a universal GST stance; defer to the team.
+
+## Pricing basis
+Prices start around ₹ 4,50,000 per machine and depend on tonnage. Payment is 50% advance, balance before dispatch. The final quotation comes only from the sales team.
+
+## Availability / lead time
+Standard models ship in 15-20 days; confirm per order with the team.
+
+## Must escalate
+- Requests for exact delivery dates
 
 ## Dropped — insufficient evidence
 - **dispatch.from**: fewer than two seller conversations`;
     const r = parseBusinessCardMd(md);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.value.text).toContain("**Name**: Alpha Presses Pvt Ltd");
-    expect(r.value.text).toContain("**Location**: Rajkot, Gujarat");
-    expect(r.value.text).toContain("We make heavy-duty press brakes.");
-    expect(r.value.text).not.toMatch(/GSTIN|HDFC|turnover|1995|dispatch/);
-    // An emptied section loses its heading.
-    expect(r.value.text).not.toContain("Dropped");
+    const t = r.value.text;
+    expect(t).toContain("**Name**: Alpha Presses Pvt Ltd");
+    expect(t).toContain("**Location**: Rajkot, Gujarat");
+    expect(t).toContain("We make heavy-duty press brakes.");
+    expect(t).not.toMatch(/GSTIN|HDFC|turnover|1995|Dropped|dispatch\.from/);
+    // Policy sections stay, as rules without figures or payment terms.
+    expect(t).toContain("## GST");
+    expect(t).toContain("charge [amount] GST extra");
+    expect(t).toContain("Must NOT quote a universal GST stance; defer to the team.");
+    expect(t).toContain("Prices start around [amount] and depend on tonnage.");
+    expect(t).toContain("The final quotation comes only from the sales team.");
+    expect(t).not.toMatch(/advance|4,50,000|18%|15-20 days/);
+    expect(t).toContain("Standard models ship in [amount]; confirm per order with the team.");
+    expect(t).toContain("- Requests for exact delivery dates");
+    expect(r.value.sections).toEqual(["Business", "GST", "Pricing basis", "Availability / lead time", "Must escalate"]);
+    expect(r.value.dealsIn).toEqual(["Press Brakes", "Shearing Machines", "Iron Workers"]);
     expect(r.value.phones).toEqual(["8048264349"]);
-    expect(r.warnings[0]).toMatch(/^4 lines left out/);
+    // 18%, ₹ 4,50,000, the advance-payment sentence, 15-20 days and the "since 1995" sentence.
+    expect(r.value.stripped).toBe(5);
+    expect(r.warnings[0]).toMatch(/^3 lines left out/);
+    expect(r.warnings[1]).toMatch(/^5 values removed/);
   });
 
   it("refuses an empty or oversized file", () => {

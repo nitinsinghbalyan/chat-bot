@@ -4,6 +4,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { buildMapping, type KnowledgeMapping } from "./mapping.js";
 import { z } from "zod";
 import { Catalogue } from "./catalogue.js";
 import type { CatalogueEntry } from "./crawler.js";
@@ -144,6 +145,8 @@ export interface SellerContext {
   filesDir: string;
   mcatUse: McatUse;
   terms: SellerTerms;
+  /** How the KB JSON, MCAT file, product cards, FAQs and policy card join up (KB JSON sellers only). */
+  mapping: KnowledgeMapping | null;
 }
 
 function readJsonFile(file: string, errors: string[]): unknown {
@@ -290,6 +293,7 @@ export class SellerRegistry {
       filesDir: path.join(dataDir, "files"),
       mcatUse: { matched: [], filled: [] },
       terms: { names: [], mcatIds: new Set() },
+      mapping: null,
     };
     s.files = readSellerFiles(s.filesDir, config.slug);
     this.sellers.set(config.slug, s);
@@ -315,6 +319,7 @@ export class SellerRegistry {
       productCards: [],
       businessCardText: `Name: ${config.name}`,
       productCardsText: "",
+      faqs: [],
       allowedPhones: [],
       allowedDomains: host ? [host] : [],
     };
@@ -369,7 +374,7 @@ export class SellerRegistry {
     const mcats = s.files.mcat?.value ?? [];
     const md = s.files.businessCard?.value;
     const uploadedCards = s.files.productCards?.value ?? [];
-    const mdText = md ? `\n\n## More from the seller's business card\n\n${md.text}` : "";
+    const mdText = md ? `\n\n## Seller policy card (how to handle these topics)\n\nHandling rules from the seller's team. Where a rule says the team must confirm, say exactly that and pass the question on. Never state amounts, percentages, payment or delivery terms, even where "[amount]" marks one that was removed.\n\n${md.text}` : "";
     const filled: string[] = [];
     const fill = (cards: ProductCard[]) => {
       const r = fillCardIsqs(cards, mcats);
@@ -385,10 +390,12 @@ export class SellerRegistry {
       filled.push(...view.mcatFilledCategories().map((f) => `${f.category} (from MCAT ${f.mcat})`));
       const fromJson = knowledgeFromKb(view, s.fileKb);
       kb = { ...fromJson, productCards: [...fromJson.productCards, ...extra], productCardsText: fromJson.productCardsText + extraText };
+      s.mapping = buildMapping(view, { mcats, mcatUploaded: !!s.files.mcat, cards: uploadedCards, policyCard: md ?? null }, view.faqs());
     } else {
       // The same kind of file as the KB folder's product_cards.json: the uploaded copy replaces it.
       const cards = fill(uploadedCards.length ? uploadedCards : s.fileKb.productCards);
       kb = { ...s.fileKb, productCards: cards, productCardsText: cards.map(renderProductCard).join("\n\n---\n\n") };
+      s.mapping = null;
     }
     kb.businessCardText += mdText;
     if (md?.phones.length) kb.allowedPhones = [...new Set([...kb.allowedPhones, ...md.phones])];
@@ -398,6 +405,7 @@ export class SellerRegistry {
         ...new Set([
           ...(s.uploaded?.view.kb.categories.map((c) => c.name) ?? []),
           ...(kb.businessCard.deals_in ?? []),
+          ...(md?.dealsIn ?? []),
           ...kb.productCards.flatMap((c) => [c.canonical_name, c.category ?? "", ...(c.aliases ?? []), ...(c.flow.categories ?? [])]),
         ]),
       ].filter(Boolean),

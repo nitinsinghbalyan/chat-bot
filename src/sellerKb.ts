@@ -14,6 +14,7 @@ import type { CatalogueEntry } from "./crawler.js";
 import type { BusinessCard, KnowledgeBase, ProductCard } from "./kb.js";
 import { httpUrl, videoInfo, type MediaCard } from "./media.js";
 import { findMcat, idsIn, type McatSpec } from "./sellerFiles.js";
+import { PRICE_AMOUNT, type FaqRow } from "./faq.js";
 
 /**
  * How much KB text goes into the (cached) system prompt. A catalogue up to this size is included
@@ -21,6 +22,8 @@ import { findMcat, idsIn, type McatSpec } from "./sellerFiles.js";
  * matching products' details reach the bot per message through the SELLER CATALOGUE search.
  */
 export const PROMPT_BUDGET = 300_000;
+/** Export versions this importer was built for (older files keep loading; others get a warning). */
+export const KB_VERSIONS = new Set(["3.0", "5.0"]);
 /** Company pages beyond this are cut, so they can't crowd out the products. */
 const COMPANY_PAGES_BUDGET = 30_000;
 
@@ -84,13 +87,15 @@ const product = z.looseObject({
   name: str,
   display_name: str,
   category_id: id,
-  taxonomy: z.looseObject({ category_name: str, glmcat_ids: str, glcat_ids: str }).nullish(),
+  taxonomy: z.looseObject({ category_name: str, group_name: str, mcat_name: str, glmcat_ids: str, glcat_ids: str }).nullish(),
   item_code: str,
   description: str,
   specifications: list(z.looseObject({ name: str, value: str })),
   brand: str,
   min_order_quantity: str,
   price_unit: str,
+  /** Version 5.0: the seller's own questions and answers about this product. */
+  faqs: list(z.looseObject({ question: str, answer: str })),
   media: z
     .looseObject({
       main_image_url: str,
@@ -104,6 +109,8 @@ const product = z.looseObject({
 const factsheetRow = z.looseObject({ section: str, name: str, value: str });
 
 const seller = z.looseObject({
+  /** The seller's IndiaMART id (glid), used to match common FAQ rows to the seller. */
+  seller_id: str,
   company_name: z.string().trim().min(2, "must be the company name"),
   website_url: str,
   business_summary: str,
@@ -135,8 +142,9 @@ type KbProduct = SellerKb["products"][number];
 
 /** A small example in the same format, for the "Download template" link. */
 export const SELLER_KB_TEMPLATE = {
-  _version: "3.0",
+  _version: "5.0",
   seller: {
+    seller_id: 1234567,
     company_name: "Example Machine Tools Pvt Ltd",
     website_url: "https://www.example.com/",
     business_summary: "We manufacture hydraulic and CNC press brakes and shearing machines for sheet metal fabricators.",
@@ -182,7 +190,7 @@ export const SELLER_KB_TEMPLATE = {
       name: "CNC Press Brake",
       display_name: "100 Ton CNC Press Brake",
       category_id: 1001,
-      taxonomy: { category_name: "CNC Press Brake" },
+      taxonomy: { category_name: "CNC Press Brake", group_name: "Sheet Metal Machinery", mcat_name: "", glcat_ids: ",697,", glmcat_ids: ",25058," },
       item_code: "CNC-100",
       description: "CNC hydraulic press brake with a Delem controller.",
       specifications: [
@@ -193,6 +201,7 @@ export const SELLER_KB_TEMPLATE = {
       brand: "Example",
       min_order_quantity: "1",
       price_unit: "Piece",
+      faqs: [{ question: "Does the CNC press brake come with tooling?", answer: "Yes, a standard punch and die set is included." }],
       media: {
         main_image_url: "https://www.example.com/images/cnc-press-brake.jpg",
         gallery_image_urls: ["https://www.example.com/images/cnc-press-brake-side.jpg"],
@@ -223,7 +232,7 @@ export function validateSellerKb(input: unknown): KbValidation {
   if (!parsed.success) return { ok: false, errors: parsed.error.issues.slice(0, 50).map((i) => `${pathOf(i.path)}: ${i.message}`) };
   const kb = parsed.data;
   const warnings: string[] = [];
-  if (kb._version && kb._version !== "3.0") warnings.push(`_version is "${kb._version}"; this importer was built for version 3.0`);
+  if (kb._version && !KB_VERSIONS.has(kb._version)) warnings.push(`_version is "${kb._version}"; this importer was built for versions ${[...KB_VERSIONS].join(" and ")}`);
   const fixes = repairKb(kb);
   if (kb.products.length === 0) return { ok: false, errors: ["products: no usable products (each needs a name)", ...fixes.slice(0, 20)] };
   warnings.push(...fixes);
@@ -352,15 +361,49 @@ export interface Isq {
   options: string[];
 }
 
-/** The spec questions a category's buyers are asked, and where they came from. */
+/**
+ * The spec questions for one machine: a category and the MCAT within it (the one the buyer's
+ * product belongs to, else the category's main MCAT), and where the questions came from.
+ */
 export interface IsqPlan {
   category: string;
-  /** The category, plus the other categories of its MCAT family. */
+  /** "<category> · <MCAT name>" (just the category when no MCAT is known). */
   label: string;
   mcatId: string | null;
+  /** "mcat": the MCAT file's specs that this seller's products carry; "derived": from the products' own specification values. */
   source: "mcat" | "derived";
   mcat?: string;
   isqs: Isq[];
+  /** How many of the seller's products the questions were checked against. */
+  presentOn: number;
+}
+
+/** One MCAT within a category: how many of the category's products belong to it, and the file's entry if any. */
+export interface CategoryMcat {
+  id: string;
+  products: number;
+  name?: string;
+  inFile: boolean;
+}
+
+/** Name tokens for matching an MCAT spec to a product spec ("Size/Diameter" covers "Diameter"). */
+const specTokens = (s: string) => new Set(normKey(s).replace(/[()]/g, " ").split(" ").filter((w) => w && !SPEC_STOP.has(w)));
+const SPEC_STOP = new Set(["of", "the", "type", "no", "number", "in", "and", "or"]);
+const subset = (a: Set<string>, b: Set<string>) => a.size > 0 && [...a].every((w) => b.has(w));
+/** Same spec attribute: equal once normalised, or one name's words are all in the other's. */
+export function specNamesMatch(a: string, b: string): boolean {
+  if (normKey(a) === normKey(b)) return true;
+  const ta = specTokens(a);
+  const tb = specTokens(b);
+  return subset(ta, tb) || subset(tb, ta);
+}
+/** An MCAT option the seller's products carry: equal to a product value, or all its words are in it ("22 Gauge" ~ "22 gauge thick"). */
+function optionSeen(option: string, values: Set<string>): boolean {
+  const o = normKey(option);
+  if (values.has(o)) return true;
+  const to = specTokens(option);
+  for (const v of values) if (subset(to, specTokens(v))) return true;
+  return false;
 }
 
 /** Spec rows that aren't questions a buyer can answer (on top of brand, model and price). */
@@ -405,7 +448,7 @@ export function deriveIsqs(productsSpecs: Array<Array<[string, string]>>): Isq[]
 }
 
 export interface KbViewOptions {
-  /** MCAT specifications: ISQs for categories whose products give none. */
+  /** The seller's MCAT specifications file: the spec questions per MCAT (see isqPlan). */
   mcats?: McatSpec[];
   /** Characters of the system prompt already taken by uploaded extras (business card, product cards). */
   reservedChars?: number;
@@ -476,36 +519,63 @@ export class KbView {
     return p.specifications.filter((s) => s.name && s.value && !FORBIDDEN_SPEC_KEYS.test(s.name) && !PRICE_KEY.test(s.name)).map((s) => [s.name, s.value]);
   }
 
-  /** ISQs derived from a category's products (pooled over its MCAT family): see deriveIsqs. */
-  isqs(c: SellerKb["categories"][number]): Isq[] {
-    return deriveIsqs(this.familyProducts(c).map((p) => this.specs(p)));
+  /** ISQs derived from the products' own specification values: see deriveIsqs. */
+  isqs(c: SellerKb["categories"][number], products: KbProduct[] = this.productsIn(c)): Isq[] {
+    return deriveIsqs(products.map((p) => this.specs(p)));
   }
 
-  private mcatIdCache = new Map<SellerKb["categories"][number], string | null>();
+  /** A product's MCAT: the first id in its taxonomy `glmcat_ids`, or null. */
+  mcatOf(p: KbProduct): string | null {
+    return idsIn(p.taxonomy?.glmcat_ids)[0] ?? null;
+  }
 
-  /** The MCAT id most of a category's products share (export taxonomy `glmcat_ids`), or null. */
-  mcatIdOf(c: SellerKb["categories"][number]): string | null {
-    if (this.mcatIdCache.has(c)) return this.mcatIdCache.get(c)!;
-    const products = this.productsIn(c);
+  private mcatsCache = new Map<SellerKb["categories"][number], CategoryMcat[]>();
+
+  /** The MCATs of a category's products, most products first (a site category often pools several MCATs). */
+  mcatsOf(c: SellerKb["categories"][number]): CategoryMcat[] {
+    const hit = this.mcatsCache.get(c);
+    if (hit) return hit;
     const counts = new Map<string, number>();
-    for (const p of products) for (const id of new Set(idsIn(p.taxonomy?.glmcat_ids))) counts.set(id, (counts.get(id) ?? 0) + 1);
-    let best: string | null = null;
-    let n = 0;
-    for (const [id, k] of counts) if (k > n) [best, n] = [id, k];
-    const id = best && n * 2 >= products.length ? best : null;
-    this.mcatIdCache.set(c, id);
-    return id;
+    for (const p of this.productsIn(c)) for (const id of new Set(idsIn(p.taxonomy?.glmcat_ids))) counts.set(id, (counts.get(id) ?? 0) + 1);
+    const file = new Map((this.options.mcats ?? []).map((m) => [m.id, m]));
+    const out = [...counts]
+      .sort((a, b) => b[1] - a[1])
+      .map(([id, products]) => ({ id, products, name: file.get(id)?.name, inFile: file.has(id) }));
+    this.mcatsCache.set(c, out);
+    return out;
   }
 
-  /** Categories that are the same machine: same MCAT id (a category without one is its own family). */
-  family(c: SellerKb["categories"][number]): SellerKb["categories"] {
-    const id = this.mcatIdOf(c);
-    return id ? this.kb.categories.filter((x) => this.mcatIdOf(x) === id) : [c];
+  /** The MCAT most of a category's products belong to, or null when the export has no MCAT ids. */
+  mainMcatOf(c: SellerKb["categories"][number]): string | null {
+    return this.mcatsOf(c)[0]?.id ?? null;
   }
 
-  familyProducts(c: SellerKb["categories"][number]): KbProduct[] {
-    const seen = new Set<KbProduct>();
-    return this.family(c).flatMap((x) => this.productsIn(x).filter((p) => !seen.has(p) && seen.add(p)));
+  /** @deprecated use mainMcatOf */
+  mcatIdOf(c: SellerKb["categories"][number]): string | null {
+    return this.mainMcatOf(c);
+  }
+
+  /** The category's products in one MCAT (all of them when the MCAT is unknown). */
+  productsOfMcat(c: SellerKb["categories"][number], mcatId: string | null): KbProduct[] {
+    const all = this.productsIn(c);
+    return mcatId ? all.filter((p) => idsIn(p.taxonomy?.glmcat_ids).includes(mcatId)) : all;
+  }
+
+  /** The MCAT file's specs that this seller's products carry, options the seller offers first. */
+  private presentSpecs(m: McatSpec, products: KbProduct[]): Isq[] {
+    const rows = products.flatMap((p) => this.specs(p));
+    const out: Isq[] = [];
+    for (const spec of m.specs) {
+      if (SPEC_NOT_ASKED.test(spec.name) || SPEC_NOT_A_QUESTION.test(spec.name)) continue;
+      const matched = rows.filter(([name]) => specNamesMatch(spec.name, name));
+      if (!matched.length) continue;
+      const values = new Set(matched.flatMap(([, v]) => v.split(/\s*[,/|]\s*/)).map(normKey).filter(Boolean));
+      const seen = spec.options.filter((o) => optionSeen(o, values));
+      const rest = spec.options.filter((o) => !seen.includes(o));
+      out.push({ question: spec.name, options: [...seen, ...rest].slice(0, 6) });
+      if (out.length === 4) break;
+    }
+    return out;
   }
 
     // ---- media ----
@@ -740,27 +810,72 @@ export class KbView {
     return lines.join("\n");
   }
 
-  private planCache = new Map<SellerKb["categories"][number], IsqPlan>();
+  private planCache = new Map<string, IsqPlan>();
 
   /**
-   * The spec questions for a category, the same for every category of one MCAT family:
-   * 1. the uploaded MCAT file's specs for the family's MCAT id;
-   * 2. else an MCAT whose name equals the category's (normalised: "Iron Worker" = "Ironworker");
-   * 3. else ISQs derived from the family's products, cleaned (see deriveIsqs).
+   * The spec questions for a machine: the category and the MCAT within it. `mcatId` is the
+   * buyer's product's MCAT when known; otherwise (or if no product of the category has it) the
+   * category's main MCAT is used. Then:
+   * 1. the MCAT file's entry for that id, else an entry whose name equals the category's;
+   * 2. of its specs, only those the seller's products in that MCAT actually carry (by name, see
+   *    specNamesMatch), with the options the seller offers first;
+   * 3. when none are present, questions derived from those products' own specification values.
    */
-  isqPlan(c: SellerKb["categories"][number]): IsqPlan {
-    const hit = this.planCache.get(c);
+  isqPlan(c: SellerKb["categories"][number], mcatId?: string | null): IsqPlan {
+    const inCategory = mcatId ? this.mcatsOf(c).some((m) => m.id === mcatId) : false;
+    const id = inCategory ? mcatId! : this.mainMcatOf(c);
+    const key = `${c.category_id}\u0000${id ?? ""}`;
+    const hit = this.planCache.get(key);
     if (hit) return hit;
-    const fam = this.family(c);
-    const id = this.mcatIdOf(c);
+    const products = this.productsOfMcat(c, id);
     const mcats = (this.options.mcats ?? []).filter((m) => m.specs.length);
-    const label = fam.length > 1 ? `${c.name} (with ${fam.filter((x) => x !== c).map((x) => x.name).join(", ")})` : c.name;
-    const m = (id && mcats.find((x) => x.id === id)) || findMcat(mcats, fam.map((x) => x.name));
-    const plan: IsqPlan = m
-      ? { category: c.name, label, mcatId: id, source: "mcat", mcat: m.name, isqs: m.specs.slice(0, 4).map((x) => ({ question: x.name, options: x.options.slice(0, 6) })) }
-      : { category: c.name, label, mcatId: id, source: "derived", isqs: this.isqs(c) };
-    this.planCache.set(c, plan);
+    const m = (id && mcats.find((x) => x.id === id)) || findMcat(mcats, [c.name]);
+    const label = m ? `${c.name} · ${m.name}` : c.name;
+    const present = m ? this.presentSpecs(m, products) : [];
+    let plan: IsqPlan = present.length
+      ? { category: c.name, label, mcatId: id, source: "mcat", mcat: m!.name, isqs: present, presentOn: products.length }
+      : { category: c.name, label, mcatId: id, source: "derived", ...(m ? { mcat: m.name } : {}), isqs: this.isqs(c, products), presentOn: products.length };
+    // A product's MCAT that yields no questions (one product, specs not in the file): fall back to the category's main MCAT.
+    if (!plan.isqs.length && inCategory && id !== this.mainMcatOf(c)) {
+      const main = this.isqPlan(c);
+      if (main.isqs.length) plan = main;
+    }
+    this.planCache.set(key, plan);
     return plan;
+  }
+
+  /** Where a catalogue entry sits: its category and, for a product, its own MCAT (else the category's main one). */
+  locateEntry(e: { kind: string; slug: string; category?: string }): { category: string; mcatId: string | null } | null {
+    if (e.kind === "product") {
+      const p = this.product(e.slug);
+      const c = p && this.categoryOf(p);
+      if (p && c) return { category: c.name, mcatId: this.mcatOf(p) ?? this.mainMcatOf(c) };
+    }
+    const c = this.categoryOfEntry(e);
+    return c ? { category: c.name, mcatId: this.mainMcatOf(c) } : null;
+  }
+
+  /** The seller's own product FAQs (version 5.0), as rows for the per-message FAQ search; answers stating a price are left out. */
+  faqs(): { rows: FaqRow[]; priced: number } {
+    const rows: FaqRow[] = [];
+    let priced = 0;
+    for (const p of this.kb.products) {
+      const c = this.categoryOf(p);
+      for (const f of p.faqs ?? []) {
+        if (!f?.question || !f.answer) continue;
+        if (PRICE_AMOUNT.test(f.answer)) {
+          priced++;
+          continue;
+        }
+        rows.push({ question: f.question.slice(0, 500), answer: f.answer.slice(0, 2000), categories: [c?.name ?? "", this.title(p)].filter(Boolean), product: this.title(p) });
+      }
+    }
+    return { rows, priced };
+  }
+
+  /** Products linked to no category (they never get spec questions). */
+  looseProducts(): KbProduct[] {
+    return this.kb.products.filter((p) => !this.categoryOf(p));
   }
 
   /** The category a catalogue entry (product or category page) belongs to. */
@@ -793,16 +908,18 @@ export class KbView {
 
   private categoryGuide(c: SellerKb["categories"][number], maxProducts: number): string {
     const products = this.productsIn(c);
-    const { isqs, mcat } = this.isqPlan(c);
+    const { isqs, mcat, source } = this.isqPlan(c);
     const lines = [`### ${c.name}`];
     const desc = cleanText(c.description);
     if (desc) lines.push(maxProducts === Infinity ? desc : desc.slice(0, 300));
     lines.push(`Products: ${this.productList(products, maxProducts)}`);
     if (isqs.length) {
       lines.push(
-        `ISQs${mcat ? ` (from MCAT ${mcat})` : ""} (ask one per message, in this order, offering the options with show_options):\n${isqs.map((q, i) => `${i + 1}. ${q.question}? Options: ${q.options.join(" / ")}`).join("\n")}`,
+        `ISQs${mcat && source === "mcat" ? ` (from MCAT ${mcat})` : ""} (ask one per message, in this order, offering the options with show_options):\n${isqs.map((q, i) => `${i + 1}. ${q.question}? Options: ${q.options.join(" / ")}`).join("\n")}`,
       );
     }
+    const others = this.mcatsOf(c).slice(1).filter((m) => m.name);
+    if (others.length) lines.push(`Also in this category: ${others.map((m) => `${m.name} (${plural(m.products, "product")})`).join(", ")}. Their own questions come in <spec_questions> when the buyer names one.`);
     return lines.join("\n");
   }
 
@@ -903,5 +1020,6 @@ export function knowledgeFromKb(view: KbView, base: KnowledgeBase): KnowledgeBas
     productCardsText: view.productCardsText(),
     allowedPhones: [s.phone, s.whatsapp_number].filter(Boolean).map(digits),
     allowedDomains: [...domains].sort(),
+    faqs: view.faqs().rows,
   };
 }

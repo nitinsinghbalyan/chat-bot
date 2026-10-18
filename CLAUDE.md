@@ -18,8 +18,8 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 |------|---------|
 | **seller** | One business with its own bot + site at `/s/<slug>/` |
 | **KB** | A seller's knowledge base. **Uploaded JSON** (preferred) or the KB folder files |
-| **KB JSON / export** | Seller export v3.0: `seller`, `company_pages`, `photo_gallery`, `categories`, `products` |
-| **ISQ** | Item Specification Question: asked one per message, options shown as chips. Per MCAT family: MCAT file first, else cleaned derived; server picks the category per turn (`<spec_questions>`) |
+| **KB JSON / export / master JSON** | Seller export v5.0 (3.0 still loads): `seller` (with `seller_id`), `company_pages`, `photo_gallery`, `categories`, `products` (each with `taxonomy.glmcat_ids` = its MCAT, and `faqs`) |
+| **ISQ** | Item Specification Question: asked one per message, options shown as chips. Per **MCAT within a category** (the buyer's product's MCAT, else the category's main one): the MCAT file's specs that the seller's products carry, seller's options first; else derived. Server picks category + MCAT per turn (`<spec_questions>`) |
 | **chips** | Tap-to-reply buttons in the chat (`show_options` tool) |
 | **cards / carousel** | Product, photo, video and PDF cards in the chat (`share_media` tool) |
 | **persona** | A seller's brand persona: system part + user (per-turn) part |
@@ -29,8 +29,9 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 | **large catalogue** | KB over ~300k chars: prompt keeps categories, ISQs and a product index; details come per message from catalogue search |
 | **prompt versions** | Every save/reset/restore of common prompts and personas, plus each shipped default, kept with View (diff) and Restore |
 | **traces** | Langfuse: one per buyer message; Session = one conversation `<seller>:<chatId>`; mobiles masked, OTPs never sent; per-chat cost = `chat_cost_usd` session score; off without `LANGFUSE_*` keys; status on `/health` + `/admin` |
-| **extra files** | Per seller (Manage): business card .md, MCAT specs JSON (fills ISQ gaps), product cards JSON; merged with the KB JSON |
-| **common FAQ** | One Excel for all sellers (Question, Answer, optional Category) on /admin/prompts; searched per message as `<faq>` |
+| **extra files** | Per seller (Manage): policy card .md (handling rules, amounts stripped), MCAT specs JSON (the ISQ source), product cards JSON; merged with the KB JSON |
+| **Knowledge mapping** | Manage block + `/admin/sellers/<slug>/mapping.json`: categories → MCATs → questions, MCAT file use, cards matched, FAQs, policy card, with flags. `src/mapping.ts` |
+| **common FAQ** | One Excel for all sellers (Question, Answer, optional Seller and Category) on /admin/prompts; merged with the seller's own product FAQs (v5 JSON); searched per message as `<faq>` |
 | **seller row / Manage** | `/admin` lists sellers as one-line rows; **Manage** expands the controls |
 | **model** | `claude-sonnet-5-5`, effort low, 1M context; system prompt ~43k tokens (Jayshree), cached |
 | **demo OTP** | `12345`; no SMS gateway yet |

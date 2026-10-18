@@ -50,7 +50,7 @@ Don't call them `CLAUDE_*`: the harness sets `CLAUDE_EFFORT`, which once clashed
 - The scratchpad is per session: the e2e helpers (`e2e/server.ts`, `e2e/flow.ts`, `e2e/fake-langfuse.mjs`, Playwright scripts) have to be recreated in a new session.
 - `npm view <package> readme` works through the proxy; use it (and the installed `.d.ts` files) to check a library's current API before coding.
 - Fake models must handle the merged turn: after `show_options` the turn ends, so the next user message holds the `tool_result` blocks **and** the buyer's text. Treat a user message as a tool round only when it has no text block.
-- ISQ checks on a real export: a small tsx script that builds `new KbView(kb, { mcats })` and prints `isqPlan(category)` per category (label, MCAT id, source, questions).
+- ISQ checks on real exports: a tsx `.mts` script (top-level await needs `.mts`) that loads each seller with `SellerRegistry.addSeller` + `setSellerFile` for the three files and prints `s.mapping` (or `npm run kb:check` with the data on the disk). Nitin's zip of 5 sellers' v5 files lived in `/tmp/claude-0/v4/` for #24; it holds GST/bank data, never commit it.
 - Chat flow checks: `e2e/flow.ts` in the scratchpad is a stateful fake model that walks machine → mobile → OTP → name → ISQ chips (recreate it if the scratchpad is gone).
 - cloud.langfuse.com is blocked by the agent proxy too, so real trace delivery can only be checked on production.
 - Trace session checks: record the stand-in Langfuse's OTLP bodies and count `"key":"session.id"` and `"key":"langfuse.session.id"` per span; both should hold one `<seller>:<uuid>` per conversation.

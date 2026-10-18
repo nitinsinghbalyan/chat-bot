@@ -18,7 +18,7 @@ const kbJson = (): SellerKb => JSON.parse(fs.readFileSync(path.join(fixtures, "k
 
 const mcatFile = JSON.stringify([
   { mcat_id: 777, mcat_name: "Hydraulic Shearing Machine", specifications: [{ name: "Cutting Length", options: ["8 ft", "10 ft"] }, { name: "Cutting Thickness", options: ["6 mm", "10 mm"] }] },
-  { mcat_id: 888, mcat_name: "Press Brake", specifications: [{ name: "Bending Length", options: ["2500 mm", "3200 mm"] }] },
+  { mcat_id: 888, mcat_name: "Press Brake", specifications: [{ name: "Bending Length", options: ["2500 mm", "3200 mm"] }, { name: "Capacity", options: ["60 Ton", "100 Ton", "200 Ton"] }] },
   { mcat_id: 1067, mcat_name: "Concrete Vibrator", specifications: [{ name: "Power Source", options: ["Electric", "Petrol"] }] },
 ]);
 const cardsFile = JSON.stringify([{ product_id: "shear", canonical_name: "Shearing Machine", aliases: ["Hydraulic Shearing Machine"], flow: { markdown: "## **Shearing Machine**" } }]);
@@ -40,7 +40,7 @@ describe("extra files in the registry", () => {
     reg.setSellerFile(ALPHA, "business-card", file(md.value));
     reg.setSellerFile(ALPHA, "mcat", file(mcat.value));
     reg.setSellerFile(ALPHA, "product-cards", file(cards.value));
-    expect(s.systemPrompt).toContain("## More from the seller's business card");
+    expect(s.systemPrompt).toContain("## Seller policy card (how to handle these topics)");
     expect(s.systemPrompt).toContain("We make press brakes and shears.");
     expect(s.systemPrompt).not.toContain("24ABCDE");
     expect(s.kb.allowedPhones).toContain("9898989898");
@@ -59,7 +59,7 @@ describe("extra files in the registry", () => {
     const reg = load();
     const kb = kbJson();
     kb.categories.push({ category_id: "c9", name: "Hydraulic Shearing Machines", url: "", description: "", image_url: "", product_ids: ["601"] } as any);
-    kb.products.push({ ...kb.products[1], product_id: "601", name: "Hydraulic Shear", display_name: "", product_url: "", specifications: [], taxonomy: { category_name: "Shears", glmcat_ids: ",777,", glcat_ids: "" } } as any);
+    kb.products.push({ ...kb.products[1], product_id: "601", name: "Hydraulic Shear", display_name: "", product_url: "", specifications: [{ name: "Cutting Length", value: "10 ft" }, { name: "Blade Material", value: "HSS" }], taxonomy: { category_name: "Shears", glmcat_ids: ",777,", glcat_ids: "" } } as any);
     reg.setUploadedKb(ALPHA, kb);
     const mcat = parseSellerFile("mcat", mcatFile);
     const cards = parseSellerFile("product-cards", cardsFile);
@@ -67,9 +67,14 @@ describe("extra files in the registry", () => {
     reg.setSellerFile(ALPHA, "mcat", file(mcat.value));
     reg.setSellerFile(ALPHA, "product-cards", file(cards.value));
     const s = reg.get(ALPHA)!;
-    // MCAT first: "Press Brakes" equals the "Press Brake" MCAT's name, so its specs replace the derived ones.
-    expect(s.systemPrompt).toMatch(/### Press Brakes[\s\S]*?ISQs \(from MCAT Press Brake\)[\s\S]*?1\. Bending Length\? Options: 2500 mm \/ 3200 mm/);
-    expect(s.systemPrompt).toMatch(/### Hydraulic Shearing Machines[\s\S]*?ISQs \(from MCAT Hydraulic Shearing Machine\)[\s\S]*?1\. Cutting Length\? Options: 8 ft \/ 10 ft/);
+    // "Press Brakes" equals the "Press Brake" MCAT's name (the products have no MCAT ids): of its specs, only Capacity is on
+    // the products, so that is the one question, with the seller's values first. Bending Length is never asked.
+    expect(s.systemPrompt).toMatch(/### Press Brakes[\s\S]*?ISQs \(from MCAT Press Brake\)[\s\S]*?1\. Capacity\? Options: 60 Ton \/ 100 Ton \/ 200 Ton/);
+    expect(s.systemPrompt).not.toContain("Bending Length");
+    // By MCAT id 777: Cutting Length is on the product (Cutting Thickness is not), with the seller's 10 ft first.
+    expect(s.systemPrompt).toMatch(/### Hydraulic Shearing Machines[\s\S]*?ISQs \(from MCAT Hydraulic Shearing Machine\)[\s\S]*?1\. Cutting Length\? Options: 10 ft \/ 8 ft/);
+    expect(s.systemPrompt.split("### Hydraulic Shearing Machines")[1].split(/\n#+ /)[0]).not.toContain("Cutting Thickness");
+    expect(s.mapping?.categories.find((c) => c.name === "Hydraulic Shearing Machines")).toMatchObject({ mainMcat: { id: "777", name: "Hydraulic Shearing Machine", inFile: true }, questions: { source: "mcat" } });
     expect(s.systemPrompt).toContain("# Product cards (uploaded)");
     expect(s.kb.productCards.map((c) => c.product_id)).toContain("shear");
     expect(s.mcatUse.filled).toContain("Hydraulic Shearing Machines (from MCAT Hydraulic Shearing Machine)");

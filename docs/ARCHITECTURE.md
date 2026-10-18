@@ -146,38 +146,39 @@ flowchart TD
 
 ### Spec questions (ISQs)
 
+A site category usually pools several MCATs (IndiaMART micro-categories): "GSP Triply Cookware" holds kadhais, topes and handis. Every product carries its MCAT in `taxonomy.glmcat_ids`, and the seller's MCAT specifications file is generated for those ids. So the questions are chosen per **MCAT within a category**, and checked against what the seller actually sells:
+
 ```mermaid
 flowchart LR
-  C[Category] --> M{MCAT id shared by<br/>≥50% of its products?}
-  M -->|yes| FAM[MCAT family:<br/>all categories with that id]
-  M -->|no| SELF[Family = the category]
-  FAM --> S1{MCAT file has<br/>that id?}
-  SELF --> S2
-  S1 -->|yes| Q1[MCAT specs]
-  S1 -->|no| S2{MCAT with an<br/>equal name?}
-  S2 -->|yes| Q1
-  S2 -->|no| Q2[Derived from the family's<br/>product specs, cleaned]
+  P[Buyer's product known?] -->|yes| PM[Its own MCAT]
+  P -->|no| MM[Category's main MCAT<br/>most products]
+  PM --> F{MCAT file has<br/>that id?}
+  MM --> F
+  F -->|no| N{Entry with an<br/>equal name?}
+  F -->|yes| S[Its specs that this seller's<br/>products in that MCAT carry]
+  N -->|yes| S
+  N -->|no| D
+  S -->|some| Q[Questions, max 4:<br/>seller's options first, then the rest]
+  S -->|none| D[Derived from those<br/>products' own spec values]
+  D -->|nothing and not the main MCAT| MM
 ```
 
-- **Cleaning of derived ISQs:**
-  - Brand, model, usage/application and machine type are skipped.
-  - Spellings are merged ("Semi-Automatic" = "Semi Automatic").
-  - Bare numbers and long values are dropped.
-  - An attribute must appear on ≥25% of the family's products.
-  - Each family gets up to 4 questions with 6 options.
-- **The server picks the machine each turn** (`src/isqTracker.ts`) from, in order:
-  1. the product or category page the buyer is on
-  2. the top catalogue match for the buyer's own words
-  3. the product saved with the lead
+- **Present on products:** an MCAT spec is asked only when a product of that MCAT has a spec of the same name (`specNamesMatch`: equal once normalised, or one name's words all in the other, so "Size/Diameter" covers "Diameter").
+- **Options:** all of the MCAT's options (max 6), the ones matching a product value first ("22 Gauge" before "18 Gauge" when the seller only makes 22).
+- **Derived fallback** (`deriveIsqs`): brand, model, usage and machine type skipped, spellings merged, bare numbers dropped, attribute on ≥25% of the products, up to 4 questions with 6 options.
+- **The server picks the machine each turn** (`src/isqTracker.ts`): category **and MCAT** from, in order, the product or category page the buyer is on, the top catalogue match for the buyer's own words, or the product saved with the lead. It sends only that machine's questions as `<spec_questions>` ("Machine: <category> · <MCAT>"), marking which were asked and which comes next. An answer or a tapped chip never switches the machine; naming another machine does, and progress is kept when the questions stay the same.
+- **Knowledge mapping report** (`src/mapping.ts`, Manage → Knowledge mapping, `/admin/sellers/:slug/mapping.json`): per category its main MCAT, other MCATs, question source and questions, with flags (MCAT id not in the file, no questions, derived); MCAT file entries used/unused/missing; product cards mapped to a category and MCAT (by product, category, MCAT name, containing name or a distinctive word) or unmatched; product FAQ counts; policy card sections kept.
 
-  It sends only that category's questions to the bot as `<spec_questions>`, marking which were asked and which comes next. An answer or a tapped chip never switches the machine; naming another machine does.
+### FAQs
 
-### Common FAQ
+Two sources, one search per message (`FaqStore.forSeller` merges them; up to 3 hits go into the turn as `<faq>`):
+- **The seller's own product FAQs** from the KB JSON (version 5.0 `products[].faqs`), tagged with the product name ("Q (about <product>): …").
+- **The common sheet** `DATA_DIR/faq.xlsx` (or `.csv`): Question, Answer and optionally **Seller** (name, slug or IndiaMART seller id; "Exoticasteel" matches "Exotica Steel (India)") and **Category**. A row with a seller applies to that seller only; with a category, to sellers dealing in it; with neither, to all. `{seller_name}` is filled in.
+- **Guardrails win:** rows and product FAQs whose answer states a price are dropped.
 
-`DATA_DIR/faq.xlsx` (or `.csv`) holds Question, Answer and an optional Category column.
-- **Scope:** a row with a category applies only to sellers that deal in it, and `{seller_name}` is filled in.
-- **Search:** each buyer message is searched against the seller's rows (MiniSearch, with stopwords and light stemming). Up to 3 hits go into the turn as `<faq>`.
-- **Guardrails win:** rows that state a price are dropped on upload.
+### Policy card (business card .md)
+
+The seller's policy card (sections such as Business, Dispatch, Freight, GST, Packaging, Availability, Pricing basis, Sample policy, Warranty, Must escalate) is kept **whole as handling rules** under "Seller policy card (how to handle these topics)". Identity and financial facts (GSTIN, bank, turnover, staff, ratings, tenure) and the internal "Dropped" section are left out; money, percentages, delivery durations and payment-term sentences inside a rule are replaced by "[amount]" or removed. "Deals in" feeds the seller's terms; contact lines feed the numbers the bot may share.
 
 ---
 
@@ -289,5 +290,5 @@ Files on the data disk:
 | Add a tool | Its definition and zod schema in `src/tools.ts`, its handling in `runTurn` (`src/claude.ts`), any UI in `public/widget.js`. |
 | Change the journey or style | `prompts/system.md` (it applies itself on deploy). |
 | Add a seller | Upload its KB JSON with **+ Add seller** on `/admin`, or commit a KB folder under `kb/sellers/<slug>/`. |
-| Tune ISQs | `deriveIsqs` / `isqPlan` (`src/sellerKb.ts`); upload a better MCAT file. |
+| Tune ISQs | `isqPlan` / `presentSpecs` / `deriveIsqs` (`src/sellerKb.ts`); fix the MCAT file or product specs the mapping report flags. |
 | Add a guardrail check | `OutputFilter` rules in `src/guardrails.ts`, plus the text in `prompts/guardrails.md`. |

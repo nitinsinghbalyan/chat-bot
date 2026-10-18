@@ -29,7 +29,7 @@ chat-bot/
 │       └── jayshree-machinetools.md The first seller: facts, KB notes, contacts
 │
 ├── prompts/                   Shipped defaults for the common prompts (admin edits override; newer defaults auto-apply on deploy)
-│   ├── system.md              Common system prompt template: role, journey (mobile → OTP → name → ISQs → summary), tools, trusted tags
+│   ├── system.md              Common system prompt template: role, journey (mobile → OTP → name → ISQs → summary), sources incl. policy card, tools, trusted tags
 │   ├── guardrails.md          The 9 guardrails G1–G9 (price, grounding, phones, OTP, …)
 │   └── user.md                Per-turn wrapper text added to each buyer message
 │
@@ -63,12 +63,13 @@ chat-bot/
 │   ├── session.ts       ~160  In-memory chat state: chat id, lead stage, category, asked ISQs, usage and cost
 │   ├── db.ts            ~480  SQLite (better-sqlite3): sessions, transcript, leads (+ test flag), guardrail events, prompts, versions, bot keys; migrations
 │   ├── isqTracker.ts    ~100  Server-side category per turn and asked/answered ISQs; builds <spec_questions>
-│   ├── faq.ts           ~240  Common FAQ: parse Excel/CSV, search per message (stopwords, stemming), build <faq>
+│   ├── faq.ts           ~290  FAQs: parse the common Excel/CSV (Seller and Category columns), merge the seller's product FAQs, search per message
 │   │
 │   ├── sellers.ts       ~575  Seller registry: loads repo + admin sellers, merges KB JSON + extra files, builds cached system prompts
 │   ├── kb.ts            ~130  KB folder loader: business card, product cards, allowed phones
-│   ├── sellerKb.ts      ~910  KB JSON (export v3.0): sanitised view, MCAT families, ISQ plans, large-catalogue index, prompt text
-│   ├── sellerFiles.ts   ~270  Extra files: business card .md, MCAT specs JSON, product cards JSON; name matching; ISQ gap filling
+│   ├── sellerKb.ts     ~1020  KB JSON (export v5.0 / 3.0): sanitised view, MCATs per category, ISQ plans per MCAT, product FAQs, large-catalogue index
+│   ├── mapping.ts       ~150  Knowledge mapping report: categories → MCATs → questions, MCAT file use, cards, FAQs, policy card
+│   ├── sellerFiles.ts   ~330  Extra files: policy card .md (handling rules, amounts stripped), MCAT specs JSON, product cards JSON; name matching
 │   ├── prompts.ts       ~100  Loads common prompt defaults and checks required placeholders
 │   ├── promptVersions.ts~115  Version history for common prompts and personas; auto-applies newer shipped defaults
 │   ├── diff.ts           ~25  Line diff for the Versions "View" screen
@@ -89,9 +90,10 @@ chat-bot/
     ├── claude.test.ts         Turn loop, tool rounds, per-turn blocks
     ├── tools.test.ts          Tool handlers, lead status text, summary card
     ├── guardrails.test.ts     Price scrub, phone allow-list, logging
-    ├── isq.test.ts            ISQ derivation, MCAT families, category switching
+    ├── isq.test.ts            ISQ plans per category and MCAT, specs present on products, machine switching
+    ├── kbV5.test.ts           Master JSON v5: sensitive fields, product FAQs, FAQ seller column, mapping report
     ├── sellerKb.test.ts       KB JSON view, sanitising, large-catalogue mode
-    ├── sellerFiles.test.ts    Extra-file parsers and name matching
+    ├── sellerFiles.test.ts    Policy card parser, MCAT and card parsers, name matching
     ├── extraFiles.test.ts     Extra files in the registry and admin, common FAQ end to end
     ├── faq.test.ts            FAQ parsing and search
     ├── sellers.test.ts        Registry loading and prompt building
@@ -103,7 +105,7 @@ chat-bot/
     ├── tracing.test.ts        Spans, session ids, masking, export errors
     ├── crawler.test.ts        Sitemap parsing and page extraction
     ├── catalogue.test.ts      Catalogue search
-    └── fixtures/              Two fake sellers (alpha-presses, beta-pumps), a small KB JSON, a FAQ .xlsx, HTML pages
+    └── fixtures/              Two fake sellers (alpha-presses, beta-pumps), small KB JSONs (v3 and v5), a FAQ .xlsx, HTML pages
 ```
 
 ## Not in git

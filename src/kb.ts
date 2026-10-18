@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import type { FaqRow } from "./faq.js";
 
 export interface BusinessCard {
   name: string;
@@ -53,6 +54,8 @@ export interface KnowledgeBase {
   allowedPhones: string[];
   /** Domains whose links the bot may share (Guardrail 3). */
   allowedDomains: string[];
+  /** The seller's own product FAQs (KB JSON version 5.0), searched per message with the common FAQ. */
+  faqs: FaqRow[];
 }
 
 function readJson<T>(file: string): T {
@@ -127,5 +130,6 @@ export function loadKnowledgeBase(dir: string, siteUrl?: string): KnowledgeBase 
     productCardsText: productCards.map(renderProductCard).join("\n\n---\n\n"),
     allowedPhones: businessCard.listed_contact ? [digits(businessCard.listed_contact)] : [],
     allowedDomains: [...domains].sort(),
+    faqs: [],
   };
 }

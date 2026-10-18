@@ -7,12 +7,20 @@ import type { CatalogueEntry } from "./crawler.js";
 import type { IsqPlan } from "./sellerKb.js";
 import type { LeadState } from "./session.js";
 
+/** Where a machine sits in the seller's knowledge: its site category and its MCAT (null when the export has none). */
+export interface Place {
+  category: string;
+  mcatId: string | null;
+}
+
 /** What runTurn needs from the seller's knowledge base (KB JSON sellers only). */
 export interface IsqSource {
-  plan(category: string): IsqPlan | null;
-  categoryOfEntry(e: CatalogueEntry): string | null;
-  /** The category of the best catalogue match for a product name (e.g. from save_lead). */
-  categoryForText(text: string): string | null;
+  /** The questions for a category, for the given MCAT within it when known (see KbView.isqPlan). */
+  plan(category: string, mcatId?: string | null): IsqPlan | null;
+  /** The category and MCAT of a catalogue entry (a product's own MCAT; a category page's main one). */
+  locate(e: CatalogueEntry): Place | null;
+  /** The place of the best catalogue match for a product name (e.g. from save_lead). */
+  locateText(text: string): Place | null;
 }
 
 /** Words too generic to tell machines apart ("mild steel", "automatic"). */
@@ -22,10 +30,26 @@ const GENERIC = new Set(
 /** Distinctive words, cut to 5 letters so "shear" and "shearing" count as one. */
 const words = (t: string) => (t.toLowerCase().match(/[a-z]{4,}/g) ?? []).filter((w) => !GENERIC.has(w)).map((w) => w.slice(0, 5));
 
+/** The chat's current plan: its category's questions for its MCAT. */
+export const currentPlan = (lead: LeadState, src: IsqSource) => (lead.category ? src.plan(lead.category, lead.mcatId ?? null) : null);
+
+/** Sets the chat's machine (category and MCAT). Returns true when it changed. */
+export function setPlace(lead: LeadState, src: IsqSource, next: Place | null): boolean {
+  if (!next || (next.category === lead.category && (next.mcatId ?? null) === (lead.mcatId ?? null))) return false;
+  // The same questions (same MCAT, or two categories sharing one) is not a switch: keep what was asked.
+  const before = currentPlan(lead, src);
+  const after = src.plan(next.category, next.mcatId);
+  const sameQuestions = !!before && !!after && before.isqs.map((q) => q.question).join("|") === after.isqs.map((q) => q.question).join("|");
+  lead.category = next.category;
+  lead.mcatId = next.mcatId ?? undefined;
+  if (!sameQuestions) lead.askedIsqs = [];
+  return true;
+}
+
 /**
- * Updates the chat's category from this turn's strongest signal: the page the buyer is on, else
- * the top catalogue match for the buyer's own words. A match switches an existing category only
- * when the message names that machine: two distinctive words shared with it, or one the current
+ * Updates the chat's machine from this turn's strongest signal: the page the buyer is on, else
+ * the top catalogue match for the buyer's own words. A match switches an existing machine only
+ * when the message names one: two distinctive words shared with it, or one the current
  * machine's name and options don't use ("shear" while on press brakes). So an answer such as
  * "6 mm", "MS" or "Hydraulic" never moves the chat to another machine. Returns true when it changed.
  */
@@ -35,26 +59,19 @@ export function updateCategory(
   turn: { buyerText: string; page?: CatalogueEntry | null; hits: CatalogueEntry[]; ownHits: boolean },
 ): boolean {
   if (lead.stage === "otp_sent" || lead.stage === "verified") return false;
-  let next: string | null = null;
-  if (turn.page) next = src.categoryOfEntry(turn.page);
+  let next: Place | null = null;
+  if (turn.page) next = src.locate(turn.page);
   else if (turn.ownHits && turn.hits[0]) {
     const top = turn.hits[0];
     const tapped = lead.lastOptions?.some((o) => o.toLowerCase() === turn.buyerText.trim().toLowerCase());
     const named = new Set(words(turn.buyerText));
     const shared = [...new Set(words(`${top.title} ${top.category}`).filter((w) => named.has(w)))];
-    const current = lead.category ? src.plan(lead.category) : null;
+    const current = currentPlan(lead, src);
     const known = new Set(current ? words(`${current.label} ${current.isqs.flatMap((q) => q.options).join(" ")}`) : []);
     const namesIt = shared.length >= 2 || shared.some((w) => !known.has(w));
-    if (!tapped && (!lead.category || namesIt)) next = src.categoryOfEntry(top);
+    if (!tapped && (!lead.category || namesIt)) next = src.locate(top);
   }
-  if (!next || next === lead.category) return false;
-  // Same MCAT family (same questions) is not a switch: keep what was asked.
-  const before = lead.category ? src.plan(lead.category) : null;
-  const after = src.plan(next);
-  const sameQuestions = !!before && !!after && before.isqs.map((q) => q.question).join("|") === after.isqs.map((q) => q.question).join("|");
-  lead.category = next;
-  if (!sameQuestions) lead.askedIsqs = [];
-  return true;
+  return setPlace(lead, src, next);
 }
 
 /** Marks the ISQ whose options best match the reply buttons just shown as asked. */
@@ -82,12 +99,12 @@ export function markAnswered(lead: LeadState, plan: IsqPlan | null, labels: stri
 /** The <spec_questions> block for this turn. */
 export function specQuestionsText(plan: IsqPlan, asked: string[] = []): string {
   if (!plan.isqs.length) {
-    return `Machine category: ${plan.label}. It has no listed specification questions: don't invent any. Ask only for the quantity and city if still needed.`;
+    return `Machine: ${plan.label}. It has no listed specification questions: don't invent any. Ask only for the quantity and city if still needed.`;
   }
   const done = new Set(asked);
   const next = plan.isqs.find((q) => !done.has(q.question));
   return [
-    `Machine category: ${plan.label}.`,
+    `Machine: ${plan.label}.`,
     "Ask only these specification questions (ISQs) for this machine, one per message, in this order, with exactly these options in show_options. Skip any the buyer has already answered. Never ask another category's questions.",
     ...plan.isqs.map((q, i) => `${i + 1}. ${q.question}? Options: ${q.options.join(" / ")}`),
     asked.length ? `Already asked: ${plan.isqs.filter((q) => done.has(q.question)).map((q) => q.question).join(", ") || "none"}.` : "",
