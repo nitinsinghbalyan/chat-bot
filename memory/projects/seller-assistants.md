@@ -119,6 +119,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | #24 | Master JSON v5, questions per product MCAT checked against the seller's products, policy card as handling rules, product FAQs + FAQ Seller column, Knowledge mapping report (`src/mapping.ts`) |
 | #25 | Project memory refresh after #23/#24 |
 | #26 | **Simulator key** button on each seller row (opens the row's Simulator API block, now second in Manage), "N simulator keys" badge, build id on `/health` (`build.commit`) and in the admin footer |
+| #27 | Herbaveda "Hi → Hing" fix: no prefix/fuzzy search on very short words, a product is picked from the buyer's words only when a distinctive word is shared, **completion guard** in `save_lead` (no summary while questions remain; tool result names the next one), "product" wording in the common prompt and tools |
 
 ## Open items / ideas
 - **Langfuse (self-hosted `langfuse.intermesh.net`):** after #16/#18, check that traces appear grouped by conversation. If not, **Test Langfuse** on /admin names the failing step (server version, upload refused, or accepted but not stored, which is for the intermesh Langfuse admins).
