@@ -101,12 +101,12 @@ What the bot is given from it:
 
 **Large catalogues:** a JSON whose bot text fits in about 300,000 characters (Jayshree's 143 products is about 170,000) goes into the bot's system prompt in full. A bigger one, with thousands of products or long descriptions, is still accepted (up to 20,000 products and a 40 MB file). The system prompt then keeps the business card, every category with its ISQs and the product names and ids, or, if even that is too long, the first few products per category. Each buyer message then pulls in the full details of the best-matching products (specifications, description and the id for sharing media) through the catalogue search. The upload result says when this applies.
 
-**ISQs (spec questions):** worked out per **MCAT family**. Categories whose products mostly share an MCAT id (`taxonomy.glmcat_ids`) are one machine, so "CNC PRESS BRAKE" and "Cnc Press Brake Machine" ask the same questions. A family's questions come from, in order:
-1. the uploaded MCAT file's specs for its MCAT id;
-2. an MCAT whose name equals the category's ("Iron Worker Machine" = "Ironworker Machine"; containing a name is not enough);
-3. otherwise, the specs of the family's products: each attribute whose values differ becomes a question.
+**ISQs (spec questions):** worked out per **MCAT within a category**. A site category usually pools several MCATs (IndiaMART micro-categories); every product carries its own in `taxonomy.glmcat_ids`, and the uploaded MCAT specifications file is generated for those ids. The chat uses the buyer's product's MCAT when a product is named, else the category's main MCAT (the one most of its products belong to). Its questions, up to 4, come in three layers, a later layer never repeating an earlier question:
+1. **On products:** the MCAT file's specs that this seller's products in that MCAT carry: a product spec of the same name ("Size/Diameter" covers "Diameter"), or one of the spec's options among the products' spec values or names. All of the MCAT's options are offered (max 6), the ones the seller lists first.
+2. **Derived:** the products' own specification attributes whose values differ, as questions with those values as options (cleaned: brand, model, usage and machine type skipped, spellings merged, bare numbers dropped, attribute on a quarter of the products).
+3. **MCAT standard:** the MCAT file's remaining specs, which no product lists, with the file's options. Brand, model and item code are never asked.
 
-Derived questions are cleaned. Brand, model, country of origin, usage/application and machine type are skipped. Spellings are merged ("Semi-Automatic" = "Semi Automatic"). Bare numbers and long values are dropped, an attribute must appear on a quarter of the products, and each family gets up to 4 questions with up to 6 options.
+Without an MCAT file, or when the file has no entry for the id and none with the category's exact name, only the derived layer applies. Each question's layer shows in the Knowledge mapping block ("on products", "derived", "MCAT standard").
 
 **The server picks the machine each turn.** It goes by the product or category page the buyer is on, else the best catalogue match for what they typed, else the product saved with the lead. It gives the bot only that category's questions, inside `<spec_questions>`, marking what was already asked and which comes next. An answer ("6 mm", a tapped option) never switches the machine; naming another machine does.
 

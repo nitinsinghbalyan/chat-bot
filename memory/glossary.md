@@ -25,7 +25,7 @@ Shorthand and internal language for the Seller assistants project.
 | partial crawl | A crawl that got under 80% of the existing pages; the old catalogue is kept | `MIN_CRAWL_SHARE` |
 | RAG / SELLER CATALOGUE | Top catalogue matches put into each turn's user prompt | `src/claude.ts` `retrieve` |
 | prompt budget / large catalogue | `PROMPT_BUDGET` (300k chars). KB text up to it goes in the system prompt in full; above it `promptPlan()` uses "index" (all product names) or "partial" (some per category) and details come from the catalogue search | `src/sellerKb.ts` |
-| ISQ | Item Specification Question. Per MCAT within a category: the MCAT file's specs the seller's products carry (seller's options first), else derived from the products' spec values | `KbView.isqPlan` |
+| ISQ | Item Specification Question. Per MCAT within a category, up to 4 in layers: the MCAT file's specs the seller's products carry ("on products", seller's options first) → the products' own differing specs ("derived") → the MCAT's remaining specs ("MCAT standard"); no repeats across layers. Each question carries `from` | `KbView.isqPlan`, `fileSpecs` |
 | chips | Tap-to-reply buttons; the `show_options` tool (2–8 options) | `src/tools.ts`, widget |
 | cards / carousel | `share_media` tool: product, image, video and document cards plus related products; built server-side only | `src/shareMedia.ts` |
 | lightbox | In-chat viewer for photos and videos (YouTube nocookie, Vimeo, MP4) | widget |
@@ -51,7 +51,8 @@ Shorthand and internal language for the Seller assistants project.
 | chat id | Unique id per conversation; Langfuse session = `<seller>:<chatId>`; in transcript/leads `chat_id` | `Session.chatId` |
 | common FAQ / FAQ sheet | One Excel/CSV for all sellers on /admin/prompts (`Seller Name`, `gl_faq_question`, `gl_faq_answer`, optional Category); rows scoped by Seller (name, slug or glid) and Category; only the **first** sheet is read (the second tab of Nitin's sheet holds other vendors' keys: never paste or commit it); searched per message into `<faq>` | `src/faq.ts` |
 | product FAQs | `products[].faqs` in a v5 export; merged into the seller's FAQ index, hits shown as "(about <product>)"; price answers dropped | `KbView.faqs`, `FaqStore.forSeller` |
-| derived ISQs | Questions built from the products' own spec values when the MCAT file has no entry or none of its specs is on the seller's products; badge **derived** in Knowledge mapping | `deriveIsqs` in `src/sellerKb.ts` |
+| derived ISQs | Questions built from the products' own spec values (attributes whose values differ); the second layer of every plan, and the only one without an MCAT file entry; badge **derived** per question in Knowledge mapping | `deriveIsqs` in `src/sellerKb.ts` |
+| MCAT standard | The third layer: an MCAT file spec that no product of the MCAT lists, asked with the file's options so the buyer still gets the category's usual questions; badge **MCAT standard** | `fileSpecs` in `src/sellerKb.ts` |
 | mapping.json | `GET /admin/sellers/<slug>/mapping.json`: the Knowledge mapping as JSON for audits (same data as the admin block) | `src/admin.ts` |
 | test lead / test chat | A lead or transcript made through the simulator API (`leads.test = 1`); hidden on Leads unless "Show test chats" is ticked | `src/db.ts`, `src/admin.ts` |
 | sensitive fields | v5 export fields the bot never sees: `price`, `delivery_time`, `payment_terms`, `production_capacity`, `packaging_details`, `port_of_dispatch`, `year_established`, `employees`, `member_since`, `gst_verified`, `trustseal_url`, `ratings` (the website still shows prices) | `src/sellerKb.ts` |
