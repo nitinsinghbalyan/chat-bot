@@ -67,10 +67,11 @@ describe("extra files in the registry", () => {
     reg.setSellerFile(ALPHA, "mcat", file(mcat.value));
     reg.setSellerFile(ALPHA, "product-cards", file(cards.value));
     const s = reg.get(ALPHA)!;
-    // "Press Brakes" equals the "Press Brake" MCAT's name (the products have no MCAT ids): of its specs, Capacity is on
-    // the products, so it is asked first with the seller's values first; Bending Length, on no product, comes after as the
-    // MCAT's standard question.
-    expect(s.systemPrompt).toMatch(/### Press Brakes[\s\S]*?ISQs \(from MCAT Press Brake\)[\s\S]*?1\. Capacity\? Options: 60 Ton \/ 100 Ton \/ 200 Ton[\s\S]*?\d\. Bending Length\? Options: 2500 mm \/ 3200 mm/);
+    // "Press Brakes" equals the "Press Brake" MCAT's name (the products have no MCAT ids). The seller's own specs come first:
+    // Capacity (an MCAT spec the products carry: the seller's values ahead of the MCAT's 200 Ton), then the seller-only
+    // Control Type; Bending Length, on no product, follows as the MCAT's standard question.
+    const brakesGuide = s.systemPrompt.split("### Press Brakes")[1].split(/\n#+ /)[0];
+    expect(brakesGuide).toMatch(/ISQs \(from MCAT Press Brake\)[\s\S]*?1\. Capacity\? Options: 100 Ton \/ 60 Ton \/ 200 Ton\n2\. Control Type\? Options: CNC \/ NC\n3\. Bending Length\? Options: 2500 mm \/ 3200 mm/);
     // By MCAT id 777: Cutting Length is on the product (seller's 10 ft first); Cutting Thickness follows as the standard one.
     const shearsGuide = s.systemPrompt.split("### Hydraulic Shearing Machines")[1].split(/\n#+ /)[0];
     expect(shearsGuide).toMatch(/ISQs \(from MCAT Hydraulic Shearing Machine\)[\s\S]*?1\. Cutting Length\? Options: 10 ft \/ 8 ft/);
