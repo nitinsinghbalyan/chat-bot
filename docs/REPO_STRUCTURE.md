@@ -58,11 +58,11 @@ chat-bot/
 │   ├── app.ts           ~560  Express app: chat turn (shared), widget API (SSE), simulator API (/api/v1, JSON), feedback, sites, /health
 │   ├── botKeys.ts        ~20  Simulator API keys: generate, hash, shape check
 │   ├── claude.ts        ~370  The chat turn loop: builds per-turn blocks, streams Claude, runs tools, ends on show_options
-│   ├── tools.ts         ~345  Tool definitions and handlers: save_lead, show_options, share_media; lead status text; summary card
+│   ├── tools.ts         ~370  Tool definitions and handlers: save_lead (with the completion guard `notComplete`), show_options, share_media; lead status text; summary card
 │   ├── guardrails.ts    ~260  Code guardrails that back the prompt: price scrub, phone allow-list, OTP/save rules, logging
 │   ├── session.ts       ~160  In-memory chat state: chat id, lead stage, category, asked ISQs, usage and cost
 │   ├── db.ts            ~480  SQLite (better-sqlite3): sessions, transcript, leads (+ test flag), guardrail events, prompts, versions, bot keys; migrations
-│   ├── isqTracker.ts    ~100  Server-side category per turn and asked/answered ISQs; builds <spec_questions>
+│   ├── isqTracker.ts    ~120  Server-side product (category + MCAT) per turn, never from a greeting; asked/answered/pending ISQs; builds <spec_questions>
 │   ├── faq.ts           ~290  FAQs: parse the common Excel/CSV (Seller and Category columns), merge the seller's product FAQs, search per message
 │   │
 │   ├── sellers.ts       ~575  Seller registry: loads repo + admin sellers, merges KB JSON + extra files, builds cached system prompts
@@ -75,7 +75,7 @@ chat-bot/
 │   ├── diff.ts           ~25  Line diff for the Versions "View" screen
 │   │
 │   ├── crawler.ts       ~480  Crawls a seller's sitemap pages into catalogue entries (the RAG source and website data)
-│   ├── catalogue.ts     ~160  Catalogue store and search (minisearch); loads crawled or bundled files
+│   ├── catalogue.ts     ~160  Catalogue store and search (minisearch; no prefix/fuzzy on very short words); loads crawled or bundled files
 │   ├── media.ts          ~65  Media card types (product, photo, video, PDF), built only from seller data
 │   ├── shareMedia.ts    ~175  Resolves share_media ids to cards from the KB JSON and catalogue
 │   │

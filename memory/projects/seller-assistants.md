@@ -48,7 +48,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 - rough cost per message: under 1¢ for Jayshree once cached, ~2¢ for a large catalogue, ~11¢ for the first message after 5 idle minutes (cache rewrite)
 - each Claude round is one `generation` in Langfuse, with the served model, tokens and cost
 
-**Tools:** `send_otp`, `verify_otp`, `save_lead` (fields incl. `specs[{label,value}]` and `complete`; `complete: true` → summary card), `show_options`, `share_media`.
+**Tools:** `send_otp`, `verify_otp`, `save_lead` (fields incl. `specs[{label,value}]` and `complete`; `complete: true` → summary card only when the completion guard passes, else the result names the next question), `show_options`, `share_media`.
 
 ## Decisions (and why)
 | Decision | Reason / who decided |
@@ -119,6 +119,8 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | #24 | Master JSON v5, questions per product MCAT checked against the seller's products, policy card as handling rules, product FAQs + FAQ Seller column, Knowledge mapping report (`src/mapping.ts`) |
 | #25 | Project memory refresh after #23/#24 |
 | #26 | **Simulator key** button on each seller row (opens the row's Simulator API block, now second in Manage), "N simulator keys" badge, build id on `/health` (`build.commit`) and in the admin footer |
+| #27 | Herbaveda "Hi → Hing" fix: no prefix/fuzzy search on very short words, a product is picked from the buyer's words only when a distinctive word is shared, **completion guard** in `save_lead` (no summary while questions remain; tool result names the next one), "product" wording in the common prompt and tools |
+| #28 | Project memory refresh after #26/#27 |
 
 ## Open items / ideas
 - **Langfuse (self-hosted `langfuse.intermesh.net`):** after #16/#18, check that traces appear grouped by conversation. If not, **Test Langfuse** on /admin names the failing step (server version, upload refused, or accepted but not stored, which is for the intermesh Langfuse admins).
@@ -130,6 +132,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 - Large-catalogue answers (index/partial modes) are untested with the live model.
 - Check on production that seller photos (imimg.com) load; they can't be seen from cloud sessions.
 - The seller's own site rate-limits the Render crawler; low priority since the JSON covers the website.
+- **After #27 deploys** (build id starts `c95cedb3c7c2`): re-run the Herbaveda chat that started with "Hi". Expected: mobile → OTP → name → "which product do you need?" → Hing's Physical Form chips → summary. If a bot still summarises early, the Langfuse trace shows the `save_lead` tool result ("not complete yet: still to ask …") and which turn ignored it.
 - **Re-upload after #24:** on /admin, upload each seller's v5 JSON, MCAT file, policy card .md and product cards, and the FAQ sheet (its first sheet only; the 2nd sheet holds other vendors' keys and is ignored). Then read each seller's **Knowledge mapping** block: flags name categories with no questions, MCAT ids missing from the file, unmatched cards. Seen on the real files: NI has 13 categories with no questions and 8 MCAT ids missing from its file; "SS Triply Kadhai and Bowls" appears as an empty category in Herbaveda's and Unicorn's exports (an export quirk).
 - **Simulator:** Nitin generates a key per seller on /admin and the Auditor team adds a "Seller assistants" vendor (Base URL, bot slug, X-Bot-Key) per `docs/SIMULATOR_API.md`. Auditor code is not in this repo.
 - Ideas (not built): per-chat cost readout on the admin transcript page; a `persona.json` for each new seller; an About page from the export's `company_pages`.
