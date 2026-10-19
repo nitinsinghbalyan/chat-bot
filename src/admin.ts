@@ -365,7 +365,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
           c.otherMcats.length ? `<br><span class="muted small">+ ${c.otherMcats.slice(0, 4).map(mcatName).join(", ")}${c.otherMcats.length > 4 ? ` and ${c.otherMcats.length - 4} more` : ""}</span>` : ""
         }</td><td>${
           c.questions.isqs.length
-            ? `<span class="badge ${c.questions.source === "mcat" ? "ok" : "info"}">${c.questions.source === "mcat" ? "MCAT file" : "derived"}</span> <ol class="isqs">${c.questions.isqs.map((q) => `<li>${esc(q.question)} <span class="muted small">${esc(q.options.join(" / "))}</span></li>`).join("")}</ol>`
+            ? `<span class="badge ${c.questions.source === "mcat" ? "ok" : "info"}">${c.questions.source === "mcat" ? "MCAT file" : "derived"}</span> <ol class="isqs">${c.questions.isqs.map((q) => `<li>${esc(q.question)}${q.from ? ` <span class="badge ${q.from === "products" ? "ok" : q.from === "derived" ? "info" : ""}" title="${q.from === "products" ? "An MCAT file spec these products carry" : q.from === "derived" ? "From the products' own specification values" : "An MCAT file spec no product lists: the MCAT's standard question"}">${q.from === "products" ? "on products" : q.from === "derived" ? "derived" : "MCAT standard"}</span>` : ""} <span class="muted small">${esc(q.options.join(" / "))}</span></li>`).join("")}</ol>`
             : '<span class="badge warn">no questions</span>'
         }${c.flags.length ? `<div class="muted small">${c.flags.map(esc).join("; ")}</div>` : ""}</td></tr>`,
       )

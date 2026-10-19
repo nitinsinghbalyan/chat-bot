@@ -61,8 +61,8 @@ describe("ISQs per category and MCAT", () => {
     expect(v.mainMcatOf(shears)).toBe("185336");
     expect(v.isqPlan(a)).toMatchObject({ source: "derived", label: "CNC PRESS BRAKE", mcatId: "25058", presentOn: 2 });
     expect(v.isqPlan(a).isqs).toEqual([
-      { question: "Capacity", options: ["100 Ton", "200 Ton"] },
-      { question: "Control Axis", options: ["4 AXIS", "5 AXIS"] },
+      { question: "Capacity", options: ["100 Ton", "200 Ton"], from: "derived" },
+      { question: "Control Axis", options: ["4 AXIS", "5 AXIS"], from: "derived" },
     ]);
     // One product gives no choices, so no questions rather than another category's.
     expect(v.isqPlan(b).isqs).toEqual([]);
@@ -84,24 +84,35 @@ describe("ISQs per category and MCAT", () => {
       { mcat_id: 2, mcat_name: "Machine", specifications: [{ name: "Colour", options: ["Red", "Blue"] }] },
     ]);
 
-  it("with the MCAT file: asks only the MCAT's specs that the seller's products carry, the seller's options first", () => {
+  it("with the MCAT file: the MCAT's specs the products carry first (seller's options first), then the products' own, then the MCAT's standard ones", () => {
     const m = file();
     if (!m.ok) throw new Error("parse");
     const v = new KbView(kb(), { mcats: m.value });
     const [a, b, shears] = v.kb.categories;
-    // By MCAT id 25058: Bending Length is on no product, so it is never asked; the products' values lead the options.
+    // By MCAT id 25058: Capacity and Control Axis are on the products (their values lead the options);
+    // Bending Length is on no product, so it comes last as the MCAT's standard question.
     expect(v.isqPlan(a)).toMatchObject({ source: "mcat", mcat: "CNC Press Brake", label: "CNC PRESS BRAKE · CNC Press Brake", mcatId: "25058", presentOn: 2 });
-    expect(v.isqPlan(a).isqs).toEqual([
-      { question: "Capacity", options: ["100 Ton", "200 Ton", "300 Ton", "500 Ton"] },
-      { question: "Control Axis", options: ["4 AXIS", "3 AXIS"] },
+    expect(v.isqPlan(a).isqs.slice(0, 2)).toEqual([
+      { question: "Capacity", options: ["100 Ton", "200 Ton", "300 Ton", "500 Ton"], from: "products" },
+      { question: "Control Axis", options: ["4 AXIS", "3 AXIS"], from: "products" },
     ]);
+    expect(v.isqPlan(a).isqs.at(-1)).toEqual({ question: "Bending Length", options: ["2500 mm", "3200 mm"], from: "mcat" });
+    expect(v.isqPlan(a).isqs.length).toBeLessThanOrEqual(4);
     // The same MCAT in another category is checked against that category's products.
-    expect(v.isqPlan(b).isqs).toEqual([
-      { question: "Capacity", options: ["500 Ton", "300 Ton", "100 Ton", "200 Ton"] },
-      { question: "Control Axis", options: ["3 AXIS", "4 AXIS"] },
+    expect(v.isqPlan(b).isqs.slice(0, 2)).toEqual([
+      { question: "Capacity", options: ["500 Ton", "300 Ton", "100 Ton", "200 Ton"], from: "products" },
+      { question: "Control Axis", options: ["3 AXIS", "4 AXIS"], from: "products" },
     ]);
-    // No entry for 185336, but "Shearing Machines" equals "Shearing Machine"; "Max Shearing Thickness" covers "Shearing Thickness".
-    expect(v.isqPlan(shears)).toMatchObject({ source: "mcat", mcat: "Shearing Machines", isqs: [{ question: "Max Shearing Thickness", options: ["6 mm", "12 mm", "4 mm"] }] });
+    // No entry for 185336, but "Shearing Machines" equals "Shearing Machine"; "Max Shearing Thickness" covers "Shearing Thickness",
+    // so the derived "Shearing Thickness" is not asked twice; the products' Automation Grade and the MCAT's Blade Length follow.
+    const sh = v.isqPlan(shears);
+    expect(sh).toMatchObject({ source: "mcat", mcat: "Shearing Machines" });
+    expect(sh.isqs.map((q) => [q.question, q.from])).toEqual([
+      ["Max Shearing Thickness", "products"],
+      ["Automation Grade", "derived"],
+      ["Blade Length", "mcat"],
+    ]);
+    expect(sh.isqs[0].options).toEqual(["6 mm", "12 mm", "4 mm"]);
     expect(v.systemText()).toContain("ISQs (from MCAT CNC Press Brake)");
     expect(v.systemText()).not.toContain("Colour");
   });

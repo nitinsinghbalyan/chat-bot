@@ -67,13 +67,14 @@ describe("extra files in the registry", () => {
     reg.setSellerFile(ALPHA, "mcat", file(mcat.value));
     reg.setSellerFile(ALPHA, "product-cards", file(cards.value));
     const s = reg.get(ALPHA)!;
-    // "Press Brakes" equals the "Press Brake" MCAT's name (the products have no MCAT ids): of its specs, only Capacity is on
-    // the products, so that is the one question, with the seller's values first. Bending Length is never asked.
-    expect(s.systemPrompt).toMatch(/### Press Brakes[\s\S]*?ISQs \(from MCAT Press Brake\)[\s\S]*?1\. Capacity\? Options: 60 Ton \/ 100 Ton \/ 200 Ton/);
-    expect(s.systemPrompt).not.toContain("Bending Length");
-    // By MCAT id 777: Cutting Length is on the product (Cutting Thickness is not), with the seller's 10 ft first.
-    expect(s.systemPrompt).toMatch(/### Hydraulic Shearing Machines[\s\S]*?ISQs \(from MCAT Hydraulic Shearing Machine\)[\s\S]*?1\. Cutting Length\? Options: 10 ft \/ 8 ft/);
-    expect(s.systemPrompt.split("### Hydraulic Shearing Machines")[1].split(/\n#+ /)[0]).not.toContain("Cutting Thickness");
+    // "Press Brakes" equals the "Press Brake" MCAT's name (the products have no MCAT ids): of its specs, Capacity is on
+    // the products, so it is asked first with the seller's values first; Bending Length, on no product, comes after as the
+    // MCAT's standard question.
+    expect(s.systemPrompt).toMatch(/### Press Brakes[\s\S]*?ISQs \(from MCAT Press Brake\)[\s\S]*?1\. Capacity\? Options: 60 Ton \/ 100 Ton \/ 200 Ton[\s\S]*?\d\. Bending Length\? Options: 2500 mm \/ 3200 mm/);
+    // By MCAT id 777: Cutting Length is on the product (seller's 10 ft first); Cutting Thickness follows as the standard one.
+    const shearsGuide = s.systemPrompt.split("### Hydraulic Shearing Machines")[1].split(/\n#+ /)[0];
+    expect(shearsGuide).toMatch(/ISQs \(from MCAT Hydraulic Shearing Machine\)[\s\S]*?1\. Cutting Length\? Options: 10 ft \/ 8 ft/);
+    expect(shearsGuide.indexOf("Cutting Length")).toBeLessThan(shearsGuide.indexOf("Cutting Thickness"));
     expect(s.mapping?.categories.find((c) => c.name === "Hydraulic Shearing Machines")).toMatchObject({ mainMcat: { id: "777", name: "Hydraulic Shearing Machine", inFile: true }, questions: { source: "mcat" } });
     expect(s.systemPrompt).toContain("# Product cards (uploaded)");
     expect(s.kb.productCards.map((c) => c.product_id)).toContain("shear");

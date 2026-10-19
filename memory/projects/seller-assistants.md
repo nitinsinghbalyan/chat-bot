@@ -67,6 +67,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | ISQ source: **MCAT first** (by the products' MCAT id, else equal name), else cleaned derived ISQs pooled per MCAT family; **server picks the category per turn** (`<spec_questions>`) | Nitin (Oct 16); the family pooling was replaced by per-MCAT plans on Oct 18 (row below) |
 | 👍/👎 only once per chat, under the summary card | Nitin |
 | Journey: welcome (no question, no chips, same for all sellers) → mobile on the first message → OTP → name → product if unclear → ISQs → summary | Nitin (Oct 16) |
+| Questions per MCAT in **three layers** up to 4: MCAT specs the products carry → derived from the products → the MCAT's remaining standard specs. The MCAT files hold only 2–3 specs per MCAT and the file-only rule left half the categories with ≤1 question ("bot asks only one specification") | Nitin's report, Oct 19 |
 | Completion is enforced server-side (no summary while spec questions remain); a greeting never selects a product; common wording is "product", not "machine" (Herbaveda's bot read "Hi" as Hing and summarised at once) | Nitin's report, Oct 19 |
 | Claude changes prompts itself in the repo; built-ins apply over older admin edits on deploy (no "Use the new built-in" click) | Nitin (Oct 16) |
 | Every trace has a unique per-conversation session id `<seller>:<chatId>` (audit); stamped under new and legacy attribute names | Nitin |
@@ -121,6 +122,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | #26 | **Simulator key** button on each seller row (opens the row's Simulator API block, now second in Manage), "N simulator keys" badge, build id on `/health` (`build.commit`) and in the admin footer |
 | #27 | Herbaveda "Hi → Hing" fix: no prefix/fuzzy search on very short words, a product is picked from the buyer's words only when a distinctive word is shared, **completion guard** in `save_lead` (no summary while questions remain; tool result names the next one), "product" wording in the common prompt and tools |
 | #28 | Project memory refresh after #26/#27 |
+| #29 | Layered spec questions (on products → derived → MCAT standard, up to 4): mean questions per category on the real exports 1.3–3.0 → 3.1–4.0; per-question origin badges in Knowledge mapping |
 
 ## Open items / ideas
 - **Langfuse (self-hosted `langfuse.intermesh.net`):** after #16/#18, check that traces appear grouped by conversation. If not, **Test Langfuse** on /admin names the failing step (server version, upload refused, or accepted but not stored, which is for the intermesh Langfuse admins).

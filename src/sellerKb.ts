@@ -328,6 +328,8 @@ export function cleanText(text: string): string {
 }
 
 const SPEC_NOT_ASKED = /country\s+of\s+origin|brand|make|model|item\s*code|^size$/i;
+/** MCAT file specs that are never questions (the file's specs are curated ISQs, so only identity rows are skipped). */
+const SPEC_NEVER_ASKED = /brand|^make$|model|item\s*code/i;
 const PRICE_KEY = /price|rate|cost|mrp|discount/i;
 /** Factsheet rows that are verified company details (Guardrail 7 allows these). Everything else is skipped. */
 const FACTSHEET_ALLOWED = new Set([
@@ -359,7 +361,12 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 export interface Isq {
   question: string;
   options: string[];
+  /** Where the question comes from: an MCAT file spec the seller's products carry, the products' own spec values, or an MCAT file spec no product lists (the category's standard question). */
+  from?: "products" | "derived" | "mcat";
 }
+
+/** The questions a plan may hold. */
+export const MAX_ISQS = 4;
 
 /**
  * The spec questions for one machine: a category and the MCAT within it (the one the buyer's
@@ -370,7 +377,7 @@ export interface IsqPlan {
   /** "<category> · <MCAT name>" (just the category when no MCAT is known). */
   label: string;
   mcatId: string | null;
-  /** "mcat": the MCAT file's specs that this seller's products carry; "derived": from the products' own specification values. */
+  /** "mcat": at least one question is an MCAT file spec (carried by the products, or the MCAT's standard one); "derived": all come from the products' own specification values. Each question says where it is from. */
   source: "mcat" | "derived";
   mcat?: string;
   isqs: Isq[];
@@ -561,21 +568,30 @@ export class KbView {
     return mcatId ? all.filter((p) => idsIn(p.taxonomy?.glmcat_ids).includes(mcatId)) : all;
   }
 
-  /** The MCAT file's specs that this seller's products carry, options the seller offers first. */
-  private presentSpecs(m: McatSpec, products: KbProduct[]): Isq[] {
+  /**
+   * The MCAT file's specs for this MCAT, split into those the seller's products carry (`present`:
+   * a product spec of the same name, or one of the spec's options among the products' spec values
+   * or names; the options the seller offers come first) and the rest (`standard`: the MCAT's usual
+   * questions that no product lists). Brand, model and item code are never questions.
+   */
+  private fileSpecs(m: McatSpec, products: KbProduct[]): { present: Isq[]; standard: Isq[] } {
     const rows = products.flatMap((p) => this.specs(p));
-    const out: Isq[] = [];
+    const allValues = new Set([...rows.flatMap(([, v]) => v.split(/\s*[,/|]\s*/)), ...products.map((p) => this.title(p))].map(normKey).filter(Boolean));
+    const present: Isq[] = [];
+    const standard: Isq[] = [];
     for (const spec of m.specs) {
-      if (SPEC_NOT_ASKED.test(spec.name) || SPEC_NOT_A_QUESTION.test(spec.name)) continue;
+      if (SPEC_NEVER_ASKED.test(spec.name)) continue;
       const matched = rows.filter(([name]) => specNamesMatch(spec.name, name));
-      if (!matched.length) continue;
-      const values = new Set(matched.flatMap(([, v]) => v.split(/\s*[,/|]\s*/)).map(normKey).filter(Boolean));
+      const values = matched.length ? new Set(matched.flatMap(([, v]) => v.split(/\s*[,/|]\s*/)).map(normKey).filter(Boolean)) : allValues;
       const seen = spec.options.filter((o) => optionSeen(o, values));
+      if (!matched.length && !seen.length) {
+        standard.push({ question: spec.name, options: spec.options.slice(0, 6), from: "mcat" });
+        continue;
+      }
       const rest = spec.options.filter((o) => !seen.includes(o));
-      out.push({ question: spec.name, options: [...seen, ...rest].slice(0, 6) });
-      if (out.length === 4) break;
+      present.push({ question: spec.name, options: [...seen, ...rest].slice(0, 6), from: "products" });
     }
-    return out;
+    return { present, standard };
   }
 
     // ---- media ----
@@ -817,9 +833,11 @@ export class KbView {
    * buyer's product's MCAT when known; otherwise (or if no product of the category has it) the
    * category's main MCAT is used. Then:
    * 1. the MCAT file's entry for that id, else an entry whose name equals the category's;
-   * 2. of its specs, only those the seller's products in that MCAT actually carry (by name, see
-   *    specNamesMatch), with the options the seller offers first;
-   * 3. when none are present, questions derived from those products' own specification values.
+   * 2. questions, in layers, up to MAX_ISQS: the entry's specs the seller's products in that MCAT
+   *    carry (by name or by an option among their values, see fileSpecs; the seller's options
+   *    first), then questions derived from those products' own specification values (attributes
+   *    whose values differ), then the entry's remaining specs (the MCAT's standard questions).
+   *    A later layer never repeats a question of an earlier one (specNamesMatch).
    */
   isqPlan(c: SellerKb["categories"][number], mcatId?: string | null): IsqPlan {
     const inCategory = mcatId ? this.mcatsOf(c).some((m) => m.id === mcatId) : false;
@@ -831,10 +849,32 @@ export class KbView {
     const mcats = (this.options.mcats ?? []).filter((m) => m.specs.length);
     const m = (id && mcats.find((x) => x.id === id)) || findMcat(mcats, [c.name]);
     const label = m ? `${c.name} · ${m.name}` : c.name;
-    const present = m ? this.presentSpecs(m, products) : [];
-    let plan: IsqPlan = present.length
-      ? { category: c.name, label, mcatId: id, source: "mcat", mcat: m!.name, isqs: present, presentOn: products.length }
-      : { category: c.name, label, mcatId: id, source: "derived", ...(m ? { mcat: m.name } : {}), isqs: this.isqs(c, products), presentOn: products.length };
+    const file = m ? this.fileSpecs(m, products) : { present: [], standard: [] };
+    const isqs: Isq[] = [...file.present];
+    // A later layer never repeats a question: same name ("Max Shearing Thickness" covers "Shearing
+    // Thickness"), or most of its options already offered by an earlier one ("Form Of Asafoetida
+    // Available: Granules / Crystal / Paste" after "Physical Form").
+    const repeats = (q: Isq) =>
+      isqs.some((x) => {
+        if (specNamesMatch(x.question, q.question)) return true;
+        const offered = new Set(x.options.map(normKey));
+        const shared = q.options.filter((o) => optionSeen(o, offered)).length;
+        return q.options.length > 0 && shared * 2 >= q.options.length;
+      });
+    const add = (q: Isq) => {
+      if (isqs.length < MAX_ISQS && !repeats(q)) isqs.push(q);
+    };
+    for (const q of this.isqs(c, products)) add({ ...q, from: "derived" });
+    for (const q of file.standard) add(q);
+    let plan: IsqPlan = {
+      category: c.name,
+      label,
+      mcatId: id,
+      source: isqs.some((q) => q.from !== "derived") ? "mcat" : "derived",
+      ...(m ? { mcat: m.name } : {}),
+      isqs: isqs.slice(0, MAX_ISQS),
+      presentOn: products.length,
+    };
     // A product's MCAT that yields no questions (one product, specs not in the file): fall back to the category's main MCAT.
     if (!plan.isqs.length && inCategory && id !== this.mainMcatOf(c)) {
       const main = this.isqPlan(c);
