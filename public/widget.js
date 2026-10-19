@@ -401,7 +401,7 @@
 
   function greeting(c) {
     // The same welcome for every seller (sent by the server); it asks the buyer nothing.
-    return c.greeting || "Welcome to " + c.name + ". I can tell you about our machines, share photos and brochures, and pass your enquiry to our team.";
+    return c.greeting || "Welcome to " + c.name + ". I can tell you about our products, share photos and brochures, and pass your enquiry to our team.";
   }
   function setAskFor(kind) {
     if (state) state.askFor = kind;

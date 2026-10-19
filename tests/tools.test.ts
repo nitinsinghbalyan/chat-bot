@@ -130,7 +130,7 @@ describe("enquiry summary", () => {
     expect(r.isError).toBe(false);
     expect(r.ui?.summary).toEqual({
       rows: [
-        { label: "Machine", value: "CNC Press Brake" },
+        { label: "Product", value: "CNC Press Brake" },
         { label: "Material", value: "Mild steel" },
         { label: "Sheet thickness", value: "6 mm" },
         { label: "Other details", value: "Needs back gauge" },
@@ -169,12 +169,74 @@ describe("enquiry summary", () => {
     run("send_otp", { mobile: "9876543210" });
     run("verify_otp", { otp: "12345" });
     const r = run("save_lead", { ...leadInput, specs: [], complete: true });
-    expect(r.ui?.summary?.rows.map((x) => x.label)).toEqual(["Machine", "Other details", "Quantity", "City", "Name", "Mobile"]);
+    expect(r.ui?.summary?.rows.map((x) => x.label)).toEqual(["Product", "Other details", "Quantity", "City", "Name", "Mobile"]);
   });
 
   it("rejects malformed specs", () => {
     const { run } = captured();
     expect(run("save_lead", { ...leadInput, specs: [{ label: "Material" }], complete: true }).isError).toBe(true);
     expect(run("save_lead", { ...leadInput, specs: "Mild steel", complete: true }).isError).toBe(true);
+  });
+});
+
+describe("completion guard (the server decides when the enquiry is complete)", () => {
+  const plan = {
+    category: "Hing",
+    label: "Hing · Hing",
+    mcatId: "21046",
+    source: "mcat" as const,
+    isqs: [
+      { question: "Physical Form", options: ["Granules / Lumps", "Powder", "Resin"] },
+      { question: "Country of Origin", options: ["Afghanistan", "Uzbekistan"] },
+    ],
+    presentOn: 7,
+  };
+  const isqs = { plan: () => plan as never, locate: () => null, locateText: (t: string) => (/hing/i.test(t) ? { category: "Hing", mcatId: "21046" } : null) };
+  const verified = () => {
+    const session = new SessionStore().get("herbaveda", "guard-1");
+    const leads: Lead[] = [];
+    const run = (name: string, input: unknown) => executeTool(session, name, input, { saveLead: (l) => leads.push(l), isqs });
+    run("send_otp", { mobile: "9876543210" });
+    run("verify_otp", { otp: "12345" });
+    return { session, leads, run };
+  };
+  const hing = { ...leadInput, product: "Pure Hing", requirements: "" };
+
+  it("refuses to show the summary while spec questions are unasked, and names the next one", () => {
+    const { session, leads, run } = verified();
+    const r = run("save_lead", { ...hing, specs: [], complete: true });
+    expect(r.isError).toBe(false);
+    expect(r.ui).toBeUndefined();
+    expect(r.content).toMatch(/not complete yet/);
+    expect(r.content).toContain("still to ask: Physical Form (options: Granules / Lumps / Powder / Resin) and then Country of Origin");
+    // The lead itself is saved, with the product's place worked out from its name.
+    expect(leads).toHaveLength(1);
+    expect(session.lead).toMatchObject({ stage: "captured", category: "Hing", mcatId: "21046" });
+    expect(session.lead.summarized).toBeUndefined();
+
+    // A spec label counts as an answer ("Form" matches "Physical Form"); the next question is then named.
+    const r2 = run("save_lead", { ...hing, specs: [{ label: "Form", value: "Powder" }], complete: true });
+    expect(r2.ui).toBeUndefined();
+    expect(r2.content).toContain("still to ask: Country of Origin (options: Afghanistan / Uzbekistan).");
+    expect(session.lead.askedIsqs).toEqual(["Physical Form"]);
+
+    // Once the last question's buttons were shown (markAsked) the summary can go out.
+    session.lead.askedIsqs = ["Physical Form", "Country of Origin"];
+    const r3 = run("save_lead", { ...hing, specs: [{ label: "Form", value: "Powder" }, { label: "Country of Origin", value: "Afghanistan" }], complete: true });
+    expect(r3.ui?.summary?.rows.map((x) => x.label)).toEqual(["Product", "Form", "Country of Origin", "Quantity", "City", "Name", "Mobile"]);
+    expect(session.lead.summarized).toBe(true);
+  });
+
+  it("needs the product before the summary, and completes at once when the product has no questions", () => {
+    const { run } = verified();
+    const r = run("save_lead", { ...hing, product: "", specs: [], complete: true });
+    expect(r.ui).toBeUndefined();
+    expect(r.content).toMatch(/Ask which product the buyer needs/);
+    const noQuestions = { plan: () => ({ ...plan, isqs: [] }) as never, locate: () => null, locateText: () => ({ category: "Tea", mcatId: null }) };
+    const session = new SessionStore().get("herbaveda", "guard-2");
+    const run2 = (name: string, input: unknown) => executeTool(session, name, input, { saveLead: () => {}, isqs: noQuestions });
+    run2("send_otp", { mobile: "9876543210" });
+    run2("verify_otp", { otp: "12345" });
+    expect(run2("save_lead", { ...hing, product: "Green tea", specs: [], complete: true }).ui?.summary).toBeTruthy();
   });
 });

@@ -102,7 +102,7 @@ describe("simulator API", () => {
     expect(await res.json()).toEqual({
       slug: ALPHA,
       name: "Alpha Presses",
-      greeting: "Welcome to Alpha Presses. I can tell you about our machines, share photos and brochures, and pass your enquiry to our team.",
+      greeting: "Welcome to Alpha Presses. I can tell you about our products, share photos and brochures, and pass your enquiry to our team.",
       demoOtp: "12345",
     });
     // Callable from a browser on any site, since the key is the auth.

@@ -49,7 +49,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 - **The bot never states, confirms or estimates a price**; it says the seller's team confirms prices. The **website still shows** listed starting prices.
 - The bot is grounded only in the seller's KB (business card, product cards, crawled catalogue). Guardrails win over the persona and seller notes.
 - **Never feed the bot** the export's prices, delivery or payment terms, turnover, staff, year of establishment, GST, bank or rating data. Never commit a seller's raw export to git: it holds GST, bank and turnover details. Upload it on `/admin`.
-- Enquiry order: fixed **welcome** (same for all sellers, no question, no chips) → **mobile on the buyer's first message** → OTP → name (lead saved) → machine if unclear → ISQ chips → lead updated + **summary card** (buyer can correct). OTP and save rules enforced on the server. Replies short (1–2 sentences).
+- Enquiry order: fixed **welcome** (same for all sellers, no question, no chips) → **mobile on the buyer's first message** → OTP → name (lead saved) → product if unclear → ISQ chips → lead updated + **summary card** (buyer can correct). OTP, save and **completion** rules enforced on the server: no summary until every spec question of the product's plan was asked or answered, and a greeting never counts as naming a product. Replies short (1–2 sentences).
 - Chat widget sits **bottom-right**. The public directory `/` is **visit-only** (no chat there).
 
 ## How we work

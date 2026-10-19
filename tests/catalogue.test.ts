@@ -36,6 +36,19 @@ describe("Catalogue", () => {
     expect(new Catalogue().search("press brake")).toEqual([]);
   });
 
+  it("doesn't read a greeting as a product: no prefix or fuzzy match on very short words", () => {
+    const herbs = new Catalogue([
+      entry({ url: "https://h.example/hing.html", title: "Pure Hing Dana", category: "Hing" }),
+      entry({ url: "https://h.example/himalayan.html", title: "Himalyan Herbs", category: "Himalyan Herbs" }),
+    ]);
+    expect(herbs.search("hi")).toEqual([]);
+    expect(herbs.search("Hi")).toEqual([]);
+    expect(herbs.search("hii")).toEqual([]);
+    expect(herbs.search("hing")[0].title).toBe("Pure Hing Dana");
+    expect(herbs.search("hing dana")[0].title).toBe("Pure Hing Dana");
+    expect(herbs.search("himalayan herbs")[0].title).toBe("Himalyan Herbs");
+  });
+
   it("formats hits for the prompt", () => {
     const text = formatCatalogueHits(cat.search("press brake"));
     expect(text).toContain("Price: confirmed by our team on enquiry");

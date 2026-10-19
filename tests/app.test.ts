@@ -113,7 +113,7 @@ describe("chat API", () => {
     // The same welcome for every seller, and it asks the buyer nothing.
     for (const slug of [ALPHA, BETA]) {
       const { greeting, name } = await (await fetch(`${base}/api/sellers/${slug}`)).json();
-      expect(greeting).toBe(`Welcome to ${name}. I can tell you about our machines, share photos and brochures, and pass your enquiry to our team.`);
+      expect(greeting).toBe(`Welcome to ${name}. I can tell you about our products, share photos and brochures, and pass your enquiry to our team.`);
       expect(greeting).not.toContain("?");
     }
     expect((await fetch(`${base}/api/sellers/nobody`)).status).toBe(404);
@@ -143,7 +143,7 @@ describe("chat API", () => {
     // Still one lead, now with the specs; admin's transcript shows what the buyer saw.
     expect(db.listLeads(10, ALPHA)).toHaveLength(1);
     expect(db.listLeads(10, ALPHA)[0]).toMatchObject({ requirements: "Material: Mild steel", city: "Rajkot" });
-    expect(db.transcript(`${ALPHA}:app-test-session`).at(-1)!.text).toContain("[Summary: Machine: Press Brake; Material: Mild steel; Quantity: 1 piece; City: Rajkot; Name: =Ramesh; Mobile: xxxxxx3210]");
+    expect(db.transcript(`${ALPHA}:app-test-session`).at(-1)!.text).toContain("[Summary: Product: Press Brake; Material: Mild steel; Quantity: 1 piece; City: Rajkot; Name: =Ramesh; Mobile: xxxxxx3210]");
     // 4 buyer messages, 2 Claude calls each at 1 + 1 tokens, kept across restarts.
     expect(db.loadSession(`${ALPHA}:app-test-session`)?.usage).toMatchObject({ turns: 4, input: 8, output: 8, costKnown: true });
   });
@@ -340,7 +340,7 @@ describe("knowledge base upload", () => {
     expect(requests[0].system[0].text).toContain("Product id: cnc-press-brake-a1b2c3d");
     // The server picked the machine's category and gives the bot only its spec questions.
     const turn = requests[0].messages.at(-1).content.at(-1).text as string;
-    expect(turn).toContain("<spec_questions>\nMachine: Press Brakes.");
+    expect(turn).toContain("<spec_questions>\nProduct: Press Brakes.");
     expect(turn).toContain("1. Control Type? Options: CNC / NC");
     expect(requests[0].system[0].text).not.toContain("4,50,000");
     expect(body).toContain("event: cards");

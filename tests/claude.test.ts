@@ -338,10 +338,44 @@ describe("chat cost and enquiry summary", () => {
       leads,
     );
     const r = await runTurn(session, "6 mm", d);
-    expect(r.summary?.rows[0]).toEqual({ label: "Machine", value: "CNC Press Brake" });
+    expect(r.summary?.rows[0]).toEqual({ label: "Product", value: "CNC Press Brake" });
     expect(r.summary?.note).toContain("xxxxxx3210");
     expect(r.chips).toEqual(["All correct", "Change a detail"]);
     expect(r.leadEvents).toEqual(["updated"]);
     expect(leads[0]).toMatchObject({ update: true, requirements: "Material: Mild steel" });
+  });
+
+  it("withholds the summary through the chat loop while a spec question is still unasked", async () => {
+    const session = new SessionStore().get("herbaveda", "s-guard-00001");
+    session.lead = { stage: "captured", mobile: "9876543210", name: "Nitin", otpAttempts: 0, otpSends: 1 };
+    const plan = { category: "Hing", label: "Hing · Hing", mcatId: "21046", source: "mcat", isqs: [{ question: "Physical Form", options: ["Granules / Lumps", "Powder"] }], presentOn: 7 };
+    const isqs = { plan: () => plan as never, locate: () => null, locateText: () => ({ category: "Hing", mcatId: "21046" }) };
+    const leads: Lead[] = [];
+    const base = { name: "Nitin", product: "Hing", specs: [], requirements: "", quantity: "", city: "", complete: true };
+    // The model jumps to complete; the tool result sends it back to the question, which it then asks with buttons.
+    const first = deps(
+      [
+        { content: [{ type: "tool_use", id: "g1", name: "save_lead", input: base }], stop_reason: "tool_use" },
+        { content: [{ type: "text", text: "Which form of hing do you need?" }, { type: "tool_use", id: "g2", name: "show_options", input: { options: ["Granules / Lumps", "Powder"] } }], stop_reason: "tool_use" },
+      ],
+      leads,
+    );
+    const r1 = await runTurn(session, "I need hing", { ...first.d, isqs });
+    expect(r1.summary).toBeUndefined();
+    expect(r1.chips).toEqual(["Granules / Lumps", "Powder"]);
+    expect(session.lead).toMatchObject({ category: "Hing", mcatId: "21046", askedIsqs: ["Physical Form"] });
+    expect(session.lead.summarized).toBeUndefined();
+    expect(leads).toHaveLength(1);
+    // After the answer the same call goes through and the card is shown.
+    const second = deps(
+      [
+        { content: [{ type: "tool_use", id: "g3", name: "save_lead", input: { ...base, specs: [{ label: "Physical Form", value: "Powder" }] } }], stop_reason: "tool_use" },
+        { content: [{ type: "text", text: "Our team will contact you. Anything to change?" }, { type: "tool_use", id: "g4", name: "show_options", input: { options: ["All correct", "Change a detail"] } }], stop_reason: "tool_use" },
+      ],
+      leads,
+    );
+    const r2 = await runTurn(session, "Powder", { ...second.d, isqs });
+    expect(r2.summary?.rows).toContainEqual({ label: "Physical Form", value: "Powder" });
+    expect(session.lead.summarized).toBe(true);
   });
 });

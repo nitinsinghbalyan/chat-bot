@@ -534,7 +534,7 @@ export function createApp(deps: AppDeps) {
 
 /** The chat's opening message: the same for every seller, and it asks the buyer nothing (no chips under it). */
 export const introFor = (sellerName: string) =>
-  `Welcome to ${sellerName}. I can tell you about our machines, share photos and brochures, and pass your enquiry to our team.`;
+  `Welcome to ${sellerName}. I can tell you about our products, share photos and brochures, and pass your enquiry to our team.`;
 
 /** The seller's spec questions per category and MCAT, for the server to pick the chat's machine (KB JSON sellers). */
 function isqSourceFor(seller: SellerContext): IsqSource {

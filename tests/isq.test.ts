@@ -172,13 +172,24 @@ describe("the chat's machine, picked by the server", () => {
     expect(l.category).toBe("Shearing Machine");
   });
 
+  it("never reads a greeting or a vague message as a product, even before one is known", () => {
+    const l = lead();
+    // The search is prefix and fuzzy, so "hi" can return a Hing product and "price?" anything at all.
+    for (const text of ["hi", "Hello", "hii", "price?", "I want to buy"]) {
+      expect(updateCategory(l, src, { buyerText: text, hits: [entry("CNC Press Brake 200 Ton")], ownHits: true })).toBe(false);
+    }
+    expect(l.category).toBeUndefined();
+    expect(updateCategory(l, src, { buyerText: "press brake chahiye", hits: [entry("CNC Press Brake 200 Ton")], ownHits: true })).toBe(true);
+    expect(l.category).toBe("CNC PRESS BRAKE");
+  });
+
   it("tracks asked ISQs and keeps them while the questions stay the same", () => {
     const l = { ...lead(), category: "CNC PRESS BRAKE", mcatId: "25058" };
     const plan = src.plan("CNC PRESS BRAKE", "25058")!;
     markAsked(l, plan, ["100 Ton", "200 Ton", "500 Ton"]);
     expect(l.askedIsqs).toEqual(["Capacity"]);
     const text = specQuestionsText(plan, l.askedIsqs);
-    expect(text).toContain("Machine: CNC PRESS BRAKE · CNC Press Brake.");
+    expect(text).toContain("Product: CNC PRESS BRAKE · CNC Press Brake.");
     expect(text).toContain("1. Capacity? Options: 100 Ton / 200 Ton / 500 Ton");
     expect(text).toContain("Already asked: Capacity.");
     expect(text).toContain("Next: Control Axis.");

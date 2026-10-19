@@ -121,7 +121,7 @@ describe("a v5 seller end to end: product FAQs in the turn, knowledge mapping in
     await fetch(`${base}/api/chat`, { method: "POST", headers: { "Content-Type": "application/json", Origin: base }, body: JSON.stringify({ seller: ALPHA, sessionId: "v5-chat-0001", message: "does the cnc press brake come with tooling?", pageUrl: `${base}/s/${ALPHA}/` }) }).then((x) => x.text());
     const turn = requests.at(-1).messages.at(-1).content.at(-1).text as string;
     expect(turn).toContain("<faq>\nQ (about CNC Press Brake 100 Ton): Does the CNC press brake come with tooling?");
-    expect(turn).toContain("<spec_questions>\nMachine: Press Brakes.");
+    expect(turn).toContain("<spec_questions>\nProduct: Press Brakes.");
   });
 
   it("shows the knowledge mapping and serves it as JSON", async () => {
