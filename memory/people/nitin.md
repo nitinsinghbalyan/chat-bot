@@ -23,6 +23,10 @@
 - Wants the chat to feel fast: chips with the message, no extra round trips; feedback asked once, not on every reply.
 - Wants spec questions that fit the buyer's machine (category), not a mix across categories.
 - Asks capacity and model questions ("which model", "is the context window enough"): answer with the configured values and sourced numbers, and say what is an estimate.
+- Wants the bot to ask the specs of the buyer's **actual product** (its MCAT), only those the seller's products carry, and a **foolproof mapping** between the export, MCAT file, product cards, FAQs and policy card: hence the Knowledge mapping report he can read per seller.
+- Shares seller files as a zip attached in chat when asked (Oct 18: five sellers' v5 files). They hold GST and bank data: keep them local, never commit.
+- Runs chat-turn simulations in IndiaMART's AI Assistant Auditor against his bots; wants our bots reachable there as their own vendor with per-seller keys.
+- Says "update project memory folder" after a milestone: refresh `memory/` + CLAUDE.md, ship it as its own small PR.
 
 ## Notes
 - Personal-assistant preferences, such as the #brain vault rules, apply to Nitin's own chats and are not part of this project. Don't copy personal data into this repo.
