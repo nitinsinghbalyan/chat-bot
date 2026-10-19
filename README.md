@@ -229,7 +229,7 @@ To send real OTPs, replace the demo check in `src/tools.ts` with your SMS provid
 
 ## Simulator API (chat simulators such as the AI Assistant Auditor)
 
-A simulator can run scripted buyer chats against any seller's bot, one JSON reply per message: `POST /api/v1/bots/<slug>/chat` with an `X-Bot-Key` header. Generate keys per seller on `/admin` → **Manage** → **Simulator API**. Each key is shown once and can be revoked. Simulated chats run the real journey. Their leads are saved as **test** leads, which the Leads page hides unless you tick **Show test chats**, and their traces are tagged `eval`. Full reference: [docs/SIMULATOR_API.md](docs/SIMULATOR_API.md).
+A simulator can run scripted buyer chats against any seller's bot, one JSON reply per message: `POST /api/v1/bots/<slug>/chat` with an `X-Bot-Key` header. Generate keys per seller on `/admin`: the **Simulator key** button on a seller's row opens its **Simulator API** block. Each key is shown once and can be revoked. Simulated chats run the real journey. Their leads are saved as **test** leads, which the Leads page hides unless you tick **Show test chats**, and their traces are tagged `eval`. Full reference: [docs/SIMULATOR_API.md](docs/SIMULATOR_API.md).
 
 ## Tracing (Langfuse)
 
@@ -341,7 +341,7 @@ Without a crawled catalogue, a seller's site shows the business card and product
 
 - a Node 22 web service in Singapore, the closest Render region to India
 - a 1 GB persistent disk at `/var/data` for the database and the crawled catalogues
-- a health check on `/health`, which reports each seller's catalogue size
+- a health check on `/health`, which reports the running build (`build.commit` from Render's `RENDER_GIT_COMMIT`, `build.startedAt`), the model, tracing status and each seller's catalogue size. The admin footer shows the same build id, so a deploy can be confirmed at a glance
 - automatic deploys from `main`
 
 Steps:

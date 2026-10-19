@@ -7,7 +7,7 @@ import { timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
-import type { ChatDb, PromptVersion, SellerPersona } from "./db.js";
+import type { BotKey, ChatDb, PromptVersion, SellerPersona } from "./db.js";
 import { generateBotKey } from "./botKeys.js";
 import { diffLines } from "./diff.js";
 import { activeVersionId, COMMON_SCOPE, recordVersion, sellerScope } from "./promptVersions.js";
@@ -72,8 +72,13 @@ function shell(title: string, body: string, active: Nav = ""): string {
 <body>
 <header class="bar"><div class="wrap bar-row"><a class="logo" href="/admin">Seller assistants <span>Admin</span></a><nav aria-label="Admin">${link("sellers", "/admin", "Sellers")}${link("leads", "/admin/leads", "Leads")}${link("prompts", "/admin/prompts", "Common prompts")}<a href="/" target="_blank" rel="noopener">Public site ↗</a></nav></div></header>
 <main class="wrap">${body}</main>
+<footer class="wrap build muted small">Build <code>${esc(BUILD_COMMIT)}</code> · running since ${esc(fmtIST(STARTED_AT))}. Keys for chat simulators: each seller row → <b>Simulator key</b>.</footer>
 </body></html>`;
 }
+
+/** The deployed commit (Render sets RENDER_GIT_COMMIT) and when this process started: shown in the admin footer and on /health, so a deploy can be confirmed. */
+const BUILD_COMMIT = process.env.RENDER_GIT_COMMIT?.slice(0, 12) ?? "local";
+const STARTED_AT = new Date().toISOString();
 
 const badge = (text: string, tone: "ok" | "warn" | "err" | "info" | "" = "", title?: string) =>
   `<span class="badge ${tone}"${title ? ` title="${esc(title)}"` : ""}>${esc(text)}</span>`;
@@ -87,6 +92,20 @@ const ROWS_SCRIPT = `<script>
   var slug = q.get("added") || q.get("kb") || q.get("crawl") || (location.hash.indexOf("#seller-") === 0 ? location.hash.slice(8) : "");
   var row = slug && document.getElementById("seller-" + slug);
   if (row) { row.open = true; row.scrollIntoView({ block: "start" }); }
+  // "Simulator key" on a row (or a #keys-<slug> link): open the row and go to its Simulator API block.
+  function showKeys(s) {
+    var r = document.getElementById("seller-" + s), sec = document.getElementById("keys-" + s);
+    if (!r || !sec) return false;
+    r.open = true;
+    sec.scrollIntoView({ block: "start", behavior: "smooth" });
+    var input = sec.querySelector("input[name=label]");
+    if (input) input.focus({ preventScroll: true });
+    return true;
+  }
+  document.querySelectorAll("[data-keys]").forEach(function (a) {
+    a.addEventListener("click", function (e) { e.preventDefault(); if (showKeys(a.getAttribute("data-keys"))) history.replaceState(null, "", "#keys-" + a.getAttribute("data-keys")); });
+  });
+  if (location.hash.indexOf("#keys-") === 0) showKeys(location.hash.slice(6));
   var f = document.getElementById("seller-filter");
   if (!f) return;
   f.addEventListener("input", function () {
@@ -310,9 +329,8 @@ export function mountAdmin(app: Express, d: AdminDeps) {
   }
 
   /** Keys for the simulator API (docs/SIMULATOR_API.md): how to connect, the seller's keys, generate and revoke. */
-  function keysBlock(s: SellerContext, origin: string): string {
+  function keysBlock(s: SellerContext, origin: string, keys: BotKey[]): string {
     const slug = esc(s.config.slug);
-    const keys = db.listBotKeys(s.config.slug);
     const active = keys.filter((k) => !k.revokedAt);
     const tests = db.testLeadCount(s.config.slug);
     const list = keys.length
@@ -327,11 +345,11 @@ export function mountAdmin(app: Express, d: AdminDeps) {
           )
           .join("")}</ul>`
       : '<p class="muted small">No keys yet.</p>';
-    return `<section class="block">
+    return `<section class="block keys-block" id="keys-${slug}">
   <h3>Simulator API <span class="muted small">(${plural(active.length, "active key")})</span></h3>
-  <p class="muted small">For chat simulators such as the AI Assistant Auditor: base URL <code>${esc(origin)}</code>, bot slug <code>${slug}</code>, header <code>X-Bot-Key</code>. Simulated chats run the real journey; their leads are saved as test leads${tests ? ` (${tests} so far, on the <a href="/admin/leads?seller=${slug}&amp;test=1">Leads</a> page with Show test chats)` : ""}.</p>
+  <p class="muted small">For chat simulators such as the AI Assistant Auditor: base URL <code>${esc(origin)}</code>, bot slug <code>${slug}</code>, header <code>X-Bot-Key</code>, chat endpoint <code>POST /api/v1/bots/${slug}/chat</code>. Simulated chats run the real journey; their leads are saved as test leads${tests ? ` (${tests} so far, on the <a href="/admin/leads?seller=${slug}&amp;test=1">Leads</a> page with Show test chats)` : ""}. <a href="https://github.com/nitinsinghbalyan/chat-bot/blob/main/docs/SIMULATOR_API.md" target="_blank" rel="noopener">API reference ↗</a></p>
   ${list}
-  <form class="inline keygen" method="post" action="/admin/sellers/${slug}/keys"><input name="label" maxlength="60" placeholder="Label (optional), e.g. Auditor" aria-label="Key label"><button class="btn small" type="submit">Generate key</button></form>
+  <form class="inline keygen" method="post" action="/admin/sellers/${slug}/keys"><input name="label" maxlength="60" placeholder="Label (optional), e.g. Auditor" aria-label="Key label"><button class="btn small primary" type="submit">Generate key</button></form>
 </section>`;
   }
 
@@ -381,6 +399,8 @@ export function mountAdmin(app: Express, d: AdminDeps) {
     const categories = s.catalogue.list("category").length;
     const fromKb = u ? u.view.catalogueEntries().length : 0;
     const crawl = s.lastCrawl;
+    const keys = db.listBotKeys(s.config.slug);
+    const activeKeys = keys.filter((k) => !k.revokedAt).length;
     const kbBlock = `<section class="block">
   <h3>Knowledge base</h3>
   <div class="row">
@@ -418,7 +438,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
     return `<details class="srow" id="seller-${slug}" data-search="${esc(`${s.config.name} ${s.config.slug}`.toLowerCase())}">
   <summary>
     <div class="seller"><span class="avatar" style="--c:${esc(s.config.color)}">${esc(s.config.name.charAt(0).toUpperCase())}</span><div class="who"><h2>${esc(s.config.name)}</h2><div class="muted small">${slug} · ${s.source === "admin" ? "added in admin" : "KB folder in the repo"}</div></div></div>
-    <div class="badges">${u ? badge("JSON knowledge base", "ok") : badge("KB folder files", "info")}${crawlBadge(s)}${badge(persona.label, persona.tone)}${fileCount(s) ? badge(`+${plural(fileCount(s), "file")}`, "info") : ""}</div>
+    <div class="badges">${u ? badge("JSON knowledge base", "ok") : badge("KB folder files", "info")}${crawlBadge(s)}${badge(persona.label, persona.tone)}${fileCount(s) ? badge(`+${plural(fileCount(s), "file")}`, "info") : ""}${activeKeys ? badge(plural(activeKeys, "simulator key"), "info", "Keys for the simulator API") : ""}</div>
     <div class="nums">
       <a class="num" href="/admin/leads?seller=${slug}" title="Leads"><b>${leads}</b><span>Leads</span></a>
       <span class="num"><b>${products}</b><span>Products</span></span>
@@ -427,6 +447,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
     <span class="updated muted small"${updatedTitle ? ` title="${esc(updatedTitle)}"` : ""}>${esc(updated)}</span>
     <div class="row-actions">
       <a class="btn small" href="/s/${slug}/" target="_blank" rel="noopener">View site ↗</a>
+      <a class="btn small" href="#keys-${slug}" data-keys="${slug}" title="Keys for chat simulators (the simulator API)">Simulator key</a>
       <span class="btn small manage" aria-hidden="true">Manage <span class="chev">▾</span></span>
     </div>
   </summary>
@@ -439,7 +460,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
       <div class="stat"><b>${u?.summary.videos ?? "–"}</b><span>Videos</span></div>
       <div class="stat"><b>${u?.summary.documents ?? "–"}</b><span>PDFs</span></div>
     </div>
-    <div class="blocks">${kbBlock}${filesBlock}${mappingBlock(s)}${catalogueBlock}${personaBlock}${keysBlock(s, origin)}</div>
+    <div class="blocks">${kbBlock}${keysBlock(s, origin, keys)}${filesBlock}${mappingBlock(s)}${catalogueBlock}${personaBlock}</div>
     ${
       s.source === "admin"
         ? `<footer class="srow-foot"><form class="inline" method="post" action="/admin/sellers/${slug}/delete" onsubmit="return confirm('Delete ${esc(s.config.name).replace(/'/g, "\\'")}? Its website and bot stop working. Leads and chats are kept.')"><button class="btn danger small" type="submit">Delete seller</button></form></footer>`

@@ -123,9 +123,12 @@ export function createApp(deps: AppDeps) {
   });
   app.use("/api", (req, res, next) => (req.path.startsWith("/v1/") ? next() : cors(req, res, next)));
 
+  // Which build is running, so a deploy can be confirmed from outside (Render sets RENDER_GIT_COMMIT).
+  const build = { commit: process.env.RENDER_GIT_COMMIT?.slice(0, 12) ?? null, startedAt: new Date().toISOString() };
   app.get("/health", (_req, res) => {
     res.json({
       ok: true,
+      build,
       model: config.BOT_MODEL,
       tracing: (({ state, host, version, exports, spansExported, exportErrors, lastExportAt, lastExportOk }) => ({
         state,

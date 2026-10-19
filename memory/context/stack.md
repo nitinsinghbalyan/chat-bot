@@ -43,7 +43,7 @@ Don't call them `CLAUDE_*`: the harness sets `CLAUDE_EFFORT`, which once clashed
 - Admin-added sellers: `sellers/<slug>/seller.json` + `seller_kb.json`.
 
 ## Cloud session gotchas
-- The proxy blocks the seller sites, imimg.com and onrender.com, so production can't be checked. Tell Nitin what to check instead.
+- The proxy blocks the seller sites, imimg.com and onrender.com, so production can't be checked. Tell Nitin what to check instead: the build id in the admin footer or `/health` `build.commit` says which commit is live (compare with the merge commit on `main`); Render's dashboard shows a failed deploy.
 - No API key: test chat with a scripted fake client. A preview server script pattern is `createApp({ client: fakeClient, ... })` on a spare port.
 - Unset `ANTHROPIC_BASE_URL` when running the server or eval (`env -u ANTHROPIC_BASE_URL`).
 - Never `pkill -f` a pattern that appears in your own command line; it kills the shell.

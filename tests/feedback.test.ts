@@ -160,6 +160,7 @@ describe("tracing on", () => {
 
   it("shows uploads on /health and runs the Langfuse test from admin", async () => {
     const health = await (await fetch(`${s.base}/health`)).json();
+    expect(health.build).toEqual({ commit: process.env.RENDER_GIT_COMMIT?.slice(0, 12) ?? null, startedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) });
     expect(health.tracing).toEqual({ state: "ok", host: "langfuse.example.com", version: "3.120.0", exports: 2, spansExported: 14, exportErrors: 0, lastExportAt: "2026-10-15T05:00:00Z", lastExportOk: true });
     const auth = { Authorization: `Basic ${Buffer.from(`a:${ADMIN_PW}`).toString("base64")}` };
     // Admin only, and only from admin's own pages.

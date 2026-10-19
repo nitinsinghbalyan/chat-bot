@@ -54,6 +54,8 @@ Shorthand and internal language for the Seller assistants project.
 | mapping.json | `GET /admin/sellers/<slug>/mapping.json`: the Knowledge mapping as JSON for audits (same data as the admin block) | `src/admin.ts` |
 | test lead / test chat | A lead or transcript made through the simulator API (`leads.test = 1`); hidden on Leads unless "Show test chats" is ticked | `src/db.ts`, `src/admin.ts` |
 | sensitive fields | v5 export fields the bot never sees: `price`, `delivery_time`, `payment_terms`, `production_capacity`, `packaging_details`, `port_of_dispatch`, `year_established`, `employees`, `member_since`, `gst_verified`, `trustseal_url`, `ratings` (the website still shows prices) | `src/sellerKb.ts` |
+| build id | The deployed commit (Render's `RENDER_GIT_COMMIT`, "local" elsewhere) in the admin footer and `/health` `build.commit`, with the process start time; the way to confirm a deploy is live | `src/admin.ts` `shell`, `/health` |
+| Simulator key button | On each seller row; opens the row's **Simulator API** block (anchor `#keys-<slug>`) where keys are generated and revoked; rows with keys show an "N simulator keys" badge | `ROWS_SCRIPT`, `keysBlock` |
 | Test Langfuse | /admin button: server version → keys → upload a test trace → is it stored; the failing step names the cause | `runConnectionTest` in `src/tracing.ts` |
 | langfuse.intermesh.net | The self-hosted Langfuse production traces go to | `LANGFUSE_BASE_URL` on Render |
 | tracing status | `off` / `ok` / `auth_failed` / `unreachable` from the startup key check; on `/health` and `/admin` | `src/tracing.ts` `resolveLangfuse` |
