@@ -851,8 +851,18 @@ export class KbView {
     const label = m ? `${c.name} · ${m.name}` : c.name;
     const file = m ? this.fileSpecs(m, products) : { present: [], standard: [] };
     const isqs: Isq[] = [...file.present];
+    // A later layer never repeats a question: same name ("Max Shearing Thickness" covers "Shearing
+    // Thickness"), or most of its options already offered by an earlier one ("Form Of Asafoetida
+    // Available: Granules / Crystal / Paste" after "Physical Form").
+    const repeats = (q: Isq) =>
+      isqs.some((x) => {
+        if (specNamesMatch(x.question, q.question)) return true;
+        const offered = new Set(x.options.map(normKey));
+        const shared = q.options.filter((o) => optionSeen(o, offered)).length;
+        return q.options.length > 0 && shared * 2 >= q.options.length;
+      });
     const add = (q: Isq) => {
-      if (isqs.length < MAX_ISQS && !isqs.some((x) => specNamesMatch(x.question, q.question))) isqs.push(q);
+      if (isqs.length < MAX_ISQS && !repeats(q)) isqs.push(q);
     };
     for (const q of this.isqs(c, products)) add({ ...q, from: "derived" });
     for (const q of file.standard) add(q);
