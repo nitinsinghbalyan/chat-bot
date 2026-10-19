@@ -33,12 +33,13 @@ Shorthand and internal language for the Seller assistants project.
 | common prompts | Shared system prompt template + chat guardrails for all sellers; edit at `/admin/prompts` | `platform_prompts` table |
 | operator note | `<operator_note>`: tells the model a sentence of its last reply was replaced by a guardrail | `src/claude.ts` |
 | current page | `<current_page>`: the product or category page the buyer has open | `src/prompts.ts` |
-| lead | Verified enquiry: mobile (asked on the first message) → OTP → name → `save_lead` (saved) → machine if unclear → ISQs → `save_lead` again (updates the same row, summary card) | `leads` table, `ChatDb.updateLead` |
+| lead | Verified enquiry: mobile (asked on the first message) → OTP → name → `save_lead` (saved) → product if unclear → ISQs → `save_lead` again (updates the same row, summary card) | `leads` table, `ChatDb.updateLead` |
+| completion guard | `save_lead` with `complete: true` shows the summary only when the product is known and all its plan's questions were asked (chips shown) or answered (spec label); else the tool result names the next question | `notComplete` in `src/tools.ts`, `pendingQuestions` in `src/isqTracker.ts` |
 | prompt version | A snapshot of the common prompts (system + guardrails) or a seller's persona (system + user). Sources: saved, reset, restored, built-in (shipped default recorded at startup when a deploy changed it). View = diff vs in use; Restore. Newer built-in banner on `/admin/prompts` when an edit hides a new default | `prompt_versions` table, `src/promptVersions.ts`, `src/diff.ts` |
 | trace / observation / score | Langfuse: a trace per buyer message (`chat-turn`) with observations (catalogue-search retriever, `claude round N` generations, tool calls, output-guardrails) and scores (lead_captured, lead_updated, guardrail_fired, fallback_reply, buyer_feedback). Sessions = whole chats | `src/tracing.ts` |
 | canned / fallback reply | `FALLBACK_REPLY` (API error or empty answer) and `REFUSAL_REPLY` (model declined); scored `fallback_reply` in Langfuse | `src/claude.ts` |
 | buyer feedback | 👍/👎 under each widget reply when tracing is on → `buyer_feedback` score (+1/−1, a changed vote replaces it); only for replies in the buyer's own chat | `/api/feedback` in `src/app.ts` |
-| enquiry summary / summary card | "Your enquiry" card shown once ISQs are done (`save_lead` with `complete: true`): machine, specs, quantity, city, name, masked mobile; scored `summary_shown` | `src/tools.ts` `enquirySummary`, `public/widget.js` `addSummary` |
+| enquiry summary / summary card | "Your enquiry" card shown once ISQs are done (`save_lead` with `complete: true`, honoured only when the completion guard passes): product, specs, quantity, city, name, masked mobile; scored `summary_shown` | `src/tools.ts` `enquirySummary`, `public/widget.js` `addSummary` |
 | chat cost | `chat_cost_usd` Langfuse **session** score: running USD total of a chat's Claude calls, same score id so it's replaced each message; totals kept in `sessions.usage` | `src/app.ts` |
 | extra files | Per-seller optional uploads in Manage: business card .md, MCAT specs JSON, product cards JSON (DATA_DIR/sellers/<slug>/files/) | `src/sellerFiles.ts`, `SellerRegistry.compose` |
 | MCAT | IndiaMART micro-category. Each product has one (`glmcat_ids`); a site category pools several; the per-seller MCAT specs file is the ISQ source | `KbView.mcatsOf`, `findMcat` |
@@ -46,7 +47,7 @@ Shorthand and internal language for the Seller assistants project.
 | main MCAT | The MCAT most of a category's products belong to; asked when only the category is known | `KbView.mainMcatOf` |
 | policy card | The business card .md: sections of handling rules (Dispatch, GST, Packaging, Must escalate…) kept whole with amounts/terms stripped | `parseBusinessCardMd` |
 | Knowledge mapping | Admin report per seller: categories → MCATs → questions, MCAT file use, cards, FAQs, policy card, flags | `src/mapping.ts` |
-| spec_questions | Per-turn block with only the chat's machine's ISQs ("Machine: <category> · <MCAT>"), asked/next marked | `src/isqTracker.ts` |
+| spec_questions | Per-turn block with only the chat's product's ISQs ("Product: <category> · <MCAT>"), asked/next marked | `src/isqTracker.ts` |
 | chat id | Unique id per conversation; Langfuse session = `<seller>:<chatId>`; in transcript/leads `chat_id` | `Session.chatId` |
 | common FAQ / FAQ sheet | One Excel/CSV for all sellers on /admin/prompts (`Seller Name`, `gl_faq_question`, `gl_faq_answer`, optional Category); rows scoped by Seller (name, slug or glid) and Category; only the **first** sheet is read (the second tab of Nitin's sheet holds other vendors' keys: never paste or commit it); searched per message into `<faq>` | `src/faq.ts` |
 | product FAQs | `products[].faqs` in a v5 export; merged into the seller's FAQ index, hits shown as "(about <product>)"; price answers dropped | `KbView.faqs`, `FaqStore.forSeller` |

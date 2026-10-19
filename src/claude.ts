@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Catalogue } from "./catalogue.js";
 import { formatCatalogueHits } from "./catalogue.js";
 import { formatFaqHits, type FaqIndex } from "./faq.js";
-import { currentPlan, markAnswered, markAsked, setPlace, specQuestionsText, updateCategory, type IsqSource } from "./isqTracker.js";
+import { currentPlan, markAsked, specQuestionsText, updateCategory, type IsqSource } from "./isqTracker.js";
 import { config } from "./config.js";
 import type { CatalogueEntry } from "./crawler.js";
 import { OutputFilter, REPLACEMENTS, type Intervention } from "./guardrails.js";
@@ -69,7 +69,7 @@ const MAX_HISTORY_TURNS = 40;
 
 export const FALLBACK_REPLY =
   "Sorry, I'm having trouble answering right now. You can leave your mobile number and our team will get back to you.";
-const REFUSAL_REPLY = "Sorry, I can't help with that here. I'm happy to help with any of our machines or pass your enquiry to our team.";
+const REFUSAL_REPLY = "Sorry, I can't help with that here. I'm happy to help with any of our products or pass your enquiry to our team.";
 const LIMIT_REPLY = "This chat has become quite long. Please refresh the page to start a new chat, or leave your mobile number and our team will get back to you.";
 
 function retrieve(
@@ -295,15 +295,11 @@ export async function runTurn(
       const results: Anthropic.Beta.BetaToolResultBlockParam[] = toolUses.map((tu) => {
         const stageBefore = session.lead.stage;
         const tool = trace.start(tu.name, "tool", { input: tu.name === "verify_otp" ? { otp: OTP_MASK } : tu.input });
-        const r = executeTool(session, tu.name, tu.input, { saveLead: deps.saveLead, pageUrl: opts.pageUrl, shareMedia: deps.shareMedia });
+        // save_lead also sets the chat's product from the named one and marks the questions it answers (tools.ts).
+        const r = executeTool(session, tu.name, tu.input, { saveLead: deps.saveLead, pageUrl: opts.pageUrl, shareMedia: deps.shareMedia, isqs });
         if (r.ui?.chips) {
           chips = r.ui.chips;
           markAsked(session.lead, plan(), r.ui.chips);
-        }
-        if (tu.name === "save_lead" && !r.isError && isqs) {
-          const input = tu.input as { product?: string; specs?: Array<{ label?: string }> };
-          if (!session.lead.category && input.product) setPlace(session.lead, isqs, isqs.locateText(input.product));
-          markAnswered(session.lead, plan(), (input.specs ?? []).map((x) => x.label ?? ""));
         }
         if (r.ui?.summary) summary = r.ui.summary;
         if (r.ui?.cards) for (const c of r.ui.cards) if (cards.length < 12 && !cards.some((x) => x.url === c.url && x.type === c.type)) cards.push(c);

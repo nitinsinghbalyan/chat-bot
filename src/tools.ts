@@ -3,6 +3,7 @@ import { z } from "zod";
 import { config } from "./config.js";
 import type { MediaCard, MediaKind } from "./media.js";
 import type { LeadState, Session } from "./session.js";
+import { currentPlan, markAnswered, pendingQuestions, setPlace, type IsqSource } from "./isqTracker.js";
 
 const MAX_OTP_ATTEMPTS = 3;
 const MAX_OTP_SENDS = 3;
@@ -48,7 +49,7 @@ export const toolDefinitions: Anthropic.Beta.BetaTool[] = [
       type: "object",
       properties: {
         name: { type: "string", description: "The buyer's name as they typed it." },
-        product: { type: "string", description: "The machine the buyer is enquiring about." },
+        product: { type: "string", description: "The product the buyer is enquiring about." },
         specs: {
           type: "array",
           description: "The buyer's answers to the qualification questions, one item per question, in the order asked, e.g. {label: \"Material\", value: \"Mild steel\"}. Empty list if none yet.",
@@ -205,7 +206,7 @@ export function requirementsText(input: SaveLeadInput): string {
 /** The summary card: the machine, each spec, quantity, city, name and the masked mobile; empty rows left out. */
 export function enquirySummary(input: SaveLeadInput, name: string, mobile: string): EnquirySummary {
   const rows = [
-    { label: "Machine", value: input.product.trim() },
+    { label: "Product", value: input.product.trim() },
     ...answeredSpecs(input),
     { label: "Other details", value: input.requirements.trim() },
     { label: "Quantity", value: input.quantity.trim() },
@@ -214,6 +215,18 @@ export function enquirySummary(input: SaveLeadInput, name: string, mobile: strin
     { label: "Mobile", value: maskMobile(mobile) },
   ].filter((r) => r.value);
   return { rows, note: `Our team will contact you on ${maskMobile(mobile)}.` };
+}
+
+/**
+ * Why an enquiry can't be marked complete yet, as an instruction for the model, or null when it can:
+ * the product must be known, and every spec question of its plan asked (buttons shown) or answered.
+ */
+function notComplete(lead: LeadState, src: IsqSource | null, product: string): string | null {
+  if (!product) return "the product is not known. Ask which product the buyer needs, then its specification questions, and call save_lead with complete set to true only after the last answer.";
+  const pending = src ? pendingQuestions(lead, currentPlan(lead, src)) : [];
+  if (!pending.length) return null;
+  const [next, ...rest] = pending;
+  return `still to ask: ${next.question} (options: ${next.options.join(" / ")})${rest.length ? ` and then ${rest.map((q) => q.question).join(", ")}` : ""}. Ask it now, one question per message with show_options, and call save_lead with complete set to true only after the last answer.`;
 }
 
 const SUMMARY_SHOWN =
@@ -242,7 +255,7 @@ export function executeTool(
   session: Session,
   name: string,
   rawInput: unknown,
-  opts: { saveLead: LeadSink; pageUrl?: string; shareMedia?: MediaSharer },
+  opts: { saveLead: LeadSink; pageUrl?: string; shareMedia?: MediaSharer; isqs?: IsqSource | null },
 ): ToolResult {
   if (!(name in inputSchemas)) return { content: `Unknown tool: ${name}`, isError: true };
   const parsed = inputSchemas[name as ToolName].safeParse(rawInput);
@@ -317,8 +330,18 @@ export function executeTool(
         pageUrl: opts.pageUrl,
         chatId: session.chatId,
       };
+      // Which product the chat is about, and which of its questions this call answers (by spec label).
+      const src = opts.isqs ?? null;
+      if (src) {
+        if (!lead.category && fields.product) setPlace(lead, src, src.locateText(fields.product));
+        markAnswered(lead, currentPlan(lead, src), input.specs.map((s) => s.label));
+      }
+      // The summary is shown only once every spec question for the product was asked or answered:
+      // the model never decides on its own that the enquiry is complete.
+      const stillNeeded = input.complete ? notComplete(lead, src, fields.product) : null;
       if (lead.stage === "captured" && lead.mobile && lead.name) {
         opts.saveLead({ createdAt: new Date().toISOString(), seller: session.seller, sessionId: session.id, mobile: lead.mobile, name: lead.name, ...fields, update: true });
+        if (stillNeeded) return { content: `Enquiry updated, but it is not complete yet: ${stillNeeded}`, isError: false };
         if (!input.complete) {
           return { content: "Enquiry updated. Continue with the next qualification question; after the last one, call save_lead again with complete set to true.", isError: false };
         }
@@ -333,13 +356,14 @@ export function executeTool(
       opts.saveLead({ createdAt: new Date().toISOString(), seller: session.seller, sessionId: session.id, mobile: lead.mobile, name, ...fields });
       lead.stage = "captured";
       lead.name = name;
+      if (stillNeeded) return { content: `Enquiry saved, but it is not complete yet. Thank the buyer in a few words; ${stillNeeded}`, isError: false };
       if (input.complete) {
         lead.summarized = true;
         return { content: `Enquiry saved. ${SUMMARY_SHOWN}`, isError: false, ui: { summary: enquirySummary(input, name, lead.mobile) } };
       }
       return {
         content:
-          "Enquiry saved. Thank the buyer in a few words, then ask which machine they need if that isn't clear yet, else the first qualification question you still need (with show_options). After the last answer, call save_lead again with complete set to true.",
+          "Enquiry saved. Thank the buyer in a few words, then ask which product they need if that isn't clear yet, else the first qualification question you still need (with show_options). After the last answer, call save_lead again with complete set to true.",
         isError: false,
       };
     }

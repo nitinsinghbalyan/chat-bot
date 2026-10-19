@@ -4,7 +4,7 @@
  * <spec_questions>, so it never asks another category's.
  */
 import type { CatalogueEntry } from "./crawler.js";
-import type { IsqPlan } from "./sellerKb.js";
+import { specNamesMatch, type IsqPlan } from "./sellerKb.js";
 import type { LeadState } from "./session.js";
 
 /** Where a machine sits in the seller's knowledge: its site category and its MCAT (null when the export has none). */
@@ -25,7 +25,7 @@ export interface IsqSource {
 
 /** Words too generic to tell machines apart ("mild steel", "automatic"). */
 const GENERIC = new Set(
-  "machine machines steel mild stainless plate sheet metal automatic semi manual industrial heavy duty model type size with from that this what your have need want price rate cost please".split(" "),
+  "machine machines product products item items steel mild stainless plate sheet metal automatic semi manual industrial heavy duty model type size with from that this what your have need want price rate cost please hello namaste".split(" "),
 );
 /** Distinctive words, cut to 5 letters so "shear" and "shearing" count as one. */
 const words = (t: string) => (t.toLowerCase().match(/[a-z]{4,}/g) ?? []).filter((w) => !GENERIC.has(w)).map((w) => w.slice(0, 5));
@@ -69,7 +69,9 @@ export function updateCategory(
     const current = currentPlan(lead, src);
     const known = new Set(current ? words(`${current.label} ${current.isqs.flatMap((q) => q.options).join(" ")}`) : []);
     const namesIt = shared.length >= 2 || shared.some((w) => !known.has(w));
-    if (!tapped && (!lead.category || namesIt)) next = src.locate(top);
+    // A greeting or a vague message ("hi", "price?") shares no distinctive word with its hit, so it
+    // never picks a product, not even on the first message: the search is prefix and fuzzy.
+    if (!tapped && shared.length && (!lead.category || namesIt)) next = src.locate(top);
   }
   return setPlace(lead, src, next);
 }
@@ -87,25 +89,32 @@ export function markAsked(lead: LeadState, plan: IsqPlan | null, options: string
   if (best && !(lead.askedIsqs ?? []).includes(best.q)) lead.askedIsqs = [...(lead.askedIsqs ?? []), best.q];
 }
 
-/** Marks ISQs answered through save_lead's specs (by label). */
+/** Marks ISQs answered through save_lead's specs (by label: the same name, or one containing it, "Form" for "Physical Form"). */
 export function markAnswered(lead: LeadState, plan: IsqPlan | null, labels: string[]) {
   if (!plan) return;
-  const said = new Set(labels.map((l) => l.toLowerCase().trim()));
+  const said = labels.map((l) => l.trim()).filter(Boolean);
   const asked = new Set(lead.askedIsqs ?? []);
-  for (const isq of plan.isqs) if (said.has(isq.question.toLowerCase())) asked.add(isq.question);
+  for (const isq of plan.isqs) if (said.some((l) => specNamesMatch(l, isq.question))) asked.add(isq.question);
   lead.askedIsqs = [...asked];
+}
+
+/** The plan's questions neither asked (buttons shown) nor answered (a spec label), in order. */
+export function pendingQuestions(lead: LeadState, plan: IsqPlan | null): IsqPlan["isqs"] {
+  if (!plan) return [];
+  const done = new Set(lead.askedIsqs ?? []);
+  return plan.isqs.filter((q) => !done.has(q.question));
 }
 
 /** The <spec_questions> block for this turn. */
 export function specQuestionsText(plan: IsqPlan, asked: string[] = []): string {
   if (!plan.isqs.length) {
-    return `Machine: ${plan.label}. It has no listed specification questions: don't invent any. Ask only for the quantity and city if still needed.`;
+    return `Product: ${plan.label}. It has no listed specification questions: don't invent any. Ask only for the quantity and city if still needed.`;
   }
   const done = new Set(asked);
   const next = plan.isqs.find((q) => !done.has(q.question));
   return [
-    `Machine: ${plan.label}.`,
-    "Ask only these specification questions (ISQs) for this machine, one per message, in this order, with exactly these options in show_options. Skip any the buyer has already answered. Never ask another category's questions.",
+    `Product: ${plan.label}.`,
+    "Ask only these specification questions (ISQs) for this product, one per message, in this order, with exactly these options in show_options. Skip any the buyer has already answered. Never ask another category's questions.",
     ...plan.isqs.map((q, i) => `${i + 1}. ${q.question}? Options: ${q.options.join(" / ")}`),
     asked.length ? `Already asked: ${plan.isqs.filter((q) => done.has(q.question)).map((q) => q.question).join(", ") || "none"}.` : "",
     next ? `Next: ${next.question}.` : "All asked: when the buyer has answered, save the enquiry with complete set to true.",

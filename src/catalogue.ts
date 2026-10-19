@@ -45,7 +45,8 @@ export class Catalogue {
     return new MiniSearch<IndexedEntry>({
       fields: ["title", "category", "specsText", "description"],
       storeFields: ["id"],
-      searchOptions: { boost: { title: 3, category: 2 }, fuzzy: 0.2, prefix: true, combineWith: "OR" },
+      // No prefix or fuzzy matching on very short words: "hi" must not find "Hing", nor "hii" "Himalayan".
+      searchOptions: { boost: { title: 3, category: 2 }, fuzzy: (term) => (term.length >= 5 ? 0.2 : false), prefix: (term) => term.length >= 4, combineWith: "OR" },
     });
   }
 
