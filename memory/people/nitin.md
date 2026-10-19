@@ -27,6 +27,7 @@
 - Shares seller files as a zip attached in chat when asked (Oct 18: five sellers' v5 files). They hold GST and bank data: keep them local, never commit.
 - Runs chat-turn simulations in IndiaMART's AI Assistant Auditor against his bots; wants our bots reachable there as their own vendor with per-seller keys.
 - Says "update project memory folder" after a milestone: refresh `memory/` + CLAUDE.md, ship it as its own small PR.
+- Reports what he can't find in plain words ("not seeing the option to create key"). A control buried at the bottom of Manage counts as missing: put the thing he needs on the seller row itself, and give him a way to confirm the deploy is live (build id in the admin footer).
 
 ## Notes
 - Personal-assistant preferences, such as the #brain vault rules, apply to Nitin's own chats and are not part of this project. Don't copy personal data into this repo.
