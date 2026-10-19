@@ -159,6 +159,13 @@ describe("simulator API", () => {
     expect(admin).toContain("Simulator API");
     expect(admin).toContain(`${stored.prefix}…`);
     expect(admin).not.toContain(key!);
+    // The key option is reachable from the seller row itself, and the block has an anchor the button jumps to.
+    const betaRow = admin.split('class="srow"').find((part) => part.includes(`id="seller-${BETA}"`))!;
+    expect(betaRow).toContain(`data-keys="${BETA}"`);
+    expect(betaRow).toContain(`id="keys-${BETA}"`);
+    expect(betaRow).toMatch(/\d+ simulator keys?/);
+    expect(betaRow.indexOf('id="keys-')).toBeLessThan(betaRow.indexOf("Extra files"));
+    expect(admin).toContain("Build <code>");
 
     expect((await say(BETA, "hi", { key })).status).toBe(200);
     const revoke = await fetch(`${base}/admin/sellers/${BETA}/keys/${stored.id}/revoke`, { method: "POST", headers: { ...auth, Origin: base }, redirect: "manual" });
