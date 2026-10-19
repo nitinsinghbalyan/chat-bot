@@ -1,7 +1,7 @@
 # Seller assistants (platform)
 
 **Repo:** `nitinsinghbalyan/chat-bot` · **Production:** Render service `jayshree-chatbot` (Singapore, starter plan, 1 GB disk at `/var/data`), auto-deploys `main`.
-**Status:** live. Jayshree is the first seller; 5+ more are coming, added by uploading their KB JSON.
+**Status:** live. Jayshree is the first seller (v3 export, repo seller). Five more sellers' **v5** files arrived on Oct 18 (Exotica Steel, Herbaveda Overseas, National Industries, Sewa Enterprises, Unicorn Equipment: v5 JSON, MCAT specs, policy card .md, product cards, plus one FAQ sheet for 11 sellers); Nitin adds them on `/admin` by uploading those files.
 
 ## What it does
 - Answers buyers' discovery and enquiry questions **on the seller's behalf**, grounded in the seller's KB, within 9 guardrails.
@@ -10,7 +10,8 @@
 - Shares photos, videos, PDFs and related products as a carousel.
 - Handles large catalogues: over ~300k characters the system prompt keeps categories, ISQs and a product index; details come per message from the catalogue search.
 - Generates a full website per seller from the KB JSON (with crawled pages as a fallback).
-- Admin for the team: seller rows (Manage) with KB upload and **extra files** (business card .md, MCAT specs, product cards), add seller, crawls, personas, common prompts with **version history** (View diff, Restore) and the **common FAQ** Excel, leads and transcripts (each conversation linked to its Langfuse session).
+- Admin for the team: seller rows (Manage) with KB upload and **extra files** (policy card .md, MCAT specs, product cards), the **Knowledge mapping** block (categories → MCATs → questions, flags; also `/admin/sellers/<slug>/mapping.json`), **bot keys** for the simulator, add seller, crawls, personas, common prompts with **version history** (View diff, Restore) and the **common FAQ** Excel, leads (test chats hidden by default) and transcripts (each conversation linked to its Langfuse session).
+- Simulator API for the AI Assistant Auditor: `GET /api/v1/bots/<slug>` and `POST /api/v1/bots/<slug>/chat` with `X-Bot-Key`; one JSON reply per message, same chat turn as the widget (`docs/SIMULATOR_API.md`).
 - **Prompt updates apply themselves:** a deploy that changes `prompts/*.md` or a `persona.json` replaces an older admin edit of that part at startup (kept in Versions). Claude makes prompt changes in the repo; Nitin doesn't need to click anything.
 - Langfuse tracing (when keys are set): a trace per buyer message; **one Langfuse session per conversation** (`<seller>:<chatId>`, stamped under `session.id` and legacy `langfuse.session.id`); mobiles masked, OTPs never sent; scores plus 👍/👎 asked **once per chat, under the summary card**; **per-chat cost** as a `chat_cost_usd` session score (running total, replaced each message).
 - Tracing health is visible: startup key check (EU then US cloud auto-detect), `/health` `tracing.state`, red banner on `/admin` when keys are rejected, `[tracing] export failed` in logs.
@@ -23,7 +24,12 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | HTTP: chat API (SSE), website routes | `src/app.ts` |
 | Admin pages (Basic auth, any username + `ADMIN_PASSWORD`, same-origin POSTs); seller rows = `sellerRow()` + `ROWS_SCRIPT` | `src/admin.ts`, `public/admin.css` |
 | Seller registry, catalogue merge, admin sellers | `src/sellers.ts` |
-| KB JSON: lenient schema, repairs, guardrail filters, ISQs, prompt text, catalogue entries | `src/sellerKb.ts` |
+| KB JSON (v5/v3): lenient schema, repairs, guardrail filters, MCATs per category, ISQ plans, product FAQs, prompt text, catalogue entries | `src/sellerKb.ts` |
+| Extra files: policy card .md parser (sections kept, amounts stripped), MCAT specs and product cards loaders | `src/sellerFiles.ts` |
+| Knowledge mapping report (categories → MCATs → questions, MCAT file use, cards, FAQs, policy card, flags) | `src/mapping.ts` |
+| Per-chat machine tracking: category + MCAT per turn, `<spec_questions>` text | `src/isqTracker.ts`, `src/session.ts` |
+| Common FAQ sheet (Seller/Category scoping) merged with product FAQs; `<faq>` hits | `src/faq.ts` |
+| Simulator API keys (`sa_live_…`, sha256 stored) | `src/botKeys.ts` (routes in `src/app.ts`, UI in `src/admin.ts`) |
 | Chat loop: Claude streaming, tools, output filter | `src/claude.ts`, `src/tools.ts`, `src/guardrails.ts` |
 | Prompts: common system and guardrails templates, per-turn user template; version history and diff | `prompts/system.md`, `prompts/guardrails.md`, `prompts/user.md`, `src/prompts.ts`, `src/promptVersions.ts`, `src/diff.ts` |
 | Media cards | `src/shareMedia.ts`, `src/media.ts` |
@@ -58,7 +64,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | Per-chat cost in Langfuse only (session score + trace metadata), not in admin | Nitin |
 | Catalogue from crawling the sitemap | Nitin |
 | Extra per-seller files (business card .md, MCAT specs JSON, product cards JSON) **merge** with the KB JSON (earlier "MCAT not used" reversed, Oct 2026) | Nitin |
-| ISQ source: **MCAT first** (by the products' MCAT id, else equal name), else cleaned derived ISQs pooled per MCAT family; **server picks the category per turn** (`<spec_questions>`) | Nitin (Oct 16) |
+| ISQ source: **MCAT first** (by the products' MCAT id, else equal name), else cleaned derived ISQs pooled per MCAT family; **server picks the category per turn** (`<spec_questions>`) | Nitin (Oct 16); the family pooling was replaced by per-MCAT plans on Oct 18 (row below) |
 | 👍/👎 only once per chat, under the summary card | Nitin |
 | Journey: welcome (no question, no chips, same for all sellers) → mobile on the first message → OTP → name → machine if unclear → ISQs → summary | Nitin (Oct 16) |
 | Claude changes prompts itself in the repo; built-ins apply over older admin edits on deploy (no "Use the new built-in" click) | Nitin (Oct 16) |
@@ -108,13 +114,15 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | #20 | New journey: fixed welcome without chips, mobile on the first message, machine asked after the name if unclear |
 | #21 | First reply asks only for the mobile number (no machine confirmation) |
 | #22 | Docs: `docs/ARCHITECTURE.md` (system, journey, chat turn, knowledge/ISQ/FAQ, prompts, guardrails, tracing, data, routes) and `docs/REPO_STRUCTURE.md` |
-| #24 | Master JSON v5, questions per product MCAT checked against the seller's products, policy card as handling rules, product FAQs + FAQ Seller column, Knowledge mapping report (`src/mapping.ts`) |
 | #23 | Simulator API (`docs/SIMULATOR_API.md`): bot keys in admin, JSON chat endpoint, test leads, `eval` trace tag; chat turn shared by widget and API |
+| #24 | Master JSON v5, questions per product MCAT checked against the seller's products, policy card as handling rules, product FAQs + FAQ Seller column, Knowledge mapping report (`src/mapping.ts`) |
+| #25 | Project memory refresh after #23/#24 |
 
 ## Open items / ideas
 - **Langfuse (self-hosted `langfuse.intermesh.net`):** after #16/#18, check that traces appear grouped by conversation. If not, **Test Langfuse** on /admin names the failing step (server version, upload refused, or accepted but not stored, which is for the intermesh Langfuse admins).
-- **MCAT file:** Jayshree's uploaded MCAT file is mostly construction MCATs (only the ironworkers match by id). A file with their real MCAT ids (e.g. 25058 press brakes, 1669, 123956, 185336 shears, 182186 laser) would make those questions authoritative; until then they're cleaned derived ISQs.
+- **Jayshree's files are still the old set:** v3 export (no product FAQs, no `seller_id`) and an MCAT file of mostly construction MCATs (only the ironworkers match by id). A v5 export plus a generated MCAT file for their real ids (e.g. 25058 press brakes, 1669, 123956, 185336 shears, 182186 laser) would make those questions authoritative; until then the Knowledge mapping block shows them as **derived**.
 - Check the live bot asks the right questions per machine (press brake vs shear vs laser), and that categories with no ISQs (single-product ones like H Frame Hydraulic Press) behave well.
+- **Real-data figures from #24 (local run, Oct 18):** MCAT file ids used Exotica 67/67, Herbaveda 331/337, NI 200/205, Sewa 5/5, Unicorn 65/66; cards matched 23/25, 71/71, 53/53, 4/5, 14/14; FAQ sheet rows per seller 54/46/183/21/130; Exotica has 304 product FAQs. Buyer text such as "triply kadhai 24 cm chahiye" resolves to GSP Triply Cookware · Stainless Steel Kadhai (Construction, Diameter, Capacity).
 - Real SMS OTP (replace the demo check in `src/tools.ts`; stop sending `demo: true` from `/api/sellers/:slug`).
 - Run `npm run eval` (live-model scenarios) where an API key is available.
 - Large-catalogue answers (index/partial modes) are untested with the live model.

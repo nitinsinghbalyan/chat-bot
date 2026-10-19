@@ -48,7 +48,12 @@ Shorthand and internal language for the Seller assistants project.
 | Knowledge mapping | Admin report per seller: categories → MCATs → questions, MCAT file use, cards, FAQs, policy card, flags | `src/mapping.ts` |
 | spec_questions | Per-turn block with only the chat's machine's ISQs ("Machine: <category> · <MCAT>"), asked/next marked | `src/isqTracker.ts` |
 | chat id | Unique id per conversation; Langfuse session = `<seller>:<chatId>`; in transcript/leads `chat_id` | `Session.chatId` |
-| common FAQ | One Excel/CSV for all sellers on /admin/prompts; rows scoped by Category; searched per message into `<faq>` | `src/faq.ts` |
+| common FAQ / FAQ sheet | One Excel/CSV for all sellers on /admin/prompts (`Seller Name`, `gl_faq_question`, `gl_faq_answer`, optional Category); rows scoped by Seller (name, slug or glid) and Category; only the **first** sheet is read (the second tab of Nitin's sheet holds other vendors' keys: never paste or commit it); searched per message into `<faq>` | `src/faq.ts` |
+| product FAQs | `products[].faqs` in a v5 export; merged into the seller's FAQ index, hits shown as "(about <product>)"; price answers dropped | `KbView.faqs`, `FaqStore.forSeller` |
+| derived ISQs | Questions built from the products' own spec values when the MCAT file has no entry or none of its specs is on the seller's products; badge **derived** in Knowledge mapping | `deriveIsqs` in `src/sellerKb.ts` |
+| mapping.json | `GET /admin/sellers/<slug>/mapping.json`: the Knowledge mapping as JSON for audits (same data as the admin block) | `src/admin.ts` |
+| test lead / test chat | A lead or transcript made through the simulator API (`leads.test = 1`); hidden on Leads unless "Show test chats" is ticked | `src/db.ts`, `src/admin.ts` |
+| sensitive fields | v5 export fields the bot never sees: `price`, `delivery_time`, `payment_terms`, `production_capacity`, `packaging_details`, `port_of_dispatch`, `year_established`, `employees`, `member_since`, `gst_verified`, `trustseal_url`, `ratings` (the website still shows prices) | `src/sellerKb.ts` |
 | Test Langfuse | /admin button: server version → keys → upload a test trace → is it stored; the failing step names the cause | `runConnectionTest` in `src/tracing.ts` |
 | langfuse.intermesh.net | The self-hosted Langfuse production traces go to | `LANGFUSE_BASE_URL` on Render |
 | tracing status | `off` / `ok` / `auth_failed` / `unreachable` from the startup key check; on `/health` and `/admin` | `src/tracing.ts` `resolveLangfuse` |
@@ -90,6 +95,12 @@ Shorthand and internal language for the Seller assistants project.
 | Name | Meaning |
 |------|---------|
 | Seller assistants | The whole platform (this repo, `nitinsinghbalyan/chat-bot`) |
-| Jayshree | Jayshree Machinetools Private Limited, slug `jayshree-machinetools` |
+| Jayshree | Jayshree Machinetools Private Limited, slug `jayshree-machinetools` (first seller, repo seller, v3 export) |
 | KISHAN | Jayshree's machine brand |
+| Exotica / Exotica Steel | Exotica Steel (India): stainless-steel cookware and kitchenware (triply kadhai, army mugs…). v5 files received Oct 18; 304 product FAQs |
+| Herbaveda | Herbaveda Overseas: v5 files received Oct 18 (biggest MCAT file, 337 entries) |
+| NI / National Industries | National Industries: v5 files received Oct 18; 13 categories without questions and 8 MCAT ids missing from its file |
+| Sewa | Sewa Enterprises: v5 files received Oct 18 (small: 5 MCATs) |
+| Unicorn | Unicorn Equipment: v5 files received Oct 18 |
+| NIVA, Maxi | Other vendors' bots in the AI Assistant Auditor; not ours. Their keys sit in the FAQ sheet's second tab: never use or copy them |
 | jayshree-chatbot | The Render service name (`jayshree-chatbot.onrender.com`) |

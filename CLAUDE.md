@@ -43,7 +43,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 |------|------|
 | **Seller assistants** | This platform: bot, websites, admin. memory/projects/seller-assistants.md |
 | **Jayshree** | First seller, `jayshree-machinetools`. memory/projects/jayshree-machinetools.md |
-| **More sellers** | 5+ coming, added by uploading their JSON on `/admin` |
+| **More sellers** | Exotica Steel, Herbaveda Overseas, National Industries (NI), Sewa Enterprises, Unicorn Equipment: v5 files received Oct 18, added by uploading them on `/admin`. memory/glossary.md |
 
 ## Hard rules (product decisions)
 - **The bot never states, confirms or estimates a price**; it says the seller's team confirms prices. The **website still shows** listed starting prices.

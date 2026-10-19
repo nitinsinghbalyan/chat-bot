@@ -9,6 +9,7 @@
 | cheerio | Crawler HTML parsing |
 | minisearch | Catalogue search (BM25-ish) |
 | zod v4 | Config, seller.json and KB JSON validation (use `z.looseObject`; `ZodSafeParseResult`) |
+| read-excel-file | The common FAQ sheet (first sheet only) |
 | vitest, tsx | Tests, scripts and dev |
 | Render | Hosting: Blueprint `render.yaml`, auto-deploy `main`, disk `/var/data` |
 | GitHub MCP tools | PRs and merges (no `gh` CLI in cloud sessions) |
@@ -24,7 +25,7 @@
 |---------|------|
 | `npm test` | All unit and HTTP tests (fixture sellers `alpha-presses`, `beta-pumps`; fixture KB `tests/fixtures/kb/alpha-kb.json`) |
 | `npm run build` / `npx tsc --noEmit -p .` | Type-check and build |
-| `npm run kb:check` | Validate repo KB folders |
+| `npm run kb:check` | Validate repo KB folders and print each seller's Knowledge mapping (main MCAT, others, questions, flags) |
 | `npm run crawl -- <slug> [--runtime]` | Crawl a seller |
 | `npm run eval` | Live-model scenarios (needs an API key; costs money) |
 | `npm run dev` | Local server, port 3000 |
@@ -35,7 +36,9 @@ Don't call them `CLAUDE_*`: the harness sets `CLAUDE_EFFORT`, which once clashed
 
 ## Data on the Render disk (`/var/data`)
 - `chatbot.db`: sessions, transcript, leads, guardrail_events, seller_prompts (personas), platform_prompts (common prompts), prompt_versions (history of both).
+- `chatbot.db` also holds `bot_keys` (simulator keys, sha256) and `leads.test`.
 - `sellers/<slug>/catalogue.json`: runtime crawl.
+- `sellers/<slug>/files/`: the extra files (policy card .md, MCAT specs, product cards). The FAQ sheet lives beside the common prompts.
 - `sellers/<slug>/seller_kb.json`: uploaded KB JSON.
 - Admin-added sellers: `sellers/<slug>/seller.json` + `seller_kb.json`.
 
@@ -50,7 +53,8 @@ Don't call them `CLAUDE_*`: the harness sets `CLAUDE_EFFORT`, which once clashed
 - The scratchpad is per session: the e2e helpers (`e2e/server.ts`, `e2e/flow.ts`, `e2e/fake-langfuse.mjs`, Playwright scripts) have to be recreated in a new session.
 - `npm view <package> readme` works through the proxy; use it (and the installed `.d.ts` files) to check a library's current API before coding.
 - Fake models must handle the merged turn: after `show_options` the turn ends, so the next user message holds the `tool_result` blocks **and** the buyer's text. Treat a user message as a tool round only when it has no text block.
-- ISQ checks on real exports: a tsx `.mts` script (top-level await needs `.mts`) that loads each seller with `SellerRegistry.addSeller` + `setSellerFile` for the three files and prints `s.mapping` (or `npm run kb:check` with the data on the disk). Nitin's zip of 5 sellers' v5 files lived in `/tmp/claude-0/v4/` for #24; it holds GST/bank data, never commit it.
+- ISQ checks on real exports: a tsx `.mts` script (top-level await needs `.mts`) that loads each seller with `SellerRegistry.addSeller` + `setSellerFile` for the three files and prints `s.mapping` (or `npm run kb:check` with the data on the disk). Nitin's zip of 5 sellers' v5 files lived in `/tmp/claude-0/v4/` for #24; it holds GST/bank data, never commit it. Files Nitin attaches in chat land under `/root/.claude/uploads/<session>/`; unzip them into an empty scratch directory and keep scripts elsewhere.
+- Simulator API checks: `POST /admin/sellers/<slug>/keys` (same-origin form post, Basic auth) shows the key once; then `curl -H "X-Bot-Key: sa_live_…" -H "Content-Type: application/json" -d '{"sessionId":"auditor-run-001","message":"hi"}' /api/v1/bots/<slug>/chat`. The reply holds `sessionId`, `reply`, `chips`, `cards`, `summary`, `askFor`, `leadStage`, `traceId`, `test`. Field names and errors: `docs/SIMULATOR_API.md`.
 - Chat flow checks: `e2e/flow.ts` in the scratchpad is a stateful fake model that walks machine → mobile → OTP → name → ISQ chips (recreate it if the scratchpad is gone).
 - cloud.langfuse.com is blocked by the agent proxy too, so real trace delivery can only be checked on production.
 - Trace session checks: record the stand-in Langfuse's OTLP bodies and count `"key":"session.id"` and `"key":"langfuse.session.id"` per span; both should hold one `<seller>:<uuid>` per conversation.
