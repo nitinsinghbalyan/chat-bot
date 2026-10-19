@@ -20,6 +20,8 @@
 - **System part:** a practical, concise machine-tool sales engineer. Mentions the KISHAN brand and the range, warm and brief greetings, matches the buyer's language (English, Hindi, Hinglish, Gujarati). Starts from the buyer's job: material, maximum sheet thickness, working length.
 - **User part:** once the mobile number and name are captured, ask the specification questions in `<spec_questions>` (the server picks them for the buyer's machine), one at a time with the options as buttons; share media with `share_media`; prices only via the team; keep replies short. (Changed Oct 16 from "ask material, thickness and length", which clashed with per-machine questions.)
 
+Since #27 the common prompt, tools and summary card say "product" (the platform serves herb and cookware sellers too); Jayshree's persona still says "machine", which is fine as it layers on top.
+
 ## Spec questions (ISQs)
 - Since #24 questions are planned per **MCAT within a category** (`taxonomy.glmcat_ids`): the buyer's product's MCAT, else the category's main one. Press brake MCATs are 25058 (CNC PRESS BRAKE, Cnc Press Brake Machine, Cnc Hydraulic Press Brake, CNC), 1669 (hydraulic Press Brake Machine, METAL SHEET BENDING MACHINE, Press Brake) and 123956 (Hydraulic Press Brake, NC PRESS BRAKE). Shears are 185336 and 148563, laser 182186.
 - The MCAT file uploaded earlier is mostly construction MCATs, so only the ironworker categories (85047, 117370, 150508) get MCAT questions; the others show as **derived** in the Knowledge mapping block (e.g. CNC press brakes: Automation Grade, Capacity, Control Axis, Max Sheet Width; laser: Laser Power, Cutting Material, Automation Level, Cooling Type). A generated MCAT file for the ids above would fix that.

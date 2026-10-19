@@ -20,6 +20,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 | **KB** | A seller's knowledge base. **Uploaded JSON** (preferred) or the KB folder files |
 | **KB JSON / export / master JSON** | Seller export v5.0 (3.0 still loads): `seller` (with `seller_id`), `company_pages`, `photo_gallery`, `categories`, `products` (each with `taxonomy.glmcat_ids` = its MCAT, and `faqs`) |
 | **ISQ** | Item Specification Question: asked one per message, options shown as chips. Per **MCAT within a category** (the buyer's product's MCAT, else the category's main one): the MCAT file's specs that the seller's products carry, seller's options first; else derived. Server picks category + MCAT per turn (`<spec_questions>`) |
+| **completion guard** | `save_lead` with `complete: true` shows the summary only when the product is known and all its plan's questions were asked or answered; else the tool result names the next question (`notComplete` in `src/tools.ts`) |
 | **chips** | Tap-to-reply buttons in the chat (`show_options` tool) |
 | **cards / carousel** | Product, photo, video and PDF cards in the chat (`share_media` tool) |
 | **persona** | A seller's brand persona: system part + user (per-turn) part |

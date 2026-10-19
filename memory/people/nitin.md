@@ -27,6 +27,7 @@
 - Shares seller files as a zip attached in chat when asked (Oct 18: five sellers' v5 files). They hold GST and bank data: keep them local, never commit.
 - Runs chat-turn simulations in IndiaMART's AI Assistant Auditor against his bots; wants our bots reachable there as their own vendor with per-seller keys.
 - Says "update project memory folder" after a milestone: refresh `memory/` + CLAUDE.md, ship it as its own small PR.
+- Reports bot behaviour from his own test chats in one line ("assumed I wanted hing and shared summary instantly") and often re-pastes the original requirement with it. Reproduce it on that seller's real files first (the zip in `/tmp/claude-0/v4/` while it lasts), fix the cause server-side rather than with prompt wording, and tell him the build id to look for.
 - Reports what he can't find in plain words ("not seeing the option to create key"). A control buried at the bottom of Manage counts as missing: put the thing he needs on the seller row itself, and give him a way to confirm the deploy is live (build id in the admin footer).
 
 ## Notes
