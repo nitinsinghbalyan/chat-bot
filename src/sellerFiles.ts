@@ -4,8 +4,9 @@
  * - business_card.md: the seller's policy card as Markdown (Business, Dispatch, GST, Packaging, Must
  *   escalate…), kept as handling rules with amounts and terms removed, added to the BUSINESS CARD.
  * - mcat_specifications.json: IndiaMART MCAT specifications, `[{mcat_id, mcat_name, specifications:
- *   [{name, options}]}]`, generated for the seller's MCAT ids. A category's questions are the specs
- *   of the buyer's product's MCAT that the seller's products carry (see KbView.isqPlan).
+ *   [{name, options, type?}]}]`, generated for the seller's MCAT ids (`type`, when present, is the
+ *   ISQ type: key, config or regular). The seller's own specs are asked first, then the MCAT's
+ *   specs the seller doesn't carry (see KbView.isqPlan).
  * - product_cards.json: product cards in the KB folder format, added to the PRODUCT CARDS.
  *
  * All three are optional and stored in DATA_DIR/sellers/<slug>/files/.
@@ -172,21 +173,33 @@ export function parseBusinessCardMd(raw: string): ParseResult<BusinessCardMd> {
 export interface McatSpec {
   id: string;
   name: string;
-  specs: Array<{ name: string; options: string[] }>;
+  /** In the file's order (IndiaMART lists an MCAT's specs by importance); `type` when the file marks the ISQ type. */
+  specs: Array<{ name: string; options: string[]; type?: "key" | "config" | "regular" }>;
 }
 
-const SPEC_NOT_ASKED = /country\s+of\s+origin|brand|make|model|item\s*code|^size$|finance|loan|emi\b|warranty|usage\/application|^usage$|^application$/i;
+/** Identity and money rows are never questions; everything else in the file is a real ISQ (usage, size, warranty, origin included). */
+const SPEC_NOT_ASKED = /brand|^make$|model|item\s*code|finance|loan|emi\b/i;
 const PRICE_KEY = /price|rate|cost|mrp|discount/i;
+/** The most specs kept per MCAT (a conversation asks at most 8). */
+const MAX_FILE_SPECS = 8;
 
 const text = z.unknown().transform((v) => (v == null || typeof v === "object" ? "" : String(v).trim()));
 const mcatSchema = z.looseObject({
   mcat_id: text.optional(),
   mcat_name: text,
   specifications: z
-    .array(z.looseObject({ name: text, options: z.array(z.unknown()).nullish() }))
+    .array(z.looseObject({ name: text, options: z.array(z.unknown()).nullish(), type: text.optional(), isq_type: text.optional(), spec_type: text.optional() }))
     .nullish()
     .transform((v) => v ?? []),
 });
+/** The ISQ type a file row marks, under any of the usual field names and spellings. */
+function specType(s: { type?: string; isq_type?: string; spec_type?: string }): McatSpec["specs"][number]["type"] | undefined {
+  const t = (s.type || s.isq_type || s.spec_type || "").toLowerCase();
+  if (/key|primary/.test(t)) return "key";
+  if (/config/.test(t)) return "config";
+  if (/regular|normal|secondary/.test(t)) return "regular";
+  return undefined;
+}
 const mcatFileSchema = z.union([z.array(z.unknown()), z.looseObject({ mcats: z.array(z.unknown()) }).transform((o) => o.mcats)]);
 
 export function parseMcatSpecs(json: unknown): ParseResult<McatSpec[]> {
@@ -215,10 +228,11 @@ export function parseMcatSpecs(json: unknown): ParseResult<McatSpec[]> {
         .map((o) => (o == null || typeof o === "object" ? "" : String(o).trim()))
         .filter((o) => o && o.length <= 60 && !seen.has(o.toLowerCase()) && seen.add(o.toLowerCase()))
         .slice(0, 8);
-      if (options.length >= 2) specs.push({ name: s.name, options });
+      const type = specType(s);
+      if (options.length >= 2) specs.push({ name: s.name, options, ...(type ? { type } : {}) });
       else droppedSpecs++;
     }
-    out.push({ id: r.data.mcat_id ?? "", name: r.data.mcat_name, specs: specs.slice(0, 6) });
+    out.push({ id: r.data.mcat_id ?? "", name: r.data.mcat_name, specs: specs.slice(0, MAX_FILE_SPECS) });
   });
   if (!out.length) return { ok: false, errors: ["No MCATs with a name were found."] };
   if (skipped > 5) warnings.push(`…and ${skipped - 5} more MCATs skipped.`);

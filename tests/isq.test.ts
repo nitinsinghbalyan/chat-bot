@@ -84,24 +84,25 @@ describe("ISQs per category and MCAT", () => {
       { mcat_id: 2, mcat_name: "Machine", specifications: [{ name: "Colour", options: ["Red", "Blue"] }] },
     ]);
 
-  it("with the MCAT file: the MCAT's specs the products carry first (seller's options first), then the products' own, then the MCAT's standard ones", () => {
+  it("with the MCAT file: the seller's own specs first (seller's values, then the MCAT's other options), then the MCAT's specs the seller doesn't carry", () => {
     const m = file();
     if (!m.ok) throw new Error("parse");
     const v = new KbView(kb(), { mcats: m.value });
     const [a, b, shears] = v.kb.categories;
-    // By MCAT id 25058: Capacity and Control Axis are on the products (their values lead the options);
-    // Bending Length is on no product, so it comes last as the MCAT's standard question.
+    // By MCAT id 25058: Capacity and Control Axis are the seller's own specs (their values lead the options, the MCAT's
+    // other options follow); Bending Length is on no product, so it comes last as the MCAT's standard question.
     expect(v.isqPlan(a)).toMatchObject({ source: "mcat", mcat: "CNC Press Brake", label: "CNC PRESS BRAKE · CNC Press Brake", mcatId: "25058", presentOn: 2 });
     expect(v.isqPlan(a).isqs.slice(0, 2)).toEqual([
       { question: "Capacity", options: ["100 Ton", "200 Ton", "300 Ton", "500 Ton"], from: "products" },
-      { question: "Control Axis", options: ["4 AXIS", "3 AXIS"], from: "products" },
+      { question: "Control Axis", options: ["4 AXIS", "5 AXIS", "3 AXIS"], from: "products" },
     ]);
     expect(v.isqPlan(a).isqs.at(-1)).toEqual({ question: "Bending Length", options: ["2500 mm", "3200 mm"], from: "mcat" });
     expect(v.isqPlan(a).isqs.length).toBeLessThanOrEqual(4);
-    // The same MCAT in another category is checked against that category's products.
+    // The same MCAT in another category is checked against that category's products: one product here, so its own values
+    // lead each MCAT spec it carries, even a value the MCAT doesn't list ("8 + 1 AXIS").
     expect(v.isqPlan(b).isqs.slice(0, 2)).toEqual([
       { question: "Capacity", options: ["500 Ton", "300 Ton", "100 Ton", "200 Ton"], from: "products" },
-      { question: "Control Axis", options: ["3 AXIS", "4 AXIS"], from: "products" },
+      { question: "Control Axis", options: ["8 + 1 AXIS", "3 AXIS", "4 AXIS"], from: "products" },
     ]);
     // No entry for 185336, but "Shearing Machines" equals "Shearing Machine"; "Max Shearing Thickness" covers "Shearing Thickness",
     // so the derived "Shearing Thickness" is not asked twice; the products' Automation Grade and the MCAT's Blade Length follow.
@@ -130,7 +131,17 @@ describe("ISQs per category and MCAT", () => {
     const c = v.kb.categories[0];
     expect(v.mcatsOf(c).map((x) => [x.id, x.products])).toEqual([["25058", 2], ["999", 1]]);
     expect(v.isqPlan(c).mcat).toBe("CNC Press Brake");
-    expect(v.isqPlan(c, "999")).toMatchObject({ mcat: "H Frame Hydraulic Press", isqs: [{ question: "Frame Type", options: ["H Frame", "C Frame"] }, { question: "Capacity", options: ["50 Ton", "100 Ton"] }] });
+    // The H-frame press's MCAT: the seller's values are compared across the whole category (all three presses). The MCAT's
+    // own specs lead (Capacity on all three, Frame Type on the H-frame press with the seller's H Frame first), then the
+    // seller-only Control Axis.
+    expect(v.isqPlan(c, "999")).toMatchObject({
+      mcat: "H Frame Hydraulic Press",
+      isqs: [
+        { question: "Capacity", options: ["100 Ton", "200 Ton", "50 Ton"], from: "products" },
+        { question: "Frame Type", options: ["H Frame", "C Frame"], from: "products" },
+        { question: "Control Axis", options: ["4 AXIS", "5 AXIS"], from: "derived" },
+      ],
+    });
     expect(v.isqPlan(c, "777").mcat).toBe("CNC Press Brake");
     // A product MCAT with nothing to ask falls back to the category's main MCAT rather than asking nothing.
     data.products.push({ ...data.products[0], product_id: "7", product_url: "https://seller.example/7.html", name: "Odd Press", taxonomy: { category_name: "", glmcat_ids: ",555,", glcat_ids: "" }, specifications: [] });

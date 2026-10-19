@@ -155,18 +155,17 @@ flowchart LR
   PM --> F{MCAT file has<br/>that id?}
   MM --> F
   F -->|no| N{Entry with an<br/>equal name?}
-  F -->|yes| S[1. On products: its specs that this<br/>seller's products in that MCAT carry]
+  F -->|yes| S[1. The seller's own specs: attributes whose<br/>values differ across the category's products,<br/>seller's values as options; MCAT options added<br/>where the name matches an MCAT spec]
   N -->|yes| S
-  N -->|no| D
-  S --> D[2. Derived from those<br/>products' own spec values]
-  D --> T[3. MCAT standard: the entry's<br/>remaining specs]
-  T --> Q[Up to 4 questions,<br/>no repeats across layers]
+  N -->|no| S
+  S --> T[2. The MCAT's specs the<br/>seller doesn't carry]
+  T --> Q[Up to 8 questions, by ISQ type when the file<br/>marks it, else by product coverage then file order;<br/>no repeats]
   Q -->|none and not the main MCAT| MM
 ```
 
-- **On products** (`fileSpecs`): an MCAT spec counts as carried when a product of that MCAT has a spec of the same name (`specNamesMatch`: equal once normalised, or one name's words all in the other, so "Size/Diameter" covers "Diameter"), or when one of the spec's options appears among the products' spec values or names. Options: all of the MCAT's (max 6), the ones matching a product value first ("22 Gauge" before "18 Gauge" when the seller only makes 22).
-- **Derived** (`deriveIsqs`): attributes whose values differ across the MCAT's products; brand, model, usage and machine type skipped, spellings merged, bare numbers dropped, attribute on ≥25% of the products.
-- **MCAT standard:** the entry's specs no product lists, with the file's options; brand, model and item code never. Each question carries its layer (`Isq.from`), shown as a badge in the Knowledge mapping block. On the five real exports this gives 3 to 4 questions per category on average; the file-only rule gave 1 to 2.
+- **The seller's own specs** (`orderedSpecs`, `specStats`): every attribute whose values differ across the category's products (a product may sit in several categories; each plans on its own), on at least 15% of them; brand, model, codes, usage and machine type skipped, spellings merged, bare numbers and long labels dropped. An attribute that matches an MCAT spec by name (`specNamesMatch`: equal once normalised, or one name's words all in the other, so "Size/Diameter" covers "Diameter") takes the MCAT's name and type and offers the MCAT's remaining options after the seller's values (`from: "products"`); the rest are `"derived"`. An MCAT spec with no such attribute but an option found among the products' values or names is also carried.
+- **The MCAT's remaining specs** (`from: "mcat"`): the file's specs no product carries, with the file's options; brand, model, item code and finance rows never (`parseMcatSpecs` keeps up to 8 specs per MCAT and an optional `type`).
+- **Order:** ISQ type key → config → regular when the file marks it; otherwise the first group puts MCAT-listed specs before seller-only attributes, each by how many products carry them, and the second follows file order. Up to 8 questions (`MAX_ISQS`), 6 options each. On the five real exports the mean per category is 4 to 8; the file-only rule gave 1 to 2.
 - **The server picks the product each turn** (`src/isqTracker.ts`): category **and MCAT** from, in order, the product or category page the buyer is on, the top catalogue match for the buyer's own words, or the product saved with the lead. A match from the buyer's words counts only when the message shares a distinctive word with it: a greeting or "price?" never picks a product (the search also skips prefix and fuzzy matching on words under 4 or 5 letters, so "hi" can't find "Hing"). It sends only that product's questions as `<spec_questions>` ("Product: <category> · <MCAT>"), marking which were asked and which comes next. An answer or a tapped chip never switches the product; naming another one does, and progress is kept when the questions stay the same.
 - **The server decides completion** (`notComplete` in `src/tools.ts`): `save_lead` with `complete: true` shows the summary card only when the product is known and every question of its plan was asked (buttons shown, `markAsked`) or answered (a `specs` label matching the question by name, `markAnswered`). Otherwise the lead is still saved and the tool result names the next question and its options, so the model asks it.
 - **Knowledge mapping report** (`src/mapping.ts`, Manage → Knowledge mapping, `/admin/sellers/:slug/mapping.json`): per category its main MCAT, other MCATs, question source and questions, with flags (MCAT id not in the file, no questions, derived); MCAT file entries used/unused/missing; product cards mapped to a category and MCAT (by product, category, MCAT name, containing name or a distinctive word) or unmatched; product FAQ counts; policy card sections kept.
