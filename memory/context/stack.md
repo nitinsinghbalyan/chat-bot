@@ -43,11 +43,13 @@ Don't call them `CLAUDE_*`: the harness sets `CLAUDE_EFFORT`, which once clashed
 - Admin-added sellers: `sellers/<slug>/seller.json` + `seller_kb.json`.
 
 ## Cloud session gotchas
-- The proxy blocks the seller sites, imimg.com and onrender.com, so production can't be checked. Tell Nitin what to check instead: the build id in the admin footer or `/health` `build.commit` says which commit is live (compare with the merge commit on `main`); Render's dashboard shows a failed deploy.
+- The proxy blocks the seller sites, imimg.com and onrender.com, so production can't be checked. Tell Nitin what to check instead: the build id in the Deployment card at the bottom of `/admin` or `/health` `build.commit` says which commit is live (compare with the merge commit on `main`); Render's dashboard shows a failed deploy.
 - No API key: test chat with a scripted fake client. A preview server script pattern is `createApp({ client: fakeClient, ... })` on a spare port.
 - Unset `ANTHROPIC_BASE_URL` when running the server or eval (`env -u ANTHROPIC_BASE_URL`).
 - Never `pkill -f` a pattern that appears in your own command line; it kills the shell.
 - Playwright is global: import `$(npm root -g)/playwright/index.mjs`, launch with `executablePath: "/opt/pw-browsers/chromium"`.
+- Chromium's own jump to a `#hash` runs after inline scripts and clears focus; focus the target after `load` (`setTimeout` 0), as `MENU_SCRIPT` does for `#keys`.
+- Admin screenshot pass: load Exotica's real files with `POST /admin/sellers` + the three file uploads, then shoot `/admin` and `/admin/sellers/<slug>` at 1280 / 1024 / 390 and one dark context; check `document.documentElement.scrollWidth > innerWidth` (page overflow) and `.stable` scrollWidth vs clientWidth (the table scrolls inside its card at 1024, not at 1280). Script pattern: scratchpad `e2e/redesign.mjs`.
 - Branch workflow: after a PR merges, `git fetch origin main && git checkout -B claude/practical-clarke-0tbalp origin/main`, then push with `--force-with-lease`. Always fetch first: local `origin/main` goes stale after a merge done through the GitHub tools.
 - Testing big imports: copy a real export in the scratchpad and multiply its products (new ids and URLs); never commit it. Post it to the local server's `POST /admin/sellers` with `{config: {slug, name, siteUrl, color}, kb}`.
 - The scratchpad is per session: the e2e helpers (`e2e/server.ts`, `e2e/flow.ts`, `e2e/fake-langfuse.mjs`, Playwright scripts) have to be recreated in a new session.

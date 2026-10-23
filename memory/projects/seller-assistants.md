@@ -22,7 +22,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | Area | Files |
 |------|-------|
 | HTTP: chat API (SSE), website routes | `src/app.ts` |
-| Admin pages (Basic auth, any username + `ADMIN_PASSWORD`, same-origin POSTs); seller rows = `sellerRow()` + `ROWS_SCRIPT` | `src/admin.ts`, `public/admin.css` |
+| Admin pages (Basic auth, any username + `ADMIN_PASSWORD`, same-origin POSTs); sellers list = `sellerListRow()` + `LIST_SCRIPT`; seller page = `sellerPage()` (summaryCard, kbCard, filesCard, mappingCard, catalogueCard, keysCard, personaCard, dangerCard) + `MENU_SCRIPT` + `DROPZONE_SCRIPT` | `src/admin.ts`, `public/admin.css` |
 | Seller registry, catalogue merge, admin sellers | `src/sellers.ts` |
 | KB JSON (v5/v3): lenient schema, repairs, guardrail filters, MCATs per category, ISQ plans, product FAQs, prompt text, catalogue entries | `src/sellerKb.ts` |
 | Extra files: policy card .md parser (sections kept, amounts stripped), MCAT specs and product cards loaders | `src/sellerFiles.ts` |
@@ -86,7 +86,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | JSON format = the seller export v3.0 (we adapted to it; no custom schema) | Nitin sent a sample export |
 | ISQs derived from category specs (the export has no question list) | Claude's design, accepted |
 | One common system prompt and guardrails for all sellers, editable in admin | Nitin (5+ sellers) |
-| Admin = seller rows UI (was cards): one compact row per seller, **Manage** expands its controls in place; public directory keeps cards | Nitin |
+| Admin = seller rows UI (was cards): one compact row per seller, **Manage** expands its controls in place; public directory keeps cards (superseded by #31) | Nitin |
 | Admin redesign (#31): teal design system from Nitin's mockups; the list is a table with search + status chips, each seller has its own page (`/admin/sellers/<slug>`) with cards and a **Manage ▾** menu; all admin pages restyled, layouts kept | Nitin's mockups; "Page + dropdown" and "restyle all pages" chosen by Nitin |
 | Add seller by uploading JSON | Nitin |
 | Lenient import: repair or skip bad records, warn; refuse only unusable files | After a production failure on a blank `category_id` |
@@ -127,6 +127,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | #29 | Layered spec questions (on products → derived → MCAT standard, up to 4): mean questions per category on the real exports 1.3–3.0 → 3.1–4.0; per-question origin badges in Knowledge mapping |
 | #30 | Refined mapping: seller's specs across the category's products first (MCAT options merged by name), then the MCAT's uncarried specs; ISQ type order when the file marks it; cap 8; products in several categories; MCAT file keeps usage/size/warranty/origin specs and up to 8 per MCAT. Means per category 4.2–7.6 |
 | #31 | Admin redesign to Nitin's mockups: teal tokens in `admin.css`, sellers table with search and status chips, seller page `/admin/sellers/<slug>` (summary + Manage ▾, Knowledge base, Extra files with Replace, Knowledge mapping, catalogue, Simulator API, persona, delete), build id in the Deployment card, old `?kb=`/`?crawl=`/`?added=` links redirect |
+| #32 | Project memory refresh after #31 |
 
 ## Open items / ideas
 - **Langfuse (self-hosted `langfuse.intermesh.net`):** after #16/#18, check that traces appear grouped by conversation. If not, **Test Langfuse** on /admin names the failing step (server version, upload refused, or accepted but not stored, which is for the intermesh Langfuse admins).
@@ -138,10 +139,9 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 - Large-catalogue answers (index/partial modes) are untested with the live model.
 - Check on production that seller photos (imimg.com) load; they can't be seen from cloud sessions.
 - The seller's own site rate-limits the Render crawler; low priority since the JSON covers the website.
+- Memory notes made right after a merge sit on the branch until the next PR; ship them as their own small PR when Nitin asks for a memory update.
 - **After #31 deploys** (build id starts `8bed6cf91f5d`, shown in the Deployment card on `/admin`): the admin has the new look; each seller opens at `/admin/sellers/<slug>`. Nitin may send screenshots of anything off (long seller names, many badges, mobile).
-- **After #30 deploys** (build id starts `22882de54445`): chats should ask up to 8 questions, the seller's own specs first; the Knowledge mapping block lists them per category with origin badges. If Nitin can get MCAT files with an ISQ `type` per spec (key/config/regular), re-upload them and the order follows the types without a code change. Watch for odd derived questions (e.g. "Asafoetida Benefits"): the fix is a drop pattern in `SPEC_NOT_ASKED` / `SPEC_NOT_A_QUESTION`.
-- **After #29 deploys** (build id starts `e5c650971837`): every category should show 3–4 questions in the Knowledge mapping block with origin badges, and chats should ask them all before the summary. Any category still at 0–1 questions has one product with few specs and an MCAT entry with ≤1 spec: fix the data (richer MCAT file or product specs), not the rule.
-- **After #27 deploys** (build id starts `c95cedb3c7c2`): re-run the Herbaveda chat that started with "Hi". Expected: mobile → OTP → name → "which product do you need?" → Hing's Physical Form chips → summary. If a bot still summarises early, the Langfuse trace shows the `save_lead` tool result ("not complete yet: still to ask …") and which turn ignored it.
+- **Spec questions on production** (#27, #29, #30 are all live): chats should ask up to 8 questions per product, the seller's own specs first, and never summarise early; the Knowledge mapping card lists them per category with origin badges. If a bot still summarises early, the Langfuse trace shows the `save_lead` tool result ("not complete yet: still to ask …") and which turn ignored it. A category at 0–1 questions has one product with few specs and an MCAT entry with ≤1 spec: fix the data, not the rule. Odd derived questions (e.g. "Asafoetida Benefits") are fixed with a drop pattern in `SPEC_NOT_ASKED` / `SPEC_NOT_A_QUESTION`. If Nitin can get MCAT files with an ISQ `type` per spec (key/config/regular), re-uploading them makes the order follow the types without a code change.
 - **Re-upload after #24:** on /admin, upload each seller's v5 JSON, MCAT file, policy card .md and product cards, and the FAQ sheet (its first sheet only; the 2nd sheet holds other vendors' keys and is ignored). Then read each seller's **Knowledge mapping** block: flags name categories with no questions, MCAT ids missing from the file, unmatched cards. Seen on the real files: NI has 13 categories with no questions and 8 MCAT ids missing from its file; "SS Triply Kadhai and Bowls" appears as an empty category in Herbaveda's and Unicorn's exports (an export quirk).
 - **Simulator:** Nitin generates a key per seller on /admin and the Auditor team adds a "Seller assistants" vendor (Base URL, bot slug, X-Bot-Key) per `docs/SIMULATOR_API.md`. Auditor code is not in this repo.
 - Ideas (not built): per-chat cost readout on the admin transcript page; a `persona.json` for each new seller; an About page from the export's `company_pages`.
