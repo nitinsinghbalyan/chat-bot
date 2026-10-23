@@ -12,7 +12,8 @@
     "test": "vitest run",
     "crawl": "tsx scripts/crawl.ts",
     "eval": "tsx scripts/eval.ts",
-    "kb:check": "tsx scripts/kb-check.ts"
+    "kb:check": "tsx scripts/kb-check.ts",
+    "retrieval:eval": "tsx scripts/retrieval-eval.ts"
   },
   "engines": {
     "node": "22.x"

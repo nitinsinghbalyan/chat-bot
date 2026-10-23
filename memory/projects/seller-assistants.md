@@ -92,6 +92,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | Lenient import: repair or skip bad records, warn; refuse only unusable files | After a production failure on a blank `category_id` |
 | Never commit raw seller exports | They contain GST, bank and turnover data |
 | Large KBs accepted: over ~300k characters, the system prompt keeps categories + ISQs + product index, details come per message via catalogue search | A 3.3M-character export was refused by the old 400k limit |
+| **No vector RAG for now** (Oct 23). The bot already retrieves per turn (lexical MiniSearch over the catalogue and FAQs; small sellers get the whole KB in the cached prompt). Measure first with `npm run retrieval:eval`, fix inside the current design in order (query cleanup, synonyms, tighter product pick, a `search_catalogue` tool), add embeddings as a hybrid only if need-description and Hinglish recall stay poor | Claude's assessment to "is this the best architecture, do we need a RAG?"; Nitin asked for the eval and baseline |
 
 ## History (PRs, all merged to main)
 | PR | What |
@@ -128,6 +129,33 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | #30 | Refined mapping: seller's specs across the category's products first (MCAT options merged by name), then the MCAT's uncarried specs; ISQ type order when the file marks it; cap 8; products in several categories; MCAT file keeps usage/size/warranty/origin specs and up to 8 per MCAT. Means per category 4.2–7.6 |
 | #31 | Admin redesign to Nitin's mockups: teal tokens in `admin.css`, sellers table with search and status chips, seller page `/admin/sellers/<slug>` (summary + Manage ▾, Knowledge base, Extra files with Replace, Knowledge mapping, catalogue, Simulator API, persona, delete), build id in the Deployment card, old `?kb=`/`?crawl=`/`?added=` links redirect |
 | #32 | Project memory refresh after #31 |
+| #33 | Retrieval eval: `scripts/retrieval-eval.ts` (`npm run retrieval:eval -- <dir>`) scores the catalogue search and the server's product pick on the sellers' own test cases; baseline below |
+
+## Retrieval baseline (Oct 23, #33)
+How well the per-turn retrieval works on real buyer text, measured with `npm run retrieval:eval` on the four sellers that have test material (`<Seller>/*_Bot_Test_Cases.csv` + `*_Scenarios.json` in Nitin's zip; Herbaveda has none). Each buyer input is run as the first message of a new chat through the same code as a chat turn: `Catalogue.search` then `updateCategory`. "Right" = the top hit is the scenario's focus product (same MCAT name, or its distinctive words in the hit's title, category or MCAT name). Re-run after any change to `src/catalogue.ts`, `src/isqTracker.ts` or the search fields, and compare.
+
+**Prompt modes today** (from `promptPlan()` on the real exports): National Industries 569 products → `index` (~35k prompt tokens), Herbaveda 526 → `index` (~23k), Unicorn 218 → `index` (~11k), Exotica 153 → `full` (~66k), Sewa 16 → `full` (~9k). Index-mode sellers depend on the per-turn search for product details; full-mode sellers have everything in the prompt and the search only drives the server's product pick.
+
+| Seller | Cases naming a product | Any hit | Top-1 right | Top-4 right | Server picked right | Picked wrong | No pick | Off-topic messages that still picked a product |
+|---|---|---|---|---|---|---|---|---|
+| Exotica Steel | 68 | 97% | 75% | 84% | 68% | 15% | 18% | 4 of 23 |
+| National Industries | 67 | 99% | 82% | 90% | 81% | 4% | 15% | 13 of 23 |
+| Sewa Enterprises | 66 | 91% | 64% | 73% | 55% | 17% | 29% | 7 of 27 |
+| Unicorn Equipment | 68 | 100% | 85% | 91% | 76% | 7% | 16% | 7 of 22 |
+| **All four** | **269** | **97%** | **77%** | **84%** | **70%** | **11%** | **19%** | **31 of 95** |
+
+By language (all four): English 126 cases, top-1 79%, picked right 75%, no pick 14%; Hinglish 143 cases, top-1 74%, picked right 66%, no pick 24%, and 6% with no hit at all (Sewa's Hinglish: 17% no hit).
+
+By scenario suite (all four): spec_deep_dive 96% top-1 (56 cases), lead_capture 91% (56), guardrail 80% (54), language_handling 76% (42), **product_discovery 33%** (48 cases: top-4 46%, picked right 23%, picked wrong 23%, no pick 54%). "Off-topic" above excludes the catalogue_boundary suite, where the buyer names a related product the seller may sell and a pick is often right (28 such picks).
+
+What it says:
+- **When the buyer names the product, retrieval works**: 91–96% top-1 on the suites that carry the lead flow, and the server picks it. The lead journey is not where the gap is.
+- **The gap is product discovery**: a need described without the product's name ("we knead dough and wash vegetables in bulk, need a big wide vessel", "papa ko lakwa hai, male caretaker") gets the right top hit a third of the time. Keyword search cannot do this. A full-mode seller's model still has the catalogue in its prompt; an index-mode seller's model gets no details for that turn. This is the case for a model-driven `search_catalogue` tool (the model rewrites the need into product words) and, if that is not enough, embeddings.
+- **Sewa's siblings get confused** (maid vs cook vs babysitter): every title shares "24 Hours … Service … Noida", so the numbers and shared words outrank the one distinctive word ("24 ghante ka cook chahiye" → "24 Hours Maid Service"). Query cleanup (drop numbers and filler, weight the MCAT name) and a Hinglish word list ("bachcha samhalne" → babysitting, "ghar ka kaam" → maid) are the cheap fixes.
+- **False picks on off-topic text**: a third of the clearly off-topic messages still set a product ("weather in Delhi" matched the category "Ride On Roller Manufacturer In Delhi Ncr"; "developer mode … bar bending machines" names a product). Consequence: that product's `<spec_questions>` go to the model and the lead carries a category; the completion guard still protects the summary. Tighten `updateCategory` so the shared word must come from the product title, not an SEO-style category name or a city.
+- **Label noise**: the focus product comes from the scenario, and a few refer to a later turn or are mislabelled ("Steel spoon chahiye" → Stainless Steel Mugs), so top-1 undercounts by a few points. Read the printed misses before acting on a single number.
+
+Next steps in order, each re-measured with the eval (target: top-1 85%+ overall, discovery 50%+, off-topic picks under 15%): query cleanup in `Catalogue.search`; per-seller synonym and transliteration list; tighter pick rule; `search_catalogue` tool; embeddings hybrid only if discovery is still poor after that.
 
 ## Open items / ideas
 - **Langfuse (self-hosted `langfuse.intermesh.net`):** after #16/#18, check that traces appear grouped by conversation. If not, **Test Langfuse** on /admin names the failing step (server version, upload refused, or accepted but not stored, which is for the intermesh Langfuse admins).
@@ -144,4 +172,5 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 - **Spec questions on production** (#27, #29, #30 are all live): chats should ask up to 8 questions per product, the seller's own specs first, and never summarise early; the Knowledge mapping card lists them per category with origin badges. If a bot still summarises early, the Langfuse trace shows the `save_lead` tool result ("not complete yet: still to ask …") and which turn ignored it. A category at 0–1 questions has one product with few specs and an MCAT entry with ≤1 spec: fix the data, not the rule. Odd derived questions (e.g. "Asafoetida Benefits") are fixed with a drop pattern in `SPEC_NOT_ASKED` / `SPEC_NOT_A_QUESTION`. If Nitin can get MCAT files with an ISQ `type` per spec (key/config/regular), re-uploading them makes the order follow the types without a code change.
 - **Re-upload after #24:** on /admin, upload each seller's v5 JSON, MCAT file, policy card .md and product cards, and the FAQ sheet (its first sheet only; the 2nd sheet holds other vendors' keys and is ignored). Then read each seller's **Knowledge mapping** block: flags name categories with no questions, MCAT ids missing from the file, unmatched cards. Seen on the real files: NI has 13 categories with no questions and 8 MCAT ids missing from its file; "SS Triply Kadhai and Bowls" appears as an empty category in Herbaveda's and Unicorn's exports (an export quirk).
 - **Simulator:** Nitin generates a key per seller on /admin and the Auditor team adds a "Seller assistants" vendor (Base URL, bot slug, X-Bot-Key) per `docs/SIMULATOR_API.md`. Auditor code is not in this repo.
+- **Retrieval:** the baseline above is the yardstick; the report JSON with every miss lives in the session scratchpad (`eval/retrieval-baseline.json`), not in git. Nitin's test cases and scenarios sit in the zip next to each seller's export.
 - Ideas (not built): per-chat cost readout on the admin transcript page; a `persona.json` for each new seller; an About page from the export's `company_pages`.

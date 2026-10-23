@@ -292,4 +292,5 @@ Files on the data disk:
 | Change the journey or style | `prompts/system.md` (it applies itself on deploy). |
 | Add a seller | Upload its KB JSON with **+ Add seller** on `/admin`, or commit a KB folder under `kb/sellers/<slug>/`. |
 | Tune ISQs | `isqPlan` / `presentSpecs` / `deriveIsqs` (`src/sellerKb.ts`); fix the MCAT file or product specs the mapping report flags. |
+| Change the catalogue search or the product pick | `Catalogue.search` (`src/catalogue.ts`), `updateCategory` (`src/isqTracker.ts`); then `npm run retrieval:eval` against the sellers' test cases and compare with the recorded baseline. |
 | Add a guardrail check | `OutputFilter` rules in `src/guardrails.ts`, plus the text in `prompts/guardrails.md`. |
