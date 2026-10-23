@@ -36,6 +36,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 | **sellers list / seller page** | `/admin` is a table of sellers (search + status chips); name or **Manage** opens `/admin/sellers/<slug>`, the seller's page with its cards and a **Manage ▾** menu |
 | **model** | `claude-sonnet-5-5`, effort low, 1M context; system prompt ~43k tokens (Jayshree), cached |
 | **demo OTP** | `12345`; no SMS gateway yet |
+| **retrieval eval** | `npm run retrieval:eval -- <dir>`: catalogue search + server product pick scored on the sellers' test cases (local zip, never committed). Baseline Oct 23: top-1 77%, product discovery 33%. Re-run after search or product-pick changes. memory/projects/seller-assistants.md |
 | **simulator API / bot key** | For the AI Assistant Auditor: per-seller `X-Bot-Key` from the seller page's Simulator API card (`#keys`); `POST /api/v1/bots/<slug>/chat` (JSON); leads saved as **test**, traces tagged `eval`. docs/SIMULATOR_API.md |
 → Full glossary: memory/glossary.md
 
@@ -55,7 +56,8 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 
 ## How we work
 - Develop on branch `claude/practical-clarke-0tbalp`, restarted from `origin/main` after each merge. Open a PR and **merge it to `main`**; Render then auto-deploys production.
-- Before a push: `npm test`, `npm run build`, `npm run kb:check`, plus a Chromium check for UI changes.
+- Before a push: `npm test`, `npm run build`, `npm run kb:check`, plus a Chromium check for UI changes and the retrieval eval for search or product-pick changes.
+- No vector RAG unless the retrieval eval shows the lexical search can't be fixed: the bot already retrieves per turn (catalogue + FAQ search) and small sellers have the whole KB in the cached prompt.
 - Bigger asks often come in plan mode: ask a few sharp questions, then build.
 - Make prompt changes yourself in `prompts/*.md` / `persona.json`: on deploy they replace older admin edits automatically (kept in Versions). Don't ask Nitin to click "Use the new built-in".
 - Reply in plain language with short summaries. Nitin checks production directly and sends screenshots of problems.

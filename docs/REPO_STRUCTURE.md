@@ -6,7 +6,7 @@ Each file and folder with its job. Line counts are approximate (October 2026). H
 chat-bot/
 ├── CLAUDE.md                  Hot-cache memory for Claude sessions: people, terms, hard rules, how we work
 ├── README.md                  Setup, run, deploy, admin guide and seller onboarding
-├── package.json               Scripts (dev, start, build, test, kb:check, crawl, eval) and dependencies
+├── package.json               Scripts (dev, start, build, test, kb:check, retrieval:eval, crawl, eval) and dependencies
 ├── package-lock.json          Locked dependency versions
 ├── tsconfig.json              TypeScript settings (Node 22 ESM, strict)
 ├── vitest.config.ts           Test runner settings
@@ -50,7 +50,8 @@ chat-bot/
 ├── scripts/
 │   ├── crawl.ts               CLI: crawl sellers' sitemaps into their catalogues
 │   ├── kb-check.ts            CLI (`npm run kb:check`): validate every kb/sellers folder without starting the server
-│   └── eval.ts          ~240  Live-model scenario checks per guardrail and journey step (needs ANTHROPIC_API_KEY)
+│   ├── eval.ts          ~240  Live-model scenario checks per guardrail and journey step (needs ANTHROPIC_API_KEY)
+│   └── retrieval-eval.ts ~280 CLI (`npm run retrieval:eval -- <dir>`): catalogue search + product pick scored on the sellers' test cases (no model calls)
 │
 ├── src/
 │   ├── server.ts         ~80  Entry point: config, DB, registry, tracing, crawl schedule, graceful shutdown (flushes traces)

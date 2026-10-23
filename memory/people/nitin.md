@@ -29,6 +29,7 @@
 - Sends UI designs as exported mockup pages (`Main.dc.html`, `SellerDetail.dc.html`) with "do these front end changes": build them as drawn (tokens, copy, layout), ask only about navigation choices (he chose a seller page + Manage ▾ dropdown, and restyling every admin page), and keep every existing control and route.
 - Says "update project memory folder" after a milestone: refresh `memory/` + CLAUDE.md, ship it as its own small PR.
 - Reports bot behaviour from his own test chats in one line ("assumed I wanted hing and shared summary instantly") and often re-pastes the original requirement with it. Reproduce it on that seller's real files first (the zip in `/tmp/claude-0/v4/` while it lasts), fix the cause server-side rather than with prompt wording, and tell him the build id to look for.
+- Asks architecture questions in one line ("Is this the best architecture for bots? Do we need to plan a RAG as well?"): answer with what the code does today, measured numbers, and a recommendation to measure before building; he then asks for the measurement ("Build the retrieval eval … Numbers go into memory as the baseline").
 - Reports what he can't find in plain words ("not seeing the option to create key"). A control buried at the bottom of Manage counts as missing: put the thing he needs on the seller row itself, and give him a way to confirm the deploy is live (build id in the Deployment card on /admin).
 
 ## Notes
