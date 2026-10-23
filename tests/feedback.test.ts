@@ -169,7 +169,8 @@ describe("tracing on", () => {
     const r = await fetch(`${s.base}/admin/tracing/test`, { method: "POST", headers: { ...auth, Origin: s.base }, redirect: "manual" });
     expect(r.status).toBe(303);
     const page = await (await fetch(`${s.base}/admin`, { headers: auth })).text();
-    expect(page).toContain("Langfuse tracing is on (langfuse.example.com, Langfuse 3.120.0)");
+    expect(page).toContain("Langfuse tracing is on");
+    expect(page).toContain("langfuse.example.com · Langfuse 3.120.0");
     expect(page).toContain("Test Langfuse");
     expect(page).toContain("hasn&#39;t stored it");
     expect(page).toContain("Not returned by the API after 20s (last answer HTTP 404)");

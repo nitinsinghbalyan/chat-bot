@@ -30,13 +30,13 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 | **large catalogue** | KB over ~300k chars: prompt keeps categories, ISQs and a product index; details come per message from catalogue search |
 | **prompt versions** | Every save/reset/restore of common prompts and personas, plus each shipped default, kept with View (diff) and Restore |
 | **traces** | Langfuse: one per buyer message; Session = one conversation `<seller>:<chatId>`; mobiles masked, OTPs never sent; per-chat cost = `chat_cost_usd` session score; off without `LANGFUSE_*` keys; status on `/health` + `/admin` |
-| **extra files** | Per seller (Manage): policy card .md (handling rules, amounts stripped), MCAT specs JSON (the ISQ source), product cards JSON; merged with the KB JSON |
-| **Knowledge mapping** | Manage block + `/admin/sellers/<slug>/mapping.json`: categories → MCATs → questions, MCAT file use, cards matched, FAQs, policy card, with flags. `src/mapping.ts` |
+| **extra files** | Per seller (seller page, Extra files card): policy card .md (handling rules, amounts stripped), MCAT specs JSON (the ISQ source), product cards JSON; merged with the KB JSON |
+| **Knowledge mapping** | Card on the seller page + `/admin/sellers/<slug>/mapping.json`: categories → MCATs → questions, MCAT file use, cards matched, FAQs, policy card, with flags. `src/mapping.ts` |
 | **common FAQ** | One Excel for all sellers (Question, Answer, optional Seller and Category) on /admin/prompts; merged with the seller's own product FAQs (v5 JSON); searched per message as `<faq>` |
-| **seller row / Manage** | `/admin` lists sellers as one-line rows; **Manage** expands the controls |
+| **sellers list / seller page** | `/admin` is a table of sellers (search + status chips); name or **Manage** opens `/admin/sellers/<slug>`, the seller's page with its cards and a **Manage ▾** menu |
 | **model** | `claude-sonnet-5-5`, effort low, 1M context; system prompt ~43k tokens (Jayshree), cached |
 | **demo OTP** | `12345`; no SMS gateway yet |
-| **simulator API / bot key** | For the AI Assistant Auditor: per-seller `X-Bot-Key` from /admin → Manage; `POST /api/v1/bots/<slug>/chat` (JSON); leads saved as **test**, traces tagged `eval`. docs/SIMULATOR_API.md |
+| **simulator API / bot key** | For the AI Assistant Auditor: per-seller `X-Bot-Key` from the seller page's Simulator API card (`#keys`); `POST /api/v1/bots/<slug>/chat` (JSON); leads saved as **test**, traces tagged `eval`. docs/SIMULATOR_API.md |
 → Full glossary: memory/glossary.md
 
 ## Projects

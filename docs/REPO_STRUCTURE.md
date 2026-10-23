@@ -44,7 +44,7 @@ chat-bot/
 ├── public/                    Static files served as-is
 │   ├── widget.js        ~650  Chat widget (bottom-right): SSE stream, chips, cards, OTP, summary card, one feedback vote
 │   ├── site.css         ~220  Styles for the generated seller websites and directory
-│   ├── admin.css        ~250  Styles for /admin
+│   ├── admin.css        ~400  Styles for /admin (teal design tokens, cards, sellers table, seller page, dark mode)
 │   └── demo.html              Local page to try the widget
 │
 ├── scripts/
@@ -80,7 +80,7 @@ chat-bot/
 │   ├── shareMedia.ts    ~175  Resolves share_media ids to cards from the KB JSON and catalogue
 │   │
 │   ├── tracing.ts       ~580  Langfuse (OTLP): one trace per buyer message, session <seller>:<chatId>, cost score, test button
-│   ├── admin.ts        ~1160  /admin pages: seller rows + Manage, uploads, crawls, personas, simulator keys, common prompts, FAQ, leads, versions
+│   ├── admin.ts        ~1410  /admin pages: sellers list, seller page (KB, extra files, mapping, catalogue, keys, persona), add seller, crawls, common prompts, FAQ, leads, versions
 │   └── site/
 │       ├── html.ts       ~60  Escaping helpers and safe URL checks
 │       └── pages.ts     ~635  Server-rendered directory (/) and seller websites (/s/<slug>/…)

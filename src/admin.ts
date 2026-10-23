@@ -66,57 +66,93 @@ export function ago(value: string | Date | null | undefined): string {
 
 type Nav = "sellers" | "leads" | "prompts" | "";
 
+/** Inline icons from the design, on a 16px grid, stroked with the text colour. */
+const ICONS = {
+  external: '<path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v8A1.5 1.5 0 0 0 3.5 14h8a1.5 1.5 0 0 0 1.5-1.5V10"/><path d="M9 2h5v5"/><path d="M14 2 7 9"/>',
+  chevron: '<path d="m4 6 4 4 4-4"/>',
+  right: '<path d="m6 4 4 4-4 4"/>',
+  search: '<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/>',
+  refresh: '<path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v4h-4"/>',
+  download: '<path d="M8 2v8"/><path d="m4.5 7 3.5 3.5L11.5 7"/><path d="M2.5 12v1A1.5 1.5 0 0 0 4 14.5h8a1.5 1.5 0 0 0 1.5-1.5v-1"/>',
+  plus: '<path d="M8 3v10"/><path d="M3 8h10"/>',
+  key: '<circle cx="5.5" cy="10.5" r="3"/><path d="m7.5 8.5 6-6"/><path d="m11.5 4 1.5 1.5"/><path d="m9.5 6 1.5 1.5"/>',
+  warning: '<path d="M8 2.5 2 13h12z"/><path d="M8 6.5v3"/><path d="M8 11.5h.01"/>',
+  info: '<circle cx="8" cy="8" r="6"/><path d="M8 7v4"/><path d="M8 5h.01"/>',
+} as const;
+const icon = (name: keyof typeof ICONS, size = 16) =>
+  `<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
+
+/** Breadcrumb: links, then the current page's name. */
+const crumbs = (...parts: Array<[string, string] | string>) =>
+  `<nav class="crumb" aria-label="Breadcrumb">${parts.map((p, i) => `${i ? icon("right", 14) : ""}${typeof p === "string" ? `<span>${esc(p)}</span>` : `<a href="${p[1]}">${esc(p[0])}</a>`}`).join("")}</nav>`;
+
 function shell(title: string, body: string, active: Nav = ""): string {
   const link = (key: Nav, href: string, label: string) => `<a href="${href}"${active === key ? ' aria-current="page"' : ""}>${label}</a>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><link rel="icon" href="data:,"><title>${esc(title)} · Admin</title><link rel="stylesheet" href="/admin.css"></head>
 <body>
-<header class="bar"><div class="wrap bar-row"><a class="logo" href="/admin">Seller assistants <span>Admin</span></a><nav aria-label="Admin">${link("sellers", "/admin", "Sellers")}${link("leads", "/admin/leads", "Leads")}${link("prompts", "/admin/prompts", "Common prompts")}<a href="/" target="_blank" rel="noopener">Public site ↗</a></nav></div></header>
+<header class="bar"><div class="wrap bar-row"><a class="logo" href="/admin">Seller assistants <span class="pill">Admin</span></a><nav aria-label="Primary">${link("sellers", "/admin", "Sellers")}${link("leads", "/admin/leads", "Leads")}${link("prompts", "/admin/prompts", "Common prompts")}</nav><a class="btn ghost small" href="/" target="_blank" rel="noopener">Public site ${icon("external", 14)}</a></div></header>
 <main class="wrap">${body}</main>
-<footer class="wrap build muted small">Build <code>${esc(BUILD_COMMIT)}</code> · running since ${esc(fmtIST(STARTED_AT))}. Keys for chat simulators: each seller row → <b>Simulator key</b>.</footer>
 </body></html>`;
 }
 
-/** The deployed commit (Render sets RENDER_GIT_COMMIT) and when this process started: shown in the admin footer and on /health, so a deploy can be confirmed. */
+/** The deployed commit (Render sets RENDER_GIT_COMMIT) and when this process started: shown on the Sellers page and on /health, so a deploy can be confirmed. */
 const BUILD_COMMIT = process.env.RENDER_GIT_COMMIT?.slice(0, 12) ?? "local";
 const STARTED_AT = new Date().toISOString();
 
-const badge = (text: string, tone: "ok" | "warn" | "err" | "info" | "" = "", title?: string) =>
-  `<span class="badge ${tone}"${title ? ` title="${esc(title)}"` : ""}>${esc(text)}</span>`;
+/** A status badge; `plain` leaves out the status dot (for counts such as "3 extra files"). */
+const badge = (text: string, tone: "ok" | "warn" | "err" | "info" | "" = "", title?: string, plain = false) =>
+  `<span class="badge ${tone}${plain ? " plain" : ""}"${title ? ` title="${esc(title)}"` : ""}>${esc(text)}</span>`;
 
 const plural = (n: number, word: string, pl = `${word}s`) => `${n.toLocaleString("en-IN")} ${n === 1 ? word : pl}`;
 
-/** Opens the seller row named in the URL (after an add, upload or crawl) and filters rows by name or slug. */
-const ROWS_SCRIPT = `<script>
+/** The Sellers page: filters the rows by the search box and the status chips. */
+const LIST_SCRIPT = `<script>
 (function () {
-  var q = new URLSearchParams(location.search);
-  var slug = q.get("added") || q.get("kb") || q.get("crawl") || (location.hash.indexOf("#seller-") === 0 ? location.hash.slice(8) : "");
-  var row = slug && document.getElementById("seller-" + slug);
-  if (row) { row.open = true; row.scrollIntoView({ block: "start" }); }
-  // "Simulator key" on a row (or a #keys-<slug> link): open the row and go to its Simulator API block.
-  function showKeys(s) {
-    var r = document.getElementById("seller-" + s), sec = document.getElementById("keys-" + s);
-    if (!r || !sec) return false;
-    r.open = true;
-    sec.scrollIntoView({ block: "start", behavior: "smooth" });
-    var input = sec.querySelector("input[name=label]");
-    if (input) input.focus({ preventScroll: true });
-    return true;
-  }
-  document.querySelectorAll("[data-keys]").forEach(function (a) {
-    a.addEventListener("click", function (e) { e.preventDefault(); if (showKeys(a.getAttribute("data-keys"))) history.replaceState(null, "", "#keys-" + a.getAttribute("data-keys")); });
-  });
-  if (location.hash.indexOf("#keys-") === 0) showKeys(location.hash.slice(6));
-  var f = document.getElementById("seller-filter");
-  if (!f) return;
-  f.addEventListener("input", function () {
-    var t = f.value.trim().toLowerCase(), shown = 0;
-    document.querySelectorAll(".srow").forEach(function (r) {
-      var hit = !t || r.getAttribute("data-search").indexOf(t) !== -1;
+  var f = document.getElementById("seller-filter"), chips = document.querySelectorAll(".chip[data-filter]"), rows = document.querySelectorAll(".srow");
+  var empty = document.querySelector(".empty-filter"), status = "all";
+  function apply() {
+    var t = f ? f.value.trim().toLowerCase() : "", shown = 0;
+    rows.forEach(function (r) {
+      var hit = (!t || r.getAttribute("data-search").indexOf(t) !== -1) &&
+        (status === "all" || (status === "crawl-failed" && r.getAttribute("data-crawl") === "failed") || (status === "crawl-partial" && r.getAttribute("data-crawl") === "partial") || (status === "no-persona" && r.getAttribute("data-persona") === "none"));
       r.hidden = !hit;
       if (hit) shown++;
     });
-    document.querySelector(".empty-filter").hidden = shown > 0;
+    if (empty) empty.hidden = shown > 0;
+  }
+  if (f) f.addEventListener("input", apply);
+  chips.forEach(function (c) {
+    c.addEventListener("click", function () {
+      status = c.getAttribute("data-filter");
+      chips.forEach(function (x) { x.setAttribute("aria-pressed", x === c ? "true" : "false"); });
+      apply();
+    });
   });
+})();
+</script>`;
+
+/** The seller page: the Manage menu, the Replace buttons (reveal a file's drop zone) and the #keys anchor. */
+const MENU_SCRIPT = `<script>
+(function () {
+  var menus = document.querySelectorAll("details.menu");
+  document.addEventListener("click", function (e) { menus.forEach(function (m) { if (!m.contains(e.target)) m.open = false; }); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") menus.forEach(function (m) { m.open = false; }); });
+  menus.forEach(function (m) { m.addEventListener("toggle", function () { if (m.open) menus.forEach(function (x) { if (x !== m) x.open = false; }); }); });
+  document.querySelectorAll("[data-replace]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var z = document.getElementById(b.getAttribute("data-replace"));
+      if (!z) return;
+      z.hidden = false;
+      z.scrollIntoView({ block: "center", behavior: "smooth" });
+      var input = z.querySelector("input[type=file]");
+      if (input) input.click();
+    });
+  });
+  if (location.hash === "#keys") {
+    // The browser's own jump to the anchor runs after this script and clears focus, so focus the label after load.
+    var focusLabel = function () { setTimeout(function () { var label = document.getElementById("key-label"); if (label) label.focus({ preventScroll: true }); }, 0); };
+    if (document.readyState === "complete") focusLabel(); else window.addEventListener("load", focusLabel);
+  }
 })();
 </script>`;
 
@@ -144,6 +180,11 @@ const DROPZONE_SCRIPT = `<script>
     out.textContent = text;
     list(out, items, itemsLabel);
   };
+  // After an upload: go to the zone's data-done page (a reload when it is this page).
+  function done(zone) {
+    var u = new URL(zone.getAttribute("data-done") || location.href, location.href);
+    if (u.pathname === location.pathname && u.search === location.search) { location.hash = u.hash; location.reload(); } else location.href = u.href;
+  }
   document.querySelectorAll(".dropzone").forEach(function (zone) {
     var input = zone.querySelector("input[type=file]");
     ["dragenter", "dragover"].forEach(function (t) { zone.addEventListener(t, function (e) { e.preventDefault(); zone.classList.add("drag"); }); });
@@ -170,10 +211,7 @@ const DROPZONE_SCRIPT = `<script>
       }).then(function (r) {
         if (r.ok) {
           adminShow(out, "ok", "✓ Uploaded: " + r.summary + ". Live from the next chat message.", r.warnings, "Notes");
-          setTimeout(function () {
-            var u = new URL(zone.getAttribute("data-done"), location.href);
-            if (u.pathname === location.pathname && u.search === location.search) { location.hash = u.hash; location.reload(); } else location.href = u.href;
-          }, r.warnings && r.warnings.length ? 6000 : 1800);
+          setTimeout(function () { done(zone); }, r.warnings && r.warnings.length ? 6000 : 1800);
         } else adminShow(out, "err", "Not uploaded. Fix these and try again:", r.errors);
       }).catch(function (err) { adminShow(out, "err", err.message); });
     });
@@ -192,7 +230,7 @@ const DROPZONE_SCRIPT = `<script>
         if (r.ok) {
           var fixed = fixCount(r.warnings), large = isLarge(r.warnings);
           adminShow(out, "ok", "✓ Uploaded: " + r.summary.products + " products, " + r.summary.categories + " categories, " + r.summary.images + " photos, " + r.summary.videos + " videos, " + r.summary.documents + " PDFs. Live from the next chat message." + (fixed ? " " + fixed + " record" + (fixed === 1 ? " was" : "s were") + " fixed or skipped: see Notes." : "") + (large ? " Large catalogue: see Notes." : ""), r.warnings, "Notes");
-          setTimeout(function () { location.href = "/admin?kb=" + encodeURIComponent(zone.getAttribute("data-slug")) + "#seller-" + zone.getAttribute("data-slug"); }, fixed || large ? 6000 : 1800);
+          setTimeout(function () { done(zone); }, fixed || large ? 6000 : 1800);
         } else adminShow(out, "err", "Not uploaded. Fix these and try again:", r.errors);
       }).catch(function (err) { adminShow(out, "err", err.message); });
     });
@@ -203,21 +241,30 @@ const DROPZONE_SCRIPT = `<script>
 /** The Langfuse panel on the dashboard: status, the latest upload, a Test Langfuse button and its last result. */
 function tracingNote(t: TracingStatus | undefined, canTest: boolean): string {
   if (!t) return "";
-  if (t.state === "off") return `<p class="muted small">Langfuse tracing is off: add LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY on Render to turn it on.</p>`;
+  if (t.state === "off") {
+    return `<div class="card strip-card tracing" id="tracing"><div class="tracing-text"><span class="dot"></span><b>Langfuse tracing is off</b><span class="muted">Add LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY on Render to turn it on.</span></div></div>`;
+  }
   const button = canTest
-    ? `<form class="inline" method="post" action="/admin/tracing/test"><button class="btn small" type="submit" onclick="this.disabled=true;this.textContent='Testing… (up to 30s)';this.form.submit()">Test Langfuse</button></form>`
+    ? `<form class="inline" method="post" action="/admin/tracing/test"><button class="btn outline small" type="submit" onclick="this.disabled=true;this.textContent='Testing… (up to 30s)';this.form.submit()">Test Langfuse</button></form>`
     : "";
   const uploads = t.lastExportAt
     ? `Last upload ${t.lastExportOk ? "OK" : "failed"} at ${esc(fmtIST(t.lastExportAt))} · ${t.exports} upload${t.exports === 1 ? "" : "s"}, ${t.spansExported.toLocaleString("en-IN")} span${t.spansExported === 1 ? "" : "s"}${t.exportErrors ? `, ${t.exportErrors} failed` : ""} since the last deploy.`
     : "No uploads since the last deploy yet (one is sent within a few seconds of a chat message).";
-  const where = `${esc(t.host ?? "")}${t.version ? `, Langfuse ${esc(t.version)}` : ""}`;
+  const where = `${esc(t.host ?? "")}${t.version ? ` · Langfuse ${esc(t.version)}` : ""}`;
   let head: string;
-  if (t.state === "auth_failed") head = `<div class="flash err"><b>Langfuse traces are not being recorded.</b> ${esc(t.message)}</div>`;
-  else if (t.exportErrors && !t.lastExportOk) head = `<div class="flash warn"><b>Trace uploads to Langfuse are failing</b> (${where}). Last error: ${esc(t.lastExportError ?? "unknown")}</div>`;
-  else if (t.state === "unreachable" || /no OpenTelemetry endpoint/.test(t.message)) head = `<div class="flash warn">${esc(t.message)}</div>`;
-  else head = "";
+  let tone: "ok" | "warn" | "err" = "ok";
+  if (t.state === "auth_failed") {
+    head = `<div class="flash err"><b>Langfuse traces are not being recorded.</b> ${esc(t.message)}</div>`;
+    tone = "err";
+  } else if (t.exportErrors && !t.lastExportOk) {
+    head = `<div class="flash warn"><b>Trace uploads to Langfuse are failing</b> (${where}). Last error: ${esc(t.lastExportError ?? "unknown")}</div>`;
+    tone = "warn";
+  } else if (t.state === "unreachable" || /no OpenTelemetry endpoint/.test(t.message)) {
+    head = `<div class="flash warn">${esc(t.message)}</div>`;
+    tone = "warn";
+  } else head = "";
   const test = t.lastTest ? testResult(t.lastTest) : "";
-  return `${head}<div class="tracing-note" id="tracing"><p class="muted small">Langfuse tracing is on (${where}). ${uploads}</p>${button}</div>${test}`;
+  return `${head}<div class="card strip-card tracing" id="tracing"><div class="tracing-text"><span class="dot ${tone}"></span><b>Langfuse tracing is on</b><span class="muted">${where}</span><span class="vr" aria-hidden="true"></span><span class="muted">${uploads}</span></div>${button}</div>${test}`;
 }
 
 function testResult(r: ConnectionTest): string {
@@ -293,19 +340,20 @@ export function mountAdmin(app: Express, d: AdminDeps) {
   const fileCount = (s: SellerContext) => Object.keys(s.files).length;
   const FILE_KEY: Record<SellerFileKind, keyof SellerContext["files"]> = { "business-card": "businessCard", mcat: "mcat", "product-cards": "productCards" };
 
-  /** The Extra files block: business card (.md), MCAT specifications and product cards, each optional. */
-  function extraFilesBlock(s: SellerContext): string {
+  /** The Extra files card: business card (.md), MCAT specifications and product cards, each optional, with Download / Replace / Remove. */
+  function filesCard(s: SellerContext): string {
     const slug = esc(s.config.slug);
     const hints: Record<SellerFileKind, string> = {
       "business-card": "The seller's policy card. Every section becomes a handling rule for the bot; GST numbers, bank, turnover, staff and ratings are left out and amounts, percentages and payment or delivery terms are removed.",
-      mcat: "Spec questions per MCAT, generated for this seller. The bot asks the specs of the buyer's product's MCAT that this seller's products carry; see Knowledge mapping below.",
+      mcat: "Spec questions per MCAT, generated for this seller. The bot asks the seller's own specs first, then the MCAT's specs the seller doesn't carry; see Knowledge mapping below.",
       "product-cards": s.uploaded ? "Added to the products from the knowledge base JSON." : "Replaces the KB folder's product_cards.json.",
     };
     const items = (Object.keys(SELLER_FILES) as SellerFileKind[]).map((kind) => {
       const meta = SELLER_FILES[kind];
       const f = s.files[FILE_KEY[kind]];
       const base = `/admin/sellers/${slug}/files/${kind}`;
-      const status = f ? `${esc(f.summary)} · uploaded ${esc(ago(f.uploadedAt))}` : "Not uploaded";
+      const format = meta.format === "json" ? "JSON" : "Markdown";
+      const status = f ? `${format} · ${esc(f.summary)} · uploaded ${esc(ago(f.uploadedAt))}` : "Not uploaded";
       let use = "";
       if (kind === "mcat" && f) {
         const u = s.mcatUse;
@@ -313,23 +361,32 @@ export function mountAdmin(app: Express, d: AdminDeps) {
           ? `Matches this seller: ${esc(u.matched.slice(0, 8).join(", "))}${u.matched.length > 8 ? ` and ${u.matched.length - 8} more` : ""}.${u.filled.length ? ` ISQs added to: ${esc(u.filled.slice(0, 8).join("; "))}${u.filled.length > 8 ? ` and ${u.filled.length - 8} more` : ""}.` : " Every matching category already has its own ISQs."}`
           : "No MCAT in the file matches what this seller deals in.";
       }
-      const notes = f?.warnings.length ? `<details class="notes"><summary>Notes</summary><ul>${f.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></details>` : "";
-      return `<div class="xfile">
-  <div class="row"><p><b>${esc(meta.label)}</b><br><span class="muted small">${status}</span></p>
-  <div class="btn-row">${f ? `<a class="btn small" href="${base}">Download</a><form class="inline" method="post" action="${base}/delete" onsubmit="return confirm('Remove this file? The bot stops using it from the next message.')"><button class="btn small" type="submit">Remove</button></form>` : ""}</div></div>
-  ${use ? `<p class="use">${use}</p>` : ""}<p class="hint">${hints[kind]}</p>${notes}
-  <div class="dropzone small" data-file-upload="${base}" data-format="${meta.format}" data-done="/admin?kb=${slug}#seller-${slug}">
+      const notes = f?.warnings.length ? `<details class="notes"><summary>${icon("right", 14)}<span>Notes</span></summary><ul>${f.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></details>` : "";
+      return `<article class="xfile" id="file-${kind}">
+  <div class="xfile-head">
+    <div class="xfile-title"><span class="kind" aria-hidden="true">${meta.format === "json" ? "JSON" : "MD"}</span><div><h3>${esc(meta.label)}</h3><span class="xfile-meta">${status}</span></div></div>
+    <div class="btn-row">${
+      f
+        ? `<a class="btn small" href="${base}">Download</a><button class="btn small" type="button" data-replace="dz-${kind}">Replace</button><form class="inline" method="post" action="${base}/delete" onsubmit="return confirm('Remove this file? The bot stops using it from the next message.')"><button class="btn ghost danger small" type="submit">Remove</button></form>`
+        : ""
+    }</div>
+  </div>
+  <p class="card-desc">${hints[kind]}</p>${use ? `<p class="use">${use}</p>` : ""}${notes}
+  <div class="dropzone" id="dz-${kind}"${f ? " hidden" : ""} data-file-upload="${base}" data-format="${meta.format}" data-done="/admin/sellers/${slug}?file=${kind}#file-${kind}">
     <input type="file" accept="${meta.accept}" aria-label="${f ? "Replace" : "Upload"} the ${esc(meta.label.toLowerCase())} for ${esc(s.config.name)}">
-    <div class="dz-text">Drop a file or <b>choose one</b> to ${f ? "replace" : "upload"}</div>
+    <div class="dz-text">Drop a file here or <b>choose one</b> to ${f ? "replace" : "upload"} the ${esc(meta.label.toLowerCase())}</div>
   </div>
   <div class="dz-result" aria-live="polite"></div>
-</div>`;
+</article>`;
     });
-    return `<section class="block files"><h3>Extra files <span class="muted small">(optional)</span></h3>${items.join("")}</section>`;
+    return `<section class="card files" id="files">
+  <div class="card-head"><div><h2>Extra files <span class="muted">(optional)</span></h2><p class="card-desc">Three uploads that shape how the bot handles this seller. Each one can be downloaded, replaced or removed.</p></div></div>
+  ${items.join("")}
+</section>`;
   }
 
-  /** Keys for the simulator API (docs/SIMULATOR_API.md): how to connect, the seller's keys, generate and revoke. */
-  function keysBlock(s: SellerContext, origin: string, keys: BotKey[]): string {
+  /** The Simulator API card (docs/SIMULATOR_API.md): how to connect, the seller's keys, generate and revoke. */
+  function keysCard(s: SellerContext, origin: string, keys: BotKey[]): string {
     const slug = esc(s.config.slug);
     const active = keys.filter((k) => !k.revokedAt);
     const tests = db.testLeadCount(s.config.slug);
@@ -340,24 +397,30 @@ export function mountAdmin(app: Express, d: AdminDeps) {
               `<li${k.revokedAt ? ' class="revoked"' : ""}><code>${esc(k.prefix)}…</code>${k.label ? ` <span>${esc(k.label)}</span>` : ""} <span class="muted small">created ${esc(ago(k.createdAt))}${k.revokedAt ? ` · revoked ${esc(ago(k.revokedAt))}` : k.lastUsedAt ? ` · last used ${esc(ago(k.lastUsedAt))}` : " · never used"}</span>${
                 k.revokedAt
                   ? ""
-                  : ` <form class="inline" method="post" action="/admin/sellers/${slug}/keys/${k.id}/revoke" onsubmit="return confirm('Revoke this key? Simulators using it stop working at once.')"><button class="btn small" type="submit">Revoke</button></form>`
+                  : ` <form class="inline" method="post" action="/admin/sellers/${slug}/keys/${k.id}/revoke" onsubmit="return confirm('Revoke this key? Simulators using it stop working at once.')"><button class="btn ghost danger small" type="submit">Revoke</button></form>`
               }</li>`,
           )
           .join("")}</ul>`
-      : '<p class="muted small">No keys yet.</p>';
-    return `<section class="block keys-block" id="keys-${slug}">
-  <h3>Simulator API <span class="muted small">(${plural(active.length, "active key")})</span></h3>
-  <p class="muted small">For chat simulators such as the AI Assistant Auditor: base URL <code>${esc(origin)}</code>, bot slug <code>${slug}</code>, header <code>X-Bot-Key</code>, chat endpoint <code>POST /api/v1/bots/${slug}/chat</code>. Simulated chats run the real journey; their leads are saved as test leads${tests ? ` (${tests} so far, on the <a href="/admin/leads?seller=${slug}&amp;test=1">Leads</a> page with Show test chats)` : ""}. <a href="https://github.com/nitinsinghbalyan/chat-bot/blob/main/docs/SIMULATOR_API.md" target="_blank" rel="noopener">API reference ↗</a></p>
+      : "";
+    return `<section class="card card-aside" id="keys">
+  <div class="card-head"><div><h2>Simulator API</h2></div>${badge(plural(active.length, "active key"), active.length ? "info" : "", undefined, true)}</div>
+  <p class="card-desc">For chat simulators such as the AI Assistant Auditor. Simulated chats run the real journey; their leads are saved as test leads${tests ? ` (<a href="/admin/leads?seller=${slug}&amp;test=1">${tests} so far</a>)` : ""}.</p>
+  <dl class="kv"><dt>Base URL</dt><dd><code>${esc(origin)}</code></dd><dt>Bot slug</dt><dd><code>${slug}</code></dd><dt>Header</dt><dd><code>X-Bot-Key</code></dd><dt>Endpoint</dt><dd><code>POST /api/v1/bots/${slug}/chat</code></dd></dl>
   ${list}
-  <form class="inline keygen" method="post" action="/admin/sellers/${slug}/keys"><input name="label" maxlength="60" placeholder="Label (optional), e.g. Auditor" aria-label="Key label"><button class="btn small primary" type="submit">Generate key</button></form>
+  <form class="keygen" method="post" action="/admin/sellers/${slug}/keys">
+    <label for="key-label">New key label <span class="muted">(optional)</span></label>
+    <input id="key-label" type="text" name="label" maxlength="60" placeholder="e.g. Auditor">
+    <button class="btn primary" type="submit">${icon("key")} Generate key</button>
+    <span class="small muted">${keys.length ? `${plural(keys.length, "key")} so far` : "No keys yet"}. <a href="https://github.com/nitinsinghbalyan/chat-bot/blob/main/docs/SIMULATOR_API.md" target="_blank" rel="noopener">API reference ↗</a></span>
+  </form>
 </section>`;
   }
 
-  /** The Knowledge mapping block: how the KB JSON, MCAT file, product cards, FAQs and policy card join up for this seller. */
-  function mappingBlock(s: SellerContext): string {
+  /** The Knowledge mapping card: how the KB JSON, MCAT file, product cards, FAQs and policy card join up for this seller. */
+  function mappingCard(s: SellerContext): string {
     const m = s.mapping;
     const slug = esc(s.config.slug);
-    if (!m) return `<section class="block"><h3>Knowledge mapping</h3><p class="muted small">Upload the knowledge base JSON to see how categories, MCATs, product cards and FAQs join up.</p></section>`;
+    if (!m) return `<section class="card" id="mapping"><div class="card-head"><div><h2>Knowledge mapping</h2><p class="card-desc">Upload the knowledge base JSON to see how categories, MCATs, product cards and FAQs join up.</p></div></div></section>`;
     const mcatName = (x: { id: string; name: string | null; products: number; inFile: boolean }) => `${x.name ? esc(x.name) : `MCAT ${esc(x.id)}`}${x.inFile ? "" : ' <span class="badge warn" title="Not in the MCAT file">missing</span>'} <span class="muted small">(${x.products})</span>`;
     const rows = m.categories
       .map(
@@ -370,8 +433,9 @@ export function mountAdmin(app: Express, d: AdminDeps) {
         }${c.flags.length ? `<div class="muted small">${c.flags.map(esc).join("; ")}</div>` : ""}</td></tr>`,
       )
       .join("");
+    const mapped = m.cards.filter((c) => c.how !== "none").length;
     const cardRows = m.cards.length
-      ? `<details class="notes"><summary>${plural(m.cards.length, "product card")}: ${m.cards.filter((c) => c.how !== "none").length} mapped</summary><ul>${m.cards
+      ? `<details class="notes"><summary>${icon("right", 14)}<span>${plural(m.cards.length, "product card")}: ${mapped} mapped</span></summary><ul>${m.cards
           .map((c) => `<li>${esc(c.name)} → ${c.how === "none" ? '<span class="badge warn">no match</span>' : `${esc(c.category ?? "no category")}${c.mcat ? ` · ${esc(c.mcat.name ?? `MCAT ${c.mcat.id}`)}` : ""} <span class="muted small">(by ${c.how})</span>`}</li>`)
           .join("")}</ul></details>`
       : "";
@@ -381,93 +445,198 @@ export function mountAdmin(app: Express, d: AdminDeps) {
       : "No MCAT file uploaded.";
     const faqLine = `FAQs: ${plural(m.faqs.product, "product FAQ")} in the KB JSON${m.faqs.productPriced ? ` (${m.faqs.productPriced} left out for stating a price)` : ""}.`;
     const cardLine = m.policyCard ? `Policy card: ${plural(m.policyCard.sections.length, "section")} kept (${esc(m.policyCard.sections.join(", "))})${m.policyCard.stripped ? `, ${m.policyCard.stripped} amounts or terms removed` : ""}.` : "No policy card uploaded.";
-    return `<section class="block mapping">
-  <h3>Knowledge mapping <span class="muted small">(${plural(m.categories.length, "category", "categories")} · ${m.flags.length ? `${plural(m.flags.length, "note")}` : "all mapped"})</span></h3>
-  <p class="muted small">Each category's main MCAT and the questions asked when only the category is known. When the buyer names a product, its own MCAT's questions are used instead. <a href="/admin/sellers/${slug}/mapping.json">mapping.json</a></p>
-  ${m.flags.length ? `<ul class="flags">${m.flags.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
-  <p class="muted small">${fileLine} ${faqLine} ${cardLine}${m.looseProducts ? ` ${plural(m.looseProducts, "product")} in no category.` : ""}</p>
-  <details class="notes"><summary>Categories, MCATs and questions</summary><div class="table-wrap"><table class="map"><thead><tr><th>Category</th><th>MCATs</th><th>Questions</th></tr></thead><tbody>${rows}</tbody></table></div></details>
-  ${cardRows}
+    const warnFlag = (f: string) => /not in the MCAT file|no spec questions|in no category|No MCAT specifications file/i.test(f);
+    const notes = m.flags.length
+      ? `<div class="stack"><span class="overline">Notes to check</span><ul class="notes flags-list">${m.flags.map((f) => `<li class="${warnFlag(f) ? "warn" : "info"}">${icon(warnFlag(f) ? "warning" : "info", 18)}<span>${esc(f)}</span></li>`).join("")}</ul></div>`
+      : "";
+    return `<section class="card mapping" id="mapping">
+  <div class="card-head"><div><h2>Knowledge mapping <span class="muted">${plural(m.categories.length, "category", "categories")} · ${m.flags.length ? `${plural(m.flags.length, "note")}` : "all mapped"}</span></h2><p class="card-desc">Each category's main MCAT and the questions asked when only the category is known. When the buyer names a product, its own MCAT's questions are used instead.</p></div><a class="btn ghost small" href="/admin/sellers/${slug}/mapping.json">mapping.json ${icon("external", 14)}</a></div>
+  <div class="tiles">
+    <div class="tile"><b class="tnum">${mf.uploaded ? mf.entries : "–"}</b><span>${mf.uploaded ? `MCAT entries, ${mf.usedById} used by products` : "no MCAT file uploaded"}</span></div>
+    <div class="tile"><b class="tnum">${m.faqs.product}</b><span>product FAQs in the KB JSON</span></div>
+    <div class="tile"><b class="tnum">${m.policyCard ? m.policyCard.sections.length : "–"}</b><span>${m.policyCard ? "policy-card sections kept" : "no policy card uploaded"}</span></div>
+    <div class="tile"><b class="tnum">${mapped} / ${m.cards.length}</b><span>product cards mapped</span></div>
+  </div>
+  ${notes}
+  <p class="small muted">${fileLine} ${faqLine} ${cardLine}${m.looseProducts ? ` ${plural(m.looseProducts, "product")} in no category.` : ""}</p>
+  <div class="stack">
+    <details class="notes"><summary>${icon("right", 14)}<span>Categories, MCATs and questions</span></summary><div class="table-wrap"><table class="map"><thead><tr><th>Category</th><th>MCATs</th><th>Questions</th></tr></thead><tbody>${rows}</tbody></table></div></details>
+    ${cardRows}
+  </div>
 </section>`;
   }
 
-  function sellerRow(s: SellerContext, leads: number, origin: string): string {
+  /** The numbers shown for a seller on the list row, the summary card and the stat strip. */
+  function sellerStats(s: SellerContext, leads: number) {
+    const u = s.uploaded;
+    const keys = db.listBotKeys(s.config.slug);
+    return {
+      leads,
+      products: s.catalogue.list("product").length,
+      categories: s.catalogue.list("category").length,
+      fromKb: u ? u.view.catalogueEntries().length : 0,
+      photos: u?.summary.images,
+      videos: u?.summary.videos,
+      pdfs: u?.summary.documents,
+      files: fileCount(s),
+      keys,
+      activeKeys: keys.filter((k) => !k.revokedAt).length,
+    };
+  }
+  const crawlKey = (s: SellerContext) => s.lastCrawl?.status ?? "none";
+  const personaKey = (p: ReturnType<typeof personaState>) => (p.label === "No persona" ? "none" : p.tone === "ok" ? "custom" : "default");
+  const sourceLabel = (s: SellerContext) => (s.source === "admin" ? "added in admin" : "KB folder in the repo");
+  const initialOf = (s: SellerContext) => esc(s.config.name.charAt(0).toUpperCase());
+
+  /** The badges shown on the list row and the seller page: knowledge base, crawl, persona, extra files, simulator keys. */
+  function sellerBadges(s: SellerContext, st: ReturnType<typeof sellerStats>, persona: ReturnType<typeof personaState>): string {
+    return `<div class="badges">${s.uploaded ? badge("JSON knowledge base", "ok") : badge("KB folder files", "info")}${crawlBadge(s)}${badge(persona.label, persona.tone)}${
+      st.files ? badge(plural(st.files, "extra file"), "", undefined, true) : ""
+    }${st.activeKeys ? badge(plural(st.activeKeys, "simulator key"), "", "Keys for the simulator API", true) : ""}</div>`;
+  }
+
+  /** One row of the sellers table. The name and Manage open the seller's page. */
+  function sellerListRow(s: SellerContext, leads: number): string {
     const slug = esc(s.config.slug);
     const u = s.uploaded;
     const persona = personaState(s);
-    const products = s.catalogue.list("product").length;
-    const categories = s.catalogue.list("category").length;
-    const fromKb = u ? u.view.catalogueEntries().length : 0;
-    const crawl = s.lastCrawl;
-    const keys = db.listBotKeys(s.config.slug);
-    const activeKeys = keys.filter((k) => !k.revokedAt).length;
-    const kbBlock = `<section class="block">
-  <h3>Knowledge base</h3>
-  <div class="row">
-    <p>${u ? `JSON uploaded ${esc(ago(u.uploadedAt))} <span class="muted small">(${esc(fmtIST(u.uploadedAt))})</span>` : `Using the KB folder files <span class="muted small">(${plural(s.fileKb.productCards.length, "product card")})</span>`}</p>
-    <div class="btn-row">${u ? `<a class="btn small" href="/admin/sellers/${slug}/kb.json">Download</a>` : ""}${
-      u && s.source === "repo"
-        ? `<form class="inline" method="post" action="/admin/sellers/${slug}/kb/delete" onsubmit="return confirm('Remove the uploaded knowledge base? The bot goes back to the KB folder files.')"><button class="btn small" type="submit">Remove</button></form>`
-        : ""
-    }</div>
+    const st = sellerStats(s, leads);
+    const [updated, sub, title] = u ? [ago(u.uploadedAt), "JSON upload", fmtIST(u.uploadedAt)] : s.crawledAt ? [ago(s.crawledAt), "Crawled", fmtIST(s.crawledAt)] : ["Not crawled", "", ""];
+    return `<div class="srow" id="seller-${slug}" data-search="${esc(`${s.config.name} ${s.config.slug}`.toLowerCase())}" data-crawl="${crawlKey(s)}" data-persona="${personaKey(persona)}">
+  <div class="who"><span class="avatar" aria-hidden="true">${initialOf(s)}</span><div class="who-text"><a href="/admin/sellers/${slug}">${esc(s.config.name)}</a><span class="small">${slug} · ${sourceLabel(s)}</span></div></div>
+  ${sellerBadges(s, st, persona)}
+  <a class="n" href="/admin/leads?seller=${slug}" data-label="Leads" title="Leads">${st.leads}</a>
+  <span class="n" data-label="Products">${st.products}</span>
+  <span class="n" data-label="Categories">${st.categories}</span>
+  <div class="upd"${title ? ` title="${esc(title)}"` : ""}><span>${esc(updated)}</span>${sub ? `<span class="muted-2 small">${sub}</span>` : ""}</div>
+  <div class="acts">
+    <a class="btn ghost small" href="/s/${slug}/" target="_blank" rel="noopener">View site ${icon("external", 14)}</a>
+    <a class="btn outline small" href="/admin/sellers/${slug}#keys" data-keys="${slug}" title="Keys for chat simulators (the simulator API)">Simulator key</a>
+    <a class="btn small" href="/admin/sellers/${slug}">Manage ${icon("chevron", 14)}</a>
   </div>
-  <div class="dropzone" data-upload="/admin/sellers/${slug}/kb" data-slug="${slug}">
+</div>`;
+  }
+
+  /** The Manage menu on the seller page. */
+  function manageMenu(s: SellerContext): string {
+    const slug = esc(s.config.slug);
+    const canCrawl = !!d.recrawl && sellers.crawlUrls(s).length > 0;
+    return `<details class="menu"><summary class="btn" aria-haspopup="menu">Manage ${icon("chevron", 14)}</summary><div class="menu-list" role="menu">
+${s.uploaded ? `<a role="menuitem" href="/admin/sellers/${slug}/kb.json">Download KB JSON</a>` : ""}
+<a role="menuitem" href="/admin/sellers/${slug}/prompts">Edit persona</a>
+<form method="post" action="/admin/sellers/${slug}/recrawl"><button role="menuitem" type="submit"${canCrawl ? "" : " disabled"}>Re-crawl</button></form>
+${s.source === "admin" ? `<form method="post" action="/admin/sellers/${slug}/delete" onsubmit="return confirm('Delete ${esc(s.config.name).replace(/'/g, "\\'")}? Its website and bot stop working. Leads and chats are kept.')"><button role="menuitem" class="danger" type="submit">Delete seller</button></form>` : ""}
+</div></details>`;
+  }
+
+  function summaryCard(s: SellerContext, st: ReturnType<typeof sellerStats>, persona: ReturnType<typeof personaState>): string {
+    const slug = esc(s.config.slug);
+    const canCrawl = !!d.recrawl && sellers.crawlUrls(s).length > 0;
+    const cell = (n: number | string | undefined, label: string, href?: string) =>
+      href ? `<a class="stat" href="${href}"><b class="tnum">${n ?? "–"}</b><span>${label}</span></a>` : `<div class="stat"><b class="tnum">${n ?? "–"}</b><span>${label}</span></div>`;
+    return `<section class="card summary" aria-label="Seller summary">
+  <div class="summary-top">
+    <div class="who"><span class="avatar lg" aria-hidden="true">${initialOf(s)}</span><div><div><h1>${esc(s.config.name)}</h1><span class="summary-meta">${slug} · ${sourceLabel(s)} · bot slug <code>${slug}</code></span></div>${sellerBadges(s, st, persona)}</div></div>
+    <div class="btn-row">
+      <a class="btn ghost" href="/s/${slug}/" target="_blank" rel="noopener">View site ${icon("external")}</a>
+      <form class="inline" method="post" action="/admin/sellers/${slug}/recrawl"><button class="btn outline" type="submit"${canCrawl ? "" : " disabled"}>${icon("refresh")} Re-crawl now</button></form>
+      ${manageMenu(s)}
+    </div>
+  </div>
+  <div class="statbar">${cell(st.leads, "Leads", `/admin/leads?seller=${slug}`)}${cell(st.products, "Products")}${cell(st.categories, "Categories")}${cell(st.photos, "Photos")}${cell(st.videos, "Videos")}${cell(st.pdfs, "PDFs")}</div>
+</section>`;
+  }
+
+  function kbCard(s: SellerContext): string {
+    const slug = esc(s.config.slug);
+    const u = s.uploaded;
+    return `<section class="card" id="kb">
+  <div class="card-head"><div><h2>Knowledge base</h2><p class="card-desc">The seller export JSON the bot answers from. Replace it to refresh products, categories and FAQs.</p></div>
+  <div class="btn-row">${u ? `<a class="btn outline small" href="/admin/sellers/${slug}/kb.json">${icon("download", 14)} Download</a>` : ""}${
+    u && s.source === "repo"
+      ? `<form class="inline" method="post" action="/admin/sellers/${slug}/kb/delete" onsubmit="return confirm('Remove the uploaded knowledge base? The bot goes back to the KB folder files.')"><button class="btn ghost danger small" type="submit">Remove</button></form>`
+      : ""
+  }</div></div>
+  <div class="strip">${u ? `<span class="dot ok"></span><b>JSON uploaded ${esc(ago(u.uploadedAt))}</b><span class="muted">${esc(fmtIST(u.uploadedAt))}</span>` : `<span class="dot"></span><b>Using the KB folder files</b><span class="muted">${plural(s.fileKb.productCards.length, "product card")}</span>`}</div>
+  <div class="dropzone" data-upload="/admin/sellers/${slug}/kb" data-slug="${slug}" data-done="/admin/sellers/${slug}?kb=1">
     <input type="file" accept=".json,application/json" aria-label="${u ? "Replace" : "Upload"} the knowledge base JSON for ${esc(s.config.name)}">
     <div class="dz-text">Drop a JSON file here or <b>choose a file</b> to ${u ? "replace" : "upload"} the knowledge base</div>
+    <span class="dz-sub">Seller export version 5.0 or 3.0</span>
   </div>
   <div class="dz-result" aria-live="polite"></div>
 </section>`;
-    const filesBlock = extraFilesBlock(s);
-    const catalogueBlock = `<section class="block">
-  <h3>Website catalogue</h3>
-  <div class="row">
-    <p>${plural(s.catalogue.size, "page")}${u ? ` <span class="muted small">· ${fromKb} from the JSON · ${s.crawled.length} crawled</span>` : ` <span class="muted small">· crawled ${esc(ago(s.crawledAt) || "never")}</span>`}</p>
-    <form class="inline" method="post" action="/admin/sellers/${slug}/recrawl"><button class="btn small" type="submit"${d.recrawl && sellers.crawlUrls(s).length ? "" : " disabled"}>Re-crawl now</button></form>
-  </div>
-  <p class="muted small">${crawl ? `Last crawl ${esc(fmtIST(crawl.at))}: ${esc(crawl.message)}` : s.crawledAt ? `Last good crawl ${esc(fmtIST(s.crawledAt))}. Crawls run on start and every 24 hours.` : "Not crawled yet. Crawls run on start and every 24 hours."}</p>
+  }
+
+  function catalogueCard(s: SellerContext, st: ReturnType<typeof sellerStats>): string {
+    const slug = esc(s.config.slug);
+    const c = s.lastCrawl;
+    const canCrawl = !!d.recrawl && sellers.crawlUrls(s).length > 0;
+    const tiles = s.uploaded
+      ? `<div class="tile"><b class="tnum">${s.catalogue.size}</b><span>pages in total</span></div><div class="tile"><b class="tnum">${st.fromKb}</b><span>from the JSON</span></div><div class="tile"><b class="tnum">${s.crawled.length}</b><span>crawled</span></div>`
+      : `<div class="tile"><b class="tnum">${s.catalogue.size}</b><span>pages in total</span></div><div class="tile"><b>${esc(ago(s.crawledAt) || "never")}</b><span>crawled</span></div>`;
+    const status = c
+      ? `<div class="callout ${c.status === "ok" ? "ok" : c.status === "partial" ? "warn" : "err"}"><span class="label">${c.status === "ok" ? "OK" : c.status === "partial" ? "Partial" : "Failed"}</span><div><b>Last crawl ${esc(fmtIST(c.at))}</b> — ${esc(c.message)}${c.status === "partial" ? `<br><span class="muted">The previous catalogue was kept, so the bot still answers from the fuller set.</span>` : ""}</div></div>`
+      : `<div class="strip"><span class="dot"></span><span>${s.crawledAt ? `Last good crawl ${esc(fmtIST(s.crawledAt))}.` : "Not crawled yet."} Crawls run on start and every 24 hours.</span></div>`;
+    return `<section class="card" id="catalogue">
+  <div class="card-head"><div><h2>Website catalogue</h2><p class="card-desc">Pages crawled from the seller's site to enrich the knowledge base.</p></div>
+  <form class="inline" method="post" action="/admin/sellers/${slug}/recrawl"><button class="btn outline small" type="submit"${canCrawl ? "" : " disabled"}>${icon("refresh", 14)} Re-crawl now</button></form></div>
+  <div class="tiles">${tiles}</div>
+  ${status}
 </section>`;
-    const personaBlock = `<section class="block">
-  <h3>Brand persona</h3>
-  <div class="row">
-    <p class="muted small">${persona.text ? esc(persona.text.length > 160 ? `${persona.text.slice(0, 160)}…` : persona.text) : "No brand persona yet: the bot uses the common prompt only."}</p>
-    <a class="btn small" href="/admin/sellers/${slug}/prompts">${persona.text ? "Edit" : "Set up"}</a>
-  </div>
+  }
+
+  function personaCard(s: SellerContext, persona: ReturnType<typeof personaState>): string {
+    const slug = esc(s.config.slug);
+    return `<section class="card card-aside" id="persona">
+  <div><h2>Brand persona</h2><p class="card-desc">${persona.text ? esc(persona.text.length > 160 ? `${persona.text.slice(0, 160)}…` : persona.text) : "No brand persona yet: the bot uses the common prompt only."}</p></div>
+  <a class="btn outline" href="/admin/sellers/${slug}/prompts">${persona.text ? "Edit persona" : "Set up persona"}</a>
 </section>`;
-    const updated = u ? `JSON ${ago(u.uploadedAt)}` : s.crawledAt ? `Crawled ${ago(s.crawledAt)}` : "Not crawled";
-    const updatedTitle = u ? fmtIST(u.uploadedAt) : s.crawledAt ? fmtIST(s.crawledAt) : "";
-    return `<details class="srow" id="seller-${slug}" data-search="${esc(`${s.config.name} ${s.config.slug}`.toLowerCase())}">
-  <summary>
-    <div class="seller"><span class="avatar" style="--c:${esc(s.config.color)}">${esc(s.config.name.charAt(0).toUpperCase())}</span><div class="who"><h2>${esc(s.config.name)}</h2><div class="muted small">${slug} · ${s.source === "admin" ? "added in admin" : "KB folder in the repo"}</div></div></div>
-    <div class="badges">${u ? badge("JSON knowledge base", "ok") : badge("KB folder files", "info")}${crawlBadge(s)}${badge(persona.label, persona.tone)}${fileCount(s) ? badge(`+${plural(fileCount(s), "file")}`, "info") : ""}${activeKeys ? badge(plural(activeKeys, "simulator key"), "info", "Keys for the simulator API") : ""}</div>
-    <div class="nums">
-      <a class="num" href="/admin/leads?seller=${slug}" title="Leads"><b>${leads}</b><span>Leads</span></a>
-      <span class="num"><b>${products}</b><span>Products</span></span>
-      <span class="num"><b>${categories}</b><span>Categories</span></span>
-    </div>
-    <span class="updated muted small"${updatedTitle ? ` title="${esc(updatedTitle)}"` : ""}>${esc(updated)}</span>
-    <div class="row-actions">
-      <a class="btn small" href="/s/${slug}/" target="_blank" rel="noopener">View site ↗</a>
-      <a class="btn small" href="#keys-${slug}" data-keys="${slug}" title="Keys for chat simulators (the simulator API)">Simulator key</a>
-      <span class="btn small manage" aria-hidden="true">Manage <span class="chev">▾</span></span>
-    </div>
-  </summary>
-  <div class="srow-body">
-    <div class="stats">
-      <a class="stat" href="/admin/leads?seller=${slug}"><b>${leads}</b><span>Leads</span></a>
-      <div class="stat"><b>${products}</b><span>Products</span></div>
-      <div class="stat"><b>${categories}</b><span>Categories</span></div>
-      <div class="stat"><b>${u?.summary.images ?? "–"}</b><span>Photos</span></div>
-      <div class="stat"><b>${u?.summary.videos ?? "–"}</b><span>Videos</span></div>
-      <div class="stat"><b>${u?.summary.documents ?? "–"}</b><span>PDFs</span></div>
-    </div>
-    <div class="blocks">${kbBlock}${keysBlock(s, origin, keys)}${filesBlock}${mappingBlock(s)}${catalogueBlock}${personaBlock}</div>
-    ${
-      s.source === "admin"
-        ? `<footer class="srow-foot"><form class="inline" method="post" action="/admin/sellers/${slug}/delete" onsubmit="return confirm('Delete ${esc(s.config.name).replace(/'/g, "\\'")}? Its website and bot stop working. Leads and chats are kept.')"><button class="btn danger small" type="submit">Delete seller</button></form></footer>`
-        : ""
+  }
+
+  function dangerCard(s: SellerContext): string {
+    if (s.source !== "admin") return "";
+    const slug = esc(s.config.slug);
+    return `<section class="card card-aside" id="remove">
+  <div><h2>Remove this seller</h2><p class="card-desc">Deletes the bot, its knowledge base, extra files and simulator keys. Leads are kept.</p></div>
+  <form method="post" action="/admin/sellers/${slug}/delete" onsubmit="return confirm('Delete ${esc(s.config.name).replace(/'/g, "\\'")}? Its website and bot stop working. Leads and chats are kept.')"><button class="btn danger" type="submit">Delete seller</button></form>
+</section>`;
+  }
+
+  /** The flash on the seller page after an add, upload, crawl, file change or key revoke. */
+  function sellerFlash(s: SellerContext, query: Request["query"]): string {
+    const q = (k: string) => (typeof query[k] === "string" ? String(query[k]) : "");
+    if (q("added")) return `<div class="flash ok">✓ ${esc(s.config.name)} was added. <a href="/s/${esc(s.config.slug)}/" target="_blank" rel="noopener">Open its website ↗</a></div>`;
+    if (q("kb")) return `<div class="flash ok">✓ The knowledge base was updated.</div>`;
+    if (q("crawl")) return `<div class="flash ok">Re-crawl started. It takes a few minutes; refresh this page to see the result.</div>`;
+    if (q("key") === "revoked") return `<div class="flash ok">✓ Key revoked.</div>`;
+    const kind = q("file");
+    if (kind && isSellerFileKind(kind)) {
+      const present = !!s.files[FILE_KEY[kind]];
+      return `<div class="flash ok">✓ ${esc(SELLER_FILES[kind].label)} ${present ? "updated" : "removed"}.</div>`;
     }
-  </div>
-</details>`;
+    return "";
+  }
+
+  /** One seller's page: summary, knowledge base, extra files, mapping and catalogue; keys, persona and delete in the side column. */
+  function sellerPage(s: SellerContext, req: Request): string {
+    const slug = esc(s.config.slug);
+    const counts = db.leadCounts();
+    const persona = personaState(s);
+    const st = sellerStats(s, counts[s.config.slug] ?? 0);
+    const origin = `${req.protocol}://${req.headers.host}`;
+    return shell(
+      s.config.name,
+      `${crumbs(["Sellers", "/admin"], s.config.name)}
+${sellerFlash(s, req.query)}
+${summaryCard(s, st, persona)}
+<div class="cols">
+  <div class="cols-main">${kbCard(s)}${filesCard(s)}${mappingCard(s)}${catalogueCard(s, st)}</div>
+  <aside class="cols-aside">${keysCard(s, origin, st.keys)}${personaCard(s, persona)}${dangerCard(s)}</aside>
+</div>
+<p class="note">Bot slug <code>${slug}</code> · website <a href="/s/${slug}/" target="_blank" rel="noopener">/s/${slug}/</a></p>
+${DROPZONE_SCRIPT}${MENU_SCRIPT}`,
+      "sellers",
+    );
   }
 
   app.get("/admin", requireAdmin, (req, res) => {
@@ -475,34 +644,45 @@ export function mountAdmin(app: Express, d: AdminDeps) {
     const list = sellers.list();
     const totalLeads = Object.values(counts).reduce((a, b) => a + b, 0);
     const q = (k: string) => (typeof req.query[k] === "string" ? String(req.query[k]) : "");
-    const flash = q("added")
-      ? `<div class="flash ok">✓ ${esc(sellers.get(q("added"))?.config.name ?? q("added"))} was added. <a href="/s/${esc(q("added"))}/" target="_blank" rel="noopener">Open its website ↗</a></div>`
-      : q("deleted")
-        ? `<div class="flash ok">✓ ${esc(q("deleted"))} was deleted. Its leads and chats are kept.</div>`
-        : q("kb")
-          ? `<div class="flash ok">✓ The knowledge base for ${esc(sellers.get(q("kb"))?.config.name ?? q("kb"))} was updated.</div>`
-          : q("crawl")
-            ? `<div class="flash ok">Re-crawl started for ${esc(sellers.get(q("crawl"))?.config.name ?? q("crawl"))}. It takes a few minutes; refresh this page to see the result.</div>`
-            : "";
+    // Older links land on the seller's own page now.
+    for (const k of ["added", "kb", "crawl"] as const) {
+      if (q(k) && sellers.get(q(k))) {
+        res.redirect(302, `/admin/sellers/${encodeURIComponent(q(k))}?${k}=1`);
+        return;
+      }
+    }
+    const flash = q("deleted") ? `<div class="flash ok">✓ ${esc(q("deleted"))} was deleted. Its leads and chats are kept.</div>` : "";
+    const by = (f: (s: SellerContext) => boolean) => list.filter(f).length;
+    const chip = (key: string, label: string, n: number, dot?: "err" | "warn" | "") =>
+      `<button type="button" class="chip" data-filter="${key}" aria-pressed="${key === "all" ? "true" : "false"}">${dot !== undefined ? `<span class="dot ${dot}" aria-hidden="true"></span>` : ""}<span>${label}</span><span class="n tnum">${n}</span></button>`;
+    const filters = `<div class="filters">
+  <label class="sr-only" for="seller-filter">Filter sellers by name or slug</label>
+  <div class="search">${icon("search", 20)}<input id="seller-filter" type="search" placeholder="Filter by name or slug"></div>
+  <div class="chips" role="group" aria-label="Filter by status">${chip("all", "All", list.length)}${chip("crawl-failed", "Crawl failed", by((s) => crawlKey(s) === "failed"), "err")}${chip("crawl-partial", "Crawl partial", by((s) => crawlKey(s) === "partial"), "warn")}${chip("no-persona", "No persona", by((s) => personaKey(personaState(s)) === "none"), "")}</div>
+</div>`;
+    const table = `<div class="stable"><div class="stable-inner">
+  <div class="stable-head" aria-hidden="true"><span>Seller</span><span>Status</span><span class="r">Leads</span><span class="r">Products</span><span class="r">Categories</span><span>Updated</span><span class="r">Actions</span></div>
+  ${list.map((s) => sellerListRow(s, counts[s.config.slug] ?? 0)).join("")}
+  <p class="empty-filter" hidden>No seller matches that filter.</p>
+</div></div>`;
+    const info = `<div class="info-cards">
+  <div class="card"><span class="overline">What the bot reads</span>
+    <p class="card-desc">The knowledge base JSON is the seller export (version 5.0 or 3.0): <code>seller</code> <code>company_pages</code> <code>photo_gallery</code> <code>categories</code> <code>products</code> with their <code>faqs</code>.</p>
+    <p class="card-desc">Prices, delivery and payment terms, turnover, staff numbers, year of establishment, GST, bank and rating details are never given to the bot. The website still shows listed starting prices.</p></div>
+  <div class="card"><span class="overline">Deployment</span>
+    <p class="card-desc">Build <code>${esc(BUILD_COMMIT)}</code> · running since ${esc(fmtIST(STARTED_AT))}</p>
+    <p class="card-desc">Keys for chat simulators: open a seller and use <b>Simulator key</b>. Simulated chats run the real journey; their leads are saved as test leads.</p></div>
+</div>`;
     res.send(
       shell(
         "Sellers",
-        `<div class="page-head"><div><h1>Sellers</h1><p class="muted">${plural(list.length, "seller")} · ${plural(totalLeads, "lead")}</p></div>
-<div class="btn-row"><a class="btn" href="/admin/kb-template.json">Download JSON template</a><a class="btn primary" href="/admin/sellers/new">+ Add seller</a></div></div>
+        `<div class="page-head"><div><h1>Sellers</h1><p>${plural(list.length, "seller")} · ${plural(totalLeads, "lead")} · one bot per seller, each with its own knowledge base</p></div>
+<div class="btn-row"><a class="btn ghost" href="/admin/kb-template.json">${icon("download")} Download JSON template</a><a class="btn primary" href="/admin/sellers/new">${icon("plus")} Add seller</a></div></div>
 ${flash}
 ${tracingNote(d.tracing, !!d.testTracing)}
-${
-  list.length
-    ? `${list.length > 3 ? `<input id="seller-filter" class="filter" type="search" placeholder="Filter sellers by name or slug" aria-label="Filter sellers">` : ""}
-<div class="srows">
-  <div class="srows-head" aria-hidden="true"><span>Seller</span><span>Status</span><span>Totals</span><span>Updated</span><span></span></div>
-  ${list.map((s) => sellerRow(s, counts[s.config.slug] ?? 0, `${req.protocol}://${req.headers.host}`)).join("")}
-</div>
-<p class="muted small empty-filter" hidden>No seller matches that filter.</p>`
-    : `<div class="panel empty">No sellers yet. <a href="/admin/sellers/new">Add the first one</a> by uploading its JSON.</div>`
-}
-<p class="note">The knowledge base JSON is the seller export (version 5.0, or 3.0: <code>seller</code>, <code>company_pages</code>, <code>photo_gallery</code>, <code>categories</code>, <code>products</code> with their <code>faqs</code>). Prices, delivery and payment terms, turnover, staff numbers, year of establishment, GST, bank and rating details in it are never given to the bot. The website still shows listed starting prices.</p>
-${DROPZONE_SCRIPT}${ROWS_SCRIPT}`,
+${list.length ? `${filters}\n${table}` : `<div class="card empty">No sellers yet. <a href="/admin/sellers/new">Add the first one</a> by uploading its JSON.</div>`}
+${info}
+${LIST_SCRIPT}`,
         "sellers",
       ),
     );
@@ -515,7 +695,7 @@ ${DROPZONE_SCRIPT}${ROWS_SCRIPT}`,
     res.send(
       shell(
         "Add seller",
-        `<div class="crumb"><a href="/admin">← Sellers</a></div>
+        `${crumbs(["Sellers", "/admin"], "Add a seller")}
 <div class="page-head"><div><h1>Add a seller</h1><p class="muted">Upload the seller's knowledge base JSON. Their website, chat assistant and lead capture go live straight away; no deploy needed.</p></div></div>
 <form class="panel" id="add-seller" novalidate>
   <div class="field">
@@ -527,7 +707,7 @@ ${DROPZONE_SCRIPT}${ROWS_SCRIPT}`,
     <div class="dz-result" id="add-file" aria-live="polite"></div>
     <span class="hint">Format: the seller export, version 3.0. <a href="/admin/kb-template.json">Download a template</a>.</span>
   </div>
-  <fieldset id="details" disabled style="border:0;padding:0;margin:0">
+  <fieldset id="details" class="fieldset-plain" disabled>
     <div class="field"><label>2. Check the details</label><span class="hint">Filled in from the file; change anything you need.</span></div>
     <div class="grid-2">
       <div class="field"><label for="name">Display name</label><input type="text" id="name" required maxlength="120"></div>
@@ -594,7 +774,7 @@ ${DROPZONE_SCRIPT}
       .then(function (res) { return res.json().catch(function () { return { ok: false, errors: ["Failed (HTTP " + res.status + ")"] }; }); })
       .then(function (r) {
         if (r.ok) {
-          var fixed = fixCount(r.warnings), go = function () { location.href = "/admin?added=" + encodeURIComponent(r.slug) + "#seller-" + r.slug; };
+          var fixed = fixCount(r.warnings), go = function () { location.href = "/admin/sellers/" + encodeURIComponent(r.slug) + "?added=1"; };
           var large = isLarge(r.warnings);
           if (!fixed && !large) return go();
           adminShow(out, "ok", "✓ Added." + (fixed ? " " + fixed + " record" + (fixed === 1 ? " was" : "s were") + " fixed or skipped (see Notes)." : "") + (large ? " Large catalogue (see Notes)." : "") + " Opening the sellers page…", r.warnings, "Notes");
@@ -610,6 +790,13 @@ ${DROPZONE_SCRIPT}
         "sellers",
       ),
     );
+  });
+
+  // One seller's page (after /admin/sellers/new, which this pattern would otherwise swallow).
+  app.get("/admin/sellers/:seller", requireAdmin, (req, res) => {
+    const s = sellerParam(req);
+    if (!s) return void notFound(res);
+    res.send(sellerPage(s, req));
   });
 
   app.post("/admin/tracing/test", requireAdmin, sameOriginPost, async (_req, res) => {
@@ -688,7 +875,7 @@ ${DROPZONE_SCRIPT}
     if (!s || !kind) return void notFound(res);
     fs.rmSync(path.join(s.filesDir, SELLER_FILES[kind].file), { force: true });
     sellers.setSellerFile(s.config.slug, kind, null);
-    res.redirect(303, `/admin?kb=${encodeURIComponent(s.config.slug)}#seller-${encodeURIComponent(s.config.slug)}`);
+    res.redirect(303, `/admin/sellers/${encodeURIComponent(s.config.slug)}?file=${kind}#file-${kind}`);
   });
 
   // ---- Common FAQ (Excel or CSV) ----
@@ -809,15 +996,15 @@ ${preview}
     }
     fs.rmSync(seller.uploadedKbFile, { force: true });
     sellers.setUploadedKb(seller.config.slug, null);
-    res.redirect(303, `/admin?kb=${encodeURIComponent(seller.config.slug)}#seller-${encodeURIComponent(seller.config.slug)}`);
+    res.redirect(303, `/admin/sellers/${encodeURIComponent(seller.config.slug)}?kb=1`);
   });
 
   app.post("/admin/sellers/:seller/recrawl", requireAdmin, sameOriginPost, (req, res) => {
     const seller = sellerParam(req);
     if (!seller || !d.recrawl) return void notFound(res);
-    // Crawling takes minutes; run it in the background and show the result on /admin.
+    // Crawling takes minutes; run it in the background and show the result on the seller's page.
     void d.recrawl(seller);
-    res.redirect(303, `/admin?crawl=${encodeURIComponent(seller.config.slug)}#seller-${encodeURIComponent(seller.config.slug)}`);
+    res.redirect(303, `/admin/sellers/${encodeURIComponent(seller.config.slug)}?crawl=1`);
   });
 
   // ---- Brand persona prompts (per seller) ----
@@ -978,7 +1165,7 @@ ${isActive ? "" : `<form method="post" action="/admin/prompts/versions/${v.id}/r
     const hasDefault = seller.defaultPersona.system || seller.defaultPersona.user;
     return shell(
       `Brand persona: ${seller.config.name}`,
-      `<div class="crumb"><a href="/admin#seller-${slug}">← Sellers</a></div>
+      `${crumbs(["Sellers", "/admin"], [seller.config.name, `/admin/sellers/${slug}`], "Brand persona")}
 <div class="page-head"><div><h1>Brand persona</h1><p class="muted">${esc(seller.config.name)} · added on top of the <a href="/admin/prompts">common system prompt and guardrails</a>, which always win if anything conflicts.</p></div>
 <a class="btn" href="/s/${slug}/" target="_blank" rel="noopener">View site ↗</a></div>
 ${opts.saved ? '<div class="flash ok">✓ Saved. New chat turns use these prompts straight away.</div>' : ""}
@@ -1117,12 +1304,12 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
     res.send(
       shell(
         "New simulator key",
-        `<div class="crumb"><a href="/admin#seller-${slug}">← Sellers</a></div><div class="page-head"><div><h1>New simulator key</h1><p class="muted">${esc(s.config.name)}${label ? ` · ${esc(label)}` : ""}</p></div></div>
-<div class="panel newkey">
+        `${crumbs(["Sellers", "/admin"], [s.config.name, `/admin/sellers/${slug}#keys`], "New simulator key")}<div class="page-head"><div><h1>New simulator key</h1><p class="muted">${esc(s.config.name)}${label ? ` · ${esc(label)}` : ""}</p></div></div>
+<div class="card newkey">
   <p><b>Copy this key now.</b> It is shown only once; if you lose it, revoke it and generate another.</p>
   <div class="keybox"><code id="newkey">${esc(key)}</code><button class="btn small" type="button" onclick="navigator.clipboard.writeText(document.getElementById('newkey').textContent).then(()=>{this.textContent='Copied'})">Copy</button></div>
-  <table class="kv"><tr><th>Base URL</th><td><code>${esc(`${req.protocol}://${req.headers.host}`)}</code></td></tr><tr><th>Bot slug</th><td><code>${slug}</code></td></tr><tr><th>Header</th><td><code>X-Bot-Key: ${esc(key)}</code></td></tr><tr><th>Chat endpoint</th><td><code>POST /api/v1/bots/${slug}/chat</code></td></tr></table>
-  <p class="muted small">See docs/SIMULATOR_API.md in the repo for the request and reply format.</p>
+  <dl class="kv"><dt>Base URL</dt><dd><code>${esc(`${req.protocol}://${req.headers.host}`)}</code></dd><dt>Bot slug</dt><dd><code>${slug}</code></dd><dt>Header</dt><dd><code>X-Bot-Key: ${esc(key)}</code></dd><dt>Endpoint</dt><dd><code>POST /api/v1/bots/${slug}/chat</code></dd></dl>
+  <p class="muted small">See docs/SIMULATOR_API.md in the repo for the request and reply format. <a href="/admin/sellers/${slug}#keys">Back to ${esc(s.config.name)}</a></p>
 </div>`,
         "sellers",
       ),
@@ -1133,7 +1320,7 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
     const s = sellers.get(String(req.params.seller));
     if (!s) return notFound(res);
     db.revokeBotKey(s.config.slug, Number(req.params.id));
-    res.redirect(303, `/admin#seller-${encodeURIComponent(s.config.slug)}`);
+    res.redirect(303, `/admin/sellers/${encodeURIComponent(s.config.slug)}?key=revoked#keys`);
   });
 
   // ---- Leads and transcripts ----
