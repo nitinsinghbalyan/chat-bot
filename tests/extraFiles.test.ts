@@ -147,15 +147,20 @@ describe("admin: extra files and the common FAQ", () => {
     expect((await post(`/admin/sellers/${ALPHA}/files/business-card`, cardMd, "text/plain")).status).toBe(200);
     expect(fs.existsSync(path.join(dataDir, "sellers", ALPHA, "files", "mcat_specifications.json"))).toBe(true);
 
-    const page = await (await fetch(`${base}/admin`, { headers: auth })).text();
+    const list = await (await fetch(`${base}/admin`, { headers: auth })).text();
+    expect(list).toContain("2 extra files");
+    const page = await (await fetch(`${base}/admin/sellers/${ALPHA}`, { headers: auth })).text();
     expect(page).toContain("Extra files");
-    expect(page).toContain("+2 files");
+    expect(page).toContain('id="file-mcat"');
+    expect(page).toContain('data-replace="dz-mcat"');
     expect(page).toContain("Matches this seller: Press Brake. Every matching category already has its own ISQs.");
     const dl = await fetch(`${base}/admin/sellers/${ALPHA}/files/business-card`, { headers: auth });
     expect(dl.status).toBe(200);
     expect(await dl.text()).toBe(cardMd);
 
-    expect((await post(`/admin/sellers/${ALPHA}/files/business-card/delete`, "")).status).toBe(303);
+    const del = await post(`/admin/sellers/${ALPHA}/files/business-card/delete`, "");
+    expect(del.status).toBe(303);
+    expect(del.headers.get("location")).toBe(`/admin/sellers/${ALPHA}?file=business-card#file-business-card`);
     expect((await fetch(`${base}/admin/sellers/${ALPHA}/files/business-card`, { headers: auth })).status).toBe(404);
   });
 

@@ -10,7 +10,7 @@
 - Shares photos, videos, PDFs and related products as a carousel.
 - Handles large catalogues: over ~300k characters the system prompt keeps categories, ISQs and a product index; details come per message from the catalogue search.
 - Generates a full website per seller from the KB JSON (with crawled pages as a fallback).
-- Admin for the team: seller rows (Manage) with KB upload and **extra files** (policy card .md, MCAT specs, product cards), the **Knowledge mapping** block (categories → MCATs → questions, flags; also `/admin/sellers/<slug>/mapping.json`), **bot keys** for the simulator, add seller, crawls, personas, common prompts with **version history** (View diff, Restore) and the **common FAQ** Excel, leads (test chats hidden by default) and transcripts (each conversation linked to its Langfuse session).
+- Admin for the team: a sellers list and one page per seller (`/admin/sellers/<slug>`) with KB upload and **extra files** (policy card .md, MCAT specs, product cards), the **Knowledge mapping** card (categories → MCATs → questions, flags; also `/admin/sellers/<slug>/mapping.json`), **bot keys** for the simulator, add seller, crawls, personas, common prompts with **version history** (View diff, Restore) and the **common FAQ** Excel, leads (test chats hidden by default) and transcripts (each conversation linked to its Langfuse session).
 - Simulator API for the AI Assistant Auditor: `GET /api/v1/bots/<slug>` and `POST /api/v1/bots/<slug>/chat` with `X-Bot-Key`; one JSON reply per message, same chat turn as the widget (`docs/SIMULATOR_API.md`).
 - **Prompt updates apply themselves:** a deploy that changes `prompts/*.md` or a `persona.json` replaces an older admin edit of that part at startup (kept in Versions). Claude makes prompt changes in the repo; Nitin doesn't need to click anything.
 - Langfuse tracing (when keys are set): a trace per buyer message; **one Langfuse session per conversation** (`<seller>:<chatId>`, stamped under `session.id` and legacy `langfuse.session.id`); mobiles masked, OTPs never sent; scores plus 👍/👎 asked **once per chat, under the summary card**; **per-chat cost** as a `chat_cost_usd` session score (running total, replaced each message).
@@ -87,6 +87,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | ISQs derived from category specs (the export has no question list) | Claude's design, accepted |
 | One common system prompt and guardrails for all sellers, editable in admin | Nitin (5+ sellers) |
 | Admin = seller rows UI (was cards): one compact row per seller, **Manage** expands its controls in place; public directory keeps cards | Nitin |
+| Admin redesign (#31): teal design system from Nitin's mockups; the list is a table with search + status chips, each seller has its own page (`/admin/sellers/<slug>`) with cards and a **Manage ▾** menu; all admin pages restyled, layouts kept | Nitin's mockups; "Page + dropdown" and "restyle all pages" chosen by Nitin |
 | Add seller by uploading JSON | Nitin |
 | Lenient import: repair or skip bad records, warn; refuse only unusable files | After a production failure on a blank `category_id` |
 | Never commit raw seller exports | They contain GST, bank and turnover data |
@@ -125,6 +126,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | #28 | Project memory refresh after #26/#27 |
 | #29 | Layered spec questions (on products → derived → MCAT standard, up to 4): mean questions per category on the real exports 1.3–3.0 → 3.1–4.0; per-question origin badges in Knowledge mapping |
 | #30 | Refined mapping: seller's specs across the category's products first (MCAT options merged by name), then the MCAT's uncarried specs; ISQ type order when the file marks it; cap 8; products in several categories; MCAT file keeps usage/size/warranty/origin specs and up to 8 per MCAT. Means per category 4.2–7.6 |
+| #31 | Admin redesign to Nitin's mockups: teal tokens in `admin.css`, sellers table with search and status chips, seller page `/admin/sellers/<slug>` (summary + Manage ▾, Knowledge base, Extra files with Replace, Knowledge mapping, catalogue, Simulator API, persona, delete), build id in the Deployment card, old `?kb=`/`?crawl=`/`?added=` links redirect |
 
 ## Open items / ideas
 - **Langfuse (self-hosted `langfuse.intermesh.net`):** after #16/#18, check that traces appear grouped by conversation. If not, **Test Langfuse** on /admin names the failing step (server version, upload refused, or accepted but not stored, which is for the intermesh Langfuse admins).

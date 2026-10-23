@@ -156,20 +156,24 @@ describe("simulator API", () => {
     expect(JSON.stringify(db.listBotKeys(BETA))).not.toContain(key!);
 
     const admin = await (await fetch(`${base}/admin`, { headers: auth })).text();
-    expect(admin).toContain("Simulator API");
-    expect(admin).toContain(`${stored.prefix}…`);
     expect(admin).not.toContain(key!);
-    // The key option is reachable from the seller row itself, and the block has an anchor the button jumps to.
+    // The key option is reachable from the seller row itself and jumps to the keys card on the seller page.
     const betaRow = admin.split('class="srow"').find((part) => part.includes(`id="seller-${BETA}"`))!;
+    expect(betaRow).toContain(`href="/admin/sellers/${BETA}#keys"`);
     expect(betaRow).toContain(`data-keys="${BETA}"`);
-    expect(betaRow).toContain(`id="keys-${BETA}"`);
     expect(betaRow).toMatch(/\d+ simulator keys?/);
-    expect(betaRow.indexOf('id="keys-')).toBeLessThan(betaRow.indexOf("Extra files"));
     expect(admin).toContain("Build <code>");
+    const sellerPage = await (await fetch(`${base}/admin/sellers/${BETA}`, { headers: auth })).text();
+    expect(sellerPage).toContain("Simulator API");
+    expect(sellerPage).toContain('id="keys"');
+    expect(sellerPage).toContain(`${stored.prefix}…`);
+    expect(sellerPage).toContain("2 active keys");
+    expect(sellerPage).not.toContain(key!);
 
     expect((await say(BETA, "hi", { key })).status).toBe(200);
     const revoke = await fetch(`${base}/admin/sellers/${BETA}/keys/${stored.id}/revoke`, { method: "POST", headers: { ...auth, Origin: base }, redirect: "manual" });
     expect(revoke.status).toBe(303);
+    expect(revoke.headers.get("location")).toBe(`/admin/sellers/${BETA}?key=revoked#keys`);
     expect((await say(BETA, "hi", { key })).status).toBe(401);
   });
 });

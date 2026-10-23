@@ -256,25 +256,46 @@ describe("admin", () => {
     const res = await fetch(`${base}/admin`, { headers: auth(PASSWORD) });
     const body = await res.text();
     expect(body).toContain("Alpha Presses");
-    expect(body).toContain("Re-crawl now");
+    expect(body).toContain("Add seller");
   });
 
-  it("lists sellers as rows whose Manage section holds the controls", async () => {
+  it("lists sellers as rows that link to each seller's page", async () => {
     const body = await (await fetch(`${base}/admin`, { headers: auth(PASSWORD) })).text();
-    const rows = body.split('<details class="srow"').slice(1);
+    const rows = body.split('<div class="srow"').slice(1);
     expect(rows.length).toBe(2);
     const alpha = rows.find((r) => r.includes(`id="seller-${ALPHA}"`)) ?? "";
-    const [summary, manage] = alpha.split("</summary>");
-    expect(summary).toContain("Alpha Presses");
-    expect(summary).toContain(`href="/admin/leads?seller=${ALPHA}"`);
-    expect(summary).toContain(`href="/s/${ALPHA}/"`);
-    expect(summary).toContain("Manage");
-    expect(manage).toContain(`data-upload="/admin/sellers/${ALPHA}/kb"`);
-    expect(manage).toContain(`action="/admin/sellers/${ALPHA}/recrawl"`);
-    expect(manage).toContain(`href="/admin/sellers/${ALPHA}/prompts"`);
+    expect(alpha).toContain("Alpha Presses");
+    expect(alpha).toContain(`href="/admin/sellers/${ALPHA}"`);
+    expect(alpha).toContain(`href="/admin/leads?seller=${ALPHA}"`);
+    expect(alpha).toContain(`href="/s/${ALPHA}/"`);
+    expect(alpha).toContain("Manage");
+    expect(alpha).toContain(`href="/admin/sellers/${ALPHA}#keys"`);
+    // The controls live on the seller page, not in the list.
+    expect(body).not.toContain("data-upload=");
+    expect(body).toContain('id="seller-filter"');
+    expect(body).toContain("Build <code>");
+  });
+
+  it("shows one seller's page with the knowledge base, re-crawl and persona controls", async () => {
+    const page = await (await fetch(`${base}/admin/sellers/${ALPHA}`, { headers: auth(PASSWORD) })).text();
+    expect(page).toContain("<h1>Alpha Presses</h1>");
+    expect(page).toContain(`data-upload="/admin/sellers/${ALPHA}/kb"`);
+    expect(page).toContain(`action="/admin/sellers/${ALPHA}/recrawl"`);
+    expect(page).toContain(`href="/admin/sellers/${ALPHA}/prompts"`);
+    expect(page).toContain("Simulator API");
+    expect(page).toContain("Extra files");
+    expect(page).toContain("Knowledge mapping");
+    // The Manage menu holds the quick actions; no KB download before an upload.
+    const menu = page.split('<div class="menu-list"')[1].split("</details>")[0];
+    expect(menu).toContain("Re-crawl");
+    expect(menu).not.toContain("kb.json");
     // Repo sellers can't be deleted from admin.
-    expect(manage).not.toContain("Delete seller");
-    expect(body).not.toContain('id="seller-filter"');
+    expect(page).not.toContain("Delete seller");
+    expect((await fetch(`${base}/admin/sellers/no-such-seller`, { headers: auth(PASSWORD) })).status).toBe(404);
+    // Old links to the list page's flashes land on the seller page.
+    const old = await fetch(`${base}/admin?crawl=${ALPHA}`, { headers: auth(PASSWORD), redirect: "manual" });
+    expect(old.status).toBe(302);
+    expect(old.headers.get("location")).toBe(`/admin/sellers/${ALPHA}?crawl=1`);
   });
 
   it("filters leads by seller and exports CSV with formulas defused", async () => {
@@ -297,6 +318,7 @@ describe("admin", () => {
     expect(blocked.status).toBe(403);
     const ok = await fetch(`${base}/admin/sellers/${ALPHA}/recrawl`, { method: "POST", headers: { ...auth(PASSWORD), Origin: base }, redirect: "manual" });
     expect(ok.status).toBe(303);
+    expect(ok.headers.get("location")).toBe(`/admin/sellers/${ALPHA}?crawl=1`);
     expect(recrawled).toEqual([ALPHA]);
   });
 });
@@ -326,7 +348,9 @@ describe("knowledge base upload", () => {
     expect(await res.json()).toMatchObject({ ok: true, summary: { products: 2, categories: 1, videos: 3 } });
     const adminPage = await (await fetch(`${base}/admin`, { headers: auth(PASSWORD) })).text();
     expect(adminPage).toContain("JSON knowledge base");
-    expect(adminPage).toContain(`href="/admin/sellers/${ALPHA}/kb.json"`);
+    const sellerPage = await (await fetch(`${base}/admin/sellers/${ALPHA}`, { headers: auth(PASSWORD) })).text();
+    expect(sellerPage).toContain(`href="/admin/sellers/${ALPHA}/kb.json"`);
+    expect(sellerPage.split('<div class="menu-list"')[1].split("</details>")[0]).toContain("Download KB JSON");
     expect((await fetch(`${base}/admin/kb-template.json`, { headers: auth(PASSWORD) })).status).toBe(200);
     expect((await fetch(`${base}/admin/sellers/${ALPHA}/kb.json`, { headers: auth(PASSWORD) })).status).toBe(200);
 
@@ -354,6 +378,7 @@ describe("knowledge base upload", () => {
   it("removes the upload and goes back to the KB folder", async () => {
     const res = await fetch(`${base}/admin/sellers/${ALPHA}/kb/delete`, { method: "POST", headers: { ...auth(PASSWORD), Origin: base }, redirect: "manual" });
     expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(`/admin/sellers/${ALPHA}?kb=1`);
     expect((await fetch(`${base}/admin/sellers/${ALPHA}/kb.json`, { headers: auth(PASSWORD) })).status).toBe(404);
   });
 });
@@ -398,7 +423,10 @@ describe("adding a seller from a KB JSON", () => {
     const admin = await (await fetch(`${base}/admin`, { headers: auth(PASSWORD) })).text();
     expect(admin).toContain('id="seller-gamma-machines"');
     expect(admin).toContain("added in admin");
-    expect(admin.split('id="seller-gamma-machines"')[1].split('class="srow"')[0]).toContain("Delete seller");
+    expect(admin).not.toContain("Delete seller");
+    const page = await (await fetch(`${base}/admin/sellers/gamma-machines`, { headers: auth(PASSWORD) })).text();
+    expect(page).toContain("Delete seller");
+    expect(page).toContain("Remove this seller");
   });
 
   it("adds a seller whose export has blank ids, with notes about the fixes", async () => {

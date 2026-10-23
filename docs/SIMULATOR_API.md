@@ -8,7 +8,7 @@ Chat simulators, such as the AI Assistant Auditor, use this API to run scripted 
 |---|---|
 | Base URL | The platform's address, e.g. `https://<your-app>.onrender.com` |
 | Bot slug | The seller's slug, e.g. `jayshree-machinetools`. It is shown on each seller row in `/admin`. |
-| Key | Generate it in `/admin`: click **Simulator key** on the seller's row (it opens the row's **Simulator API** block), add a label and press **Generate key**. The key is shown once; only its hash is stored. The row then shows an "N simulator keys" badge. |
+| Key | Generate it in `/admin`: click **Simulator key** on the seller's row (it opens the **Simulator API** card on the seller's page, `/admin/sellers/<slug>#keys`), add a label and press **Generate key**. The key is shown once; only its hash is stored. The row then shows an "N simulator keys" badge. |
 | Header | `X-Bot-Key: sa_live_…` |
 
 Each key works for one bot only. You can give a seller several keys (one per simulator, say) and revoke them one at a time. A revoked key stops working immediately.

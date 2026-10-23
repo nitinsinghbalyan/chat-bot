@@ -28,7 +28,7 @@ The website and the bot use **the same crawled catalogue**, so the bot never con
 
 ## Adding a seller
 
-**The quick way: upload their JSON.** On `/admin`, click **+ Add seller** and drop in the seller's knowledge base JSON. The form fills in the name, web address (slug), website and embed origins from the file; pick a brand colour and click **Add seller**. The seller's website (`/s/<slug>/`), chat assistant and lead capture go live straight away, with no repo change or deploy. Their files are kept on the data disk (`DATA_DIR/sellers/<slug>/seller.json` and `seller_kb.json`), so they survive redeploys. Sellers added this way can be deleted from their card; their leads and chats are kept.
+**The quick way: upload their JSON.** On `/admin`, click **+ Add seller** and drop in the seller's knowledge base JSON. The form fills in the name, web address (slug), website and embed origins from the file; pick a brand colour and click **Add seller**. The seller's website (`/s/<slug>/`), chat assistant and lead capture go live straight away, with no repo change or deploy. Their files are kept on the data disk (`DATA_DIR/sellers/<slug>/seller.json` and `seller_kb.json`), so they survive redeploys. Sellers added this way can be deleted from their page; their leads and chats are kept.
 
 **The repo way: a KB folder.** Create a folder `kb/sellers/<slug>/`, where `<slug>` uses lowercase letters, digits and dashes (e.g. `alpha-presses`). Put these files in it:
 
@@ -79,7 +79,7 @@ On Render, the push redeploys. The server then crawls every seller's sitemap on 
 
 ## Seller knowledge base (JSON upload)
 
-On `/admin`, each seller row has **Upload JSON**. The file is the seller export (`_version` 5.0, or the older 3.0, with `seller`, `company_pages`, `photo_gallery`, `categories` and `products`; version 5.0 adds each product's `faqs` and `taxonomy.glmcat_ids`, its MCAT). **Download a template** on the same page gives a small example. The upload is checked first, and any problem is listed by field (for example `products[2].name: must not be empty`); nothing changes until the file is valid.
+On each seller's page (`/admin/sellers/<slug>`, **Knowledge base** card) the JSON can be dropped in or replaced. The file is the seller export (`_version` 5.0, or the older 3.0, with `seller`, `company_pages`, `photo_gallery`, `categories` and `products`; version 5.0 adds each product's `faqs` and `taxonomy.glmcat_ids`, its MCAT). **Download a template** on the same page gives a small example. The upload is checked first, and any problem is listed by field (for example `products[2].name: must not be empty`); nothing changes until the file is valid.
 
 Once uploaded, the JSON is the **main source** for both the bot and the seller's website:
 - **The bot:** it replaces `business_card.json` and `product_cards.json` for that seller.
@@ -113,7 +113,7 @@ Without an MCAT file, or when the file has no entry for the id and none with the
 
 ## Extra seller files and the common FAQ
 
-Each seller's **Manage** panel on `/admin` has an **Extra files** block with three optional uploads. They're stored in `DATA_DIR/sellers/<slug>/files/` and **merged** with the KB JSON (or KB folder); each can be downloaded or removed.
+Each seller's page has an **Extra files** card with three optional uploads. They're stored in `DATA_DIR/sellers/<slug>/files/` and **merged** with the KB JSON (or KB folder); each can be downloaded or removed.
 
 | File | Format | How the bot uses it |
 |---|---|---|
@@ -123,7 +123,7 @@ Each seller's **Manage** panel on `/admin` has an **Extra files** block with thr
 
 The extra text counts against the large-catalogue prompt budget.
 
-**Knowledge mapping** (Manage → Knowledge mapping, and `/admin/sellers/<slug>/mapping.json`): per category its main MCAT, the other MCATs it pools, the question source (MCAT file or derived from the products) and the questions; the MCAT file entries used, unused and missing; each product card mapped to a category and MCAT or flagged; product FAQ counts; the policy card sections kept. Notes at the top name what needs a look (a category with no questions, an MCAT id missing from the file, an unmatched card). `npm run kb:check` prints the same for sellers on the data disk.
+**Knowledge mapping** (the card on the seller's page, and `/admin/sellers/<slug>/mapping.json`): per category its main MCAT, the other MCATs it pools, the question source (MCAT file or derived from the products) and the questions; the MCAT file entries used, unused and missing; each product card mapped to a category and MCAT or flagged; product FAQ counts; the policy card sections kept. Notes at the top name what needs a look (a category with no questions, an MCAT id missing from the file, an unmatched card). `npm run kb:check` prints the same for sellers on the data disk.
 
 **Common FAQ** (`/admin/prompts`, **Common FAQ (Excel)**): one `.xlsx` (first sheet) or `.csv` for every seller, stored as `DATA_DIR/faq.xlsx` or `faq.csv`.
 - **Columns:** `Question`, `Answer` and optionally `Seller` and `Category`. `FAQ`/`Q`/`gl_faq_question`, `Response`/`A`/`gl_faq_answer`, `Seller Name`/`glid` and `MCAT`/`Product` are accepted too.
@@ -231,7 +231,7 @@ To send real OTPs, replace the demo check in `src/tools.ts` with your SMS provid
 
 ## Simulator API (chat simulators such as the AI Assistant Auditor)
 
-A simulator can run scripted buyer chats against any seller's bot, one JSON reply per message: `POST /api/v1/bots/<slug>/chat` with an `X-Bot-Key` header. Generate keys per seller on `/admin`: the **Simulator key** button on a seller's row opens its **Simulator API** block. Each key is shown once and can be revoked. Simulated chats run the real journey. Their leads are saved as **test** leads, which the Leads page hides unless you tick **Show test chats**, and their traces are tagged `eval`. Full reference: [docs/SIMULATOR_API.md](docs/SIMULATOR_API.md).
+A simulator can run scripted buyer chats against any seller's bot, one JSON reply per message: `POST /api/v1/bots/<slug>/chat` with an `X-Bot-Key` header. Generate keys per seller: the **Simulator key** button on a seller's row in `/admin` opens the **Simulator API** card on its page. Each key is shown once and can be revoked. Simulated chats run the real journey. Their leads are saved as **test** leads, which the Leads page hides unless you tick **Show test chats**, and their traces are tagged `eval`. Full reference: [docs/SIMULATOR_API.md](docs/SIMULATOR_API.md).
 
 ## Tracing (Langfuse)
 
@@ -292,16 +292,17 @@ A database from the earlier single-seller version is migrated automatically on s
 
 Set `ADMIN_PASSWORD` (at least 8 characters). The browser asks for a login: any username, with that password. If `ADMIN_PASSWORD` isn't set, the admin pages return 404.
 
-- `/admin`: one row per seller, with a filter box once there are more than 3. Each row shows:
-  - status badges: knowledge base, crawl (OK, partial or failed) and persona
-  - leads, products and categories, when the JSON was uploaded (or the last crawl), and **View site**
-
-  **Manage** opens the row, which holds:
-  - stats: leads, products, categories, photos, videos and PDFs
-  - a drag-and-drop JSON upload, with download and remove
-  - the website catalogue and **Re-crawl now**
-  - the brand persona
-  - for sellers added in admin, **Delete seller**
+- `/admin`: the sellers list. A search box and status chips (All, Crawl failed, Crawl partial, No persona) filter the table; the Langfuse status sits above it and two info cards below (what the bot reads, and the deployment's build id). Each row shows:
+  - the seller's name (a link to its page) and how it was added
+  - status badges: knowledge base, crawl (OK, partial or failed), persona, extra files and simulator keys
+  - leads, products and categories, when the JSON was uploaded (or the last crawl)
+  - **View site**, **Simulator key** (jumps to the keys card on the seller page) and **Manage** (opens the seller page)
+- `/admin/sellers/<slug>`: one seller's page. A summary card (badges, **View site**, **Re-crawl now**, a **Manage ▾** menu with Download KB JSON, Edit persona, Re-crawl and Delete seller) with leads, products, categories, photos, videos and PDFs, then cards:
+  - **Knowledge base**: drag-and-drop JSON upload, with download and remove
+  - **Extra files**: business card, MCAT specifications and product cards, each with Download, Replace and Remove
+  - **Knowledge mapping**: categories → MCATs → questions, with notes to check
+  - **Website catalogue** and **Re-crawl now**
+  - **Simulator API** (keys), **Brand persona** and, for sellers added in admin, **Remove this seller**
 - `/admin/sellers/new`: add a seller by uploading their JSON
 - `/admin/prompts`: the common system prompt and chat guardrails for all sellers
 - `/admin/kb-template.json`: a template for the knowledge base JSON

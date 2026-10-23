@@ -125,7 +125,7 @@ describe("a v5 seller end to end: product FAQs in the turn, knowledge mapping in
   });
 
   it("shows the knowledge mapping and serves it as JSON", async () => {
-    const page = await (await fetch(`${base}/admin`, { headers: auth })).text();
+    const page = await (await fetch(`${base}/admin/sellers/${ALPHA}`, { headers: auth })).text();
     expect(page).toContain("Knowledge mapping");
     expect(page).toContain("2 product FAQs in the KB JSON (1 left out for stating a price)");
     const res = await fetch(`${base}/admin/sellers/${ALPHA}/mapping.json`, { headers: auth });
