@@ -59,6 +59,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 - Bigger asks often come in plan mode: ask a few sharp questions, then build.
 - Make prompt changes yourself in `prompts/*.md` / `persona.json`: on deploy they replace older admin edits automatically (kept in Versions). Don't ask Nitin to click "Use the new built-in".
 - Reply in plain language with short summaries. Nitin checks production directly and sends screenshots of problems.
+- UI designs come as `.dc.html` mockup uploads; implement them as classes in `public/admin.css` (no inline styles) and keep every existing route and control.
 
 ## Environment gotchas (cloud sessions)
 - The agent proxy **blocks** jayshreemachinetools.in, imimg.com images and the Render URL, so production and live crawls can't be checked from here.
