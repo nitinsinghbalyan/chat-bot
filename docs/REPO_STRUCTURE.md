@@ -17,7 +17,8 @@ chat-bot/
 │
 ├── docs/
 │   ├── ARCHITECTURE.md        System design: context, buyer journey, chat turn, knowledge, prompts, guardrails, data, routes
-│   ├── SIMULATOR_API.md       For chat simulators (AI Assistant Auditor): keys, JSON chat endpoint, errors, test leads
+│   ├── BOT_API.md             Bot API reference for integrators: keys (Live/Test), bot details, conversation start with buyer context, chat, errors, leads
+│   ├── SIMULATOR_API.md       Auditor setup notes (Test key, the two calls a simulator makes); points to BOT_API.md
 │   └── REPO_STRUCTURE.md      This file
 │
 ├── memory/                    Long-term project memory (CLAUDE.md is the short version)
@@ -56,8 +57,8 @@ chat-bot/
 ├── src/
 │   ├── server.ts         ~80  Entry point: config, DB, registry, tracing, crawl schedule, graceful shutdown (flushes traces)
 │   ├── config.ts         ~70  Reads environment variables (DATA_DIR, ADMIN_PASSWORD, model, LANGFUSE_*, …)
-│   ├── app.ts           ~560  Express app: chat turn (shared), widget API (SSE), simulator API (/api/v1, JSON), feedback, sites, /health
-│   ├── botKeys.ts        ~20  Simulator API keys: generate, hash, shape check
+│   ├── app.ts           ~660  Express app: chat turn (shared), widget API (SSE), bot API (/api/v1: bot details, conversations, chat), feedback, sites, /health
+│   ├── botKeys.ts        ~20  Bot API keys: generate, hash, shape check
 │   ├── claude.ts        ~370  The chat turn loop: builds per-turn blocks, streams Claude, runs tools, ends on show_options
 │   ├── tools.ts         ~370  Tool definitions and handlers: save_lead (with the completion guard `notComplete`), show_options, share_media; lead status text; summary card
 │   ├── guardrails.ts    ~260  Code guardrails that back the prompt: price scrub, phone allow-list, OTP/save rules, logging
@@ -102,7 +103,7 @@ chat-bot/
     ├── promptVersions.test.ts Versions, restore, auto-apply of newer defaults
     ├── db.test.ts             Schema, migrations, queries
     ├── feedback.test.ts       Feedback vote and Langfuse scores
-    ├── simulatorApi.test.ts   Simulator API: key checks, JSON journey, test leads, admin keys
+    ├── simulatorApi.test.ts   Bot API: key checks, JSON journey, Live/Test keys, conversation start with buyer context, admin keys
     ├── tracing.test.ts        Spans, session ids, masking, export errors
     ├── crawler.test.ts        Sitemap parsing and page extraction
     ├── catalogue.test.ts      Catalogue search

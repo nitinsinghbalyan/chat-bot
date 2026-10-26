@@ -313,6 +313,8 @@ dl.kv code { display: inline-block; max-width: 100%; overflow: hidden; text-over
 .keygen { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--neutral-200); padding-top: 16px; }
 .keygen label { font-size: 14px; font-weight: 500; }
 .keygen .btn { align-self: stretch; }
+.keygen .kind-choice { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.keygen .kind-choice .muted { font-weight: 400; }
 .newkey .keybox { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 12px; border: 1px dashed var(--primary); border-radius: 8px; background: var(--primary-light); }
 .newkey .keybox code { font-size: 16px; word-break: break-all; background: transparent; border: 0; padding: 0; }
 .flags { margin: 0; padding-left: 18px; }

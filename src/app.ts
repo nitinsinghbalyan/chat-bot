@@ -5,7 +5,7 @@ import { runTurn, type TurnResult } from "./claude.js";
 import { config, paths } from "./config.js";
 import { hashBotKey, looksLikeBotKey } from "./botKeys.js";
 import type { CatalogueEntry } from "./crawler.js";
-import type { ChatDb } from "./db.js";
+import type { BotKey, ChatDb } from "./db.js";
 import { checkInput, RateLimiter } from "./guardrails.js";
 import type { SellerContext, SellerRegistry } from "./sellers.js";
 import { chatSessionId, type Session, type SessionStore } from "./session.js";
@@ -16,7 +16,7 @@ import { maskMobile, noTracing, OTP_MASK, type Tracing } from "./tracing.js";
 import { shareMedia } from "./shareMedia.js";
 import type { FaqStore } from "./faq.js";
 import type { IsqSource } from "./isqTracker.js";
-import type { EnquirySummary } from "./tools.js";
+import { normalizeMobile, type EnquirySummary } from "./tools.js";
 import { aboutPage, categoryPage, contactPage, directoryPage, notFoundPage, productPage, productsPage, searchPage, sellerHomePage } from "./site/pages.js";
 
 export interface AppDeps {
@@ -198,14 +198,14 @@ export function createApp(deps: AppDeps) {
 
   /**
    * One buyer message: runs the bot, traces it and saves the transcript. Shared by the widget's
-   * streaming route and the simulator's JSON route (`sim` set), so both behave the same.
+   * streaming route and the bot API's JSON route (`api` set; `test` for a test key), so both behave the same.
    */
   async function chatTurn(
     req: Request,
     seller: SellerContext,
     sessionId: string,
     text: string,
-    t: { redacted: unknown; pageUrl?: string; onText?: (text: string) => void; test?: boolean; sim?: Record<string, string> },
+    t: { redacted: unknown; pageUrl?: string; onText?: (text: string) => void; test?: boolean; api?: Record<string, string> },
   ) {
     const slug = seller.config.slug;
     const pageUrl = t.pageUrl;
@@ -221,10 +221,10 @@ export function createApp(deps: AppDeps) {
     const traceCtx = {
       sessionId: langfuseSession,
       userId: session.lead.mobile && session.lead.stage !== "otp_sent" ? maskMobile(session.lead.mobile) : undefined,
-      tags: t.sim ? [slug, "eval", "simulator"] : [slug, onPlatform ? "on-platform" : "embedded"],
+      tags: t.api ? (t.test ? [slug, "eval", "simulator"] : [slug, "api"]) : [slug, onPlatform ? "on-platform" : "embedded"],
       // While an OTP is expected, the buyer's message is the code.
       input: stageBefore === "otp_sent" ? OTP_MASK : text,
-      metadata: { seller: slug, chatId: session.chatId, browserSession: session.id, pageUrl: pageUrl ?? null, leadStageBefore: stageBefore, turn: session.turns + 1, prompt: promptInfo(seller), redacted: t.redacted, ...(t.sim ? { source: "simulator", ...t.sim } : {}) },
+      metadata: { seller: slug, chatId: session.chatId, browserSession: session.id, pageUrl: pageUrl ?? null, leadStageBefore: stageBefore, turn: session.turns + 1, prompt: promptInfo(seller), redacted: t.redacted, ...(t.api ? { source: t.test ? "simulator" : "api", ...t.api } : {}), ...(session.lead.buyerId ? { buyerId: session.lead.buyerId } : {}) },
     };
     const { result, traceId } = await tracing.trace("chat-turn", traceCtx, async (root) => {
       const result = await runTurn(
@@ -355,7 +355,7 @@ export function createApp(deps: AppDeps) {
   const perKey = new RateLimiter(120, 60_000);
 
   /** Checks the X-Bot-Key header against the bot in the URL; sends the error and returns null when it fails. */
-  function simulatorSeller(req: Request, res: Response): SellerContext | null {
+  function apiCaller(req: Request, res: Response): { seller: SellerContext; key: BotKey } | null {
     const raw = req.headers["x-bot-key"];
     const key = looksLikeBotKey(raw) ? db.findBotKey(hashBotKey(raw)) : null;
     if (!key) {
@@ -376,48 +376,133 @@ export function createApp(deps: AppDeps) {
       return null;
     }
     db.touchBotKey(key.id);
-    return seller;
+    return { seller, key };
   }
 
-  app.get("/api/v1/bots/:slug", (req, res) => {
-    const seller = simulatorSeller(req, res);
-    if (!seller) return;
-    res.json({ slug: seller.config.slug, name: seller.config.name, greeting: introFor(seller.config.name), demoOtp: config.DEMO_OTP });
-  });
+  /** The IndiaMART seller id from the uploaded export, when there is one. */
+  const exportSellerId = (seller: SellerContext): string | null => {
+    const id = seller.uploaded?.view.kb.seller.seller_id;
+    return id === undefined || id === null || id === "" ? null : String(id);
+  };
 
-  app.post("/api/v1/bots/:slug/chat", async (req, res) => {
-    const seller = simulatorSeller(req, res);
-    if (!seller) return;
-    const slug = seller.config.slug;
+  /** Validates a caller's sessionId (or makes one) and maps it to the internal id; API chats never continue a browser chat. */
+  function apiSession(req: Request, res: Response, key: BotKey): { sessionId: string; internalId: string } | null {
     const given = req.body?.sessionId;
     if (given !== undefined && (typeof given !== "string" || !SESSION_ID_RE.test(given))) {
       res.status(400).json({ error: "sessionId must be 8 to 64 letters, digits, - or _" });
-      return;
+      return null;
     }
     const sessionId: string = given ?? randomUUID();
+    return { sessionId, internalId: `${key.kind === "live" ? "api" : "sim"}-${sessionId}` };
+  }
+
+  /** What the caller should ask the buyer for next, from the lead stage (the chat route derives it from the reply too). */
+  const askForStage = (stage: Session["lead"]["stage"]) => (stage === "none" ? "mobile" : stage === "otp_sent" ? "otp" : stage === "verified" ? "name" : null);
+
+  app.get("/api/v1/bots/:slug", (req, res) => {
+    const caller = apiCaller(req, res);
+    if (!caller) return;
+    const { seller, key } = caller;
+    res.json({ slug: seller.config.slug, name: seller.config.name, sellerId: exportSellerId(seller), greeting: introFor(seller.config.name), demoOtp: config.DEMO_OTP, keyKind: key.kind });
+  });
+
+  /**
+   * Opens a conversation with what the platform already knows about the buyer, so the bot doesn't
+   * ask for it again. A verified mobile (the caller vouches for it) skips the OTP; an unverified one
+   * gets the OTP step straight away; a name alone is kept for the lead.
+   */
+  app.post("/api/v1/bots/:slug/conversations", (req, res) => {
+    const caller = apiCaller(req, res);
+    if (!caller) return;
+    const { seller, key } = caller;
+    const ids = apiSession(req, res, key);
+    if (!ids) return;
+    const { sessionId, internalId } = ids;
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const str = (k: string, max: number) => (typeof body[k] === "string" ? body[k].trim().slice(0, max) : typeof body[k] === "number" ? String(body[k]) : "");
+    const name = str("name", 80);
+    if (name && name.length < 2) {
+      res.status(400).json({ error: "name must be at least 2 characters", sessionId });
+      return;
+    }
+    const rawMobile = str("mobile", 20);
+    const mobile = rawMobile ? normalizeMobile(rawMobile) : null;
+    if (rawMobile && !mobile) {
+      res.status(400).json({ error: "mobile must be a 10-digit Indian mobile number", sessionId });
+      return;
+    }
+    const mobileVerified = body.mobileVerified === true;
+    const buyerId = str("buyerId", 64);
+    const sellerId = str("sellerId", 64);
+    const known = exportSellerId(seller);
+    if (sellerId && known && sellerId !== known) {
+      res.status(409).json({ error: `sellerId ${sellerId} does not match this bot (seller ${known})`, sessionId });
+      return;
+    }
+    const session = sessions.get(seller.config.slug, internalId);
+    if (session.turns > 0 || session.messages.length > 0) {
+      res.status(409).json({ error: "This conversation has already started. Use a new sessionId.", sessionId });
+      return;
+    }
+    const lead = session.lead;
+    if (key.kind !== "live") lead.test = true;
+    if (name) lead.name = name;
+    if (buyerId) lead.buyerId = buyerId;
+    if (mobile) {
+      lead.mobile = mobile;
+      if (mobileVerified && name) {
+        lead.stage = "captured";
+        lead.saved = false;
+      } else if (mobileVerified) {
+        lead.stage = "verified";
+      } else {
+        // Demo OTP: nothing is sent; the bot's first reply asks the buyer for the code.
+        lead.stage = "otp_sent";
+        lead.otpSends = 1;
+        lead.otpAttempts = 0;
+      }
+    }
+    sessions.save(session);
+    res.json({
+      sessionId,
+      greeting: introFor(seller.config.name),
+      leadStage: lead.stage,
+      askFor: askForStage(lead.stage),
+      buyer: { ...(lead.name ? { name: lead.name } : {}), ...(lead.mobile ? { mobile: maskMobile(lead.mobile) } : {}), ...(lead.buyerId ? { buyerId: lead.buyerId } : {}) },
+      test: key.kind !== "live",
+    });
+  });
+
+  app.post("/api/v1/bots/:slug/chat", async (req, res) => {
+    const caller = apiCaller(req, res);
+    if (!caller) return;
+    const { seller, key } = caller;
+    const slug = seller.config.slug;
+    const ids = apiSession(req, res, key);
+    if (!ids) return;
+    const { sessionId, internalId } = ids;
     const input = checkInput(req.body?.message);
     if (!input.ok) {
       res.status(400).json({ error: input.error, sessionId });
       return;
     }
-    // Simulated chats live apart from browser chats, so a simulator can never continue a real buyer's chat.
-    const internalId = `sim-${sessionId}`;
-    const key = `${slug}:${internalId}`;
-    if (!perSession.allow(key)) {
+    const sessionKey = `${slug}:${internalId}`;
+    if (!perSession.allow(sessionKey)) {
       res.status(429).json({ error: "Too many messages in this conversation. Please slow down.", sessionId });
       return;
     }
-    if (busy.has(key)) {
+    if (busy.has(sessionKey)) {
       res.status(409).json({ error: "The previous message in this conversation is still being answered.", sessionId });
       return;
     }
     const meta = req.body?.meta && typeof req.body.meta === "object" ? req.body.meta : {};
-    const sim: Record<string, string> = {};
-    for (const k of ["runId", "scenarioId", "label"]) if (typeof meta[k] === "string" && meta[k]) sim[k] = meta[k].slice(0, 120);
+    const api: Record<string, string> = {};
+    for (const k of ["runId", "scenarioId", "label"]) if (typeof meta[k] === "string" && meta[k]) api[k] = meta[k].slice(0, 120);
     const pageUrl = typeof req.body?.pageUrl === "string" ? req.body.pageUrl.slice(0, 300) : undefined;
-    busy.add(key);
+    const test = key.kind !== "live";
+    busy.add(sessionKey);
     try {
-      const { session, result, traceId } = await chatTurn(req, seller, internalId, input.text, { redacted: input.redacted, pageUrl, test: true, sim });
+      const { session, result, traceId } = await chatTurn(req, seller, internalId, input.text, { redacted: input.redacted, pageUrl, test, api });
       res.json({
         sessionId,
         reply: result.text,
@@ -427,13 +512,13 @@ export function createApp(deps: AppDeps) {
         askFor: result.askFor,
         leadStage: session.lead.stage,
         ...(traceId ? { traceId } : {}),
-        test: true,
+        test,
       });
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: "Something went wrong. Please try again.", sessionId });
     } finally {
-      busy.delete(key);
+      busy.delete(sessionKey);
     }
   });
 

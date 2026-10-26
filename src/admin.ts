@@ -385,33 +385,39 @@ export function mountAdmin(app: Express, d: AdminDeps) {
 </section>`;
   }
 
-  /** The Simulator API card (docs/SIMULATOR_API.md): how to connect, the seller's keys, generate and revoke. */
+  /** The Bot API card (docs/BOT_API.md): how to connect, the seller's keys (live or test), generate and revoke. */
   function keysCard(s: SellerContext, origin: string, keys: BotKey[]): string {
     const slug = esc(s.config.slug);
+    const rawId = s.uploaded?.view.kb.seller.seller_id;
+    const exportId = rawId === undefined || rawId === null || rawId === "" ? "" : String(rawId);
     const active = keys.filter((k) => !k.revokedAt);
     const tests = db.testLeadCount(s.config.slug);
     const list = keys.length
       ? `<ul class="keys">${keys
           .map(
             (k) =>
-              `<li${k.revokedAt ? ' class="revoked"' : ""}><code>${esc(k.prefix)}…</code>${k.label ? ` <span>${esc(k.label)}</span>` : ""} <span class="muted small">created ${esc(ago(k.createdAt))}${k.revokedAt ? ` · revoked ${esc(ago(k.revokedAt))}` : k.lastUsedAt ? ` · last used ${esc(ago(k.lastUsedAt))}` : " · never used"}</span>${
+              `<li${k.revokedAt ? ' class="revoked"' : ""}><code>${esc(k.prefix)}…</code>${k.label ? ` <span>${esc(k.label)}</span>` : ""}${badge(k.kind === "live" ? "Live" : "Test", k.kind === "live" ? "ok" : "info", k.kind === "live" ? "Real buyers: real leads" : "Simulators: test leads, traces tagged eval")} <span class="muted small">created ${esc(ago(k.createdAt))}${k.revokedAt ? ` · revoked ${esc(ago(k.revokedAt))}` : k.lastUsedAt ? ` · last used ${esc(ago(k.lastUsedAt))}` : " · never used"}</span>${
                 k.revokedAt
                   ? ""
-                  : ` <form class="inline" method="post" action="/admin/sellers/${slug}/keys/${k.id}/revoke" onsubmit="return confirm('Revoke this key? Simulators using it stop working at once.')"><button class="btn ghost danger small" type="submit">Revoke</button></form>`
+                  : ` <form class="inline" method="post" action="/admin/sellers/${slug}/keys/${k.id}/revoke" onsubmit="return confirm('Revoke this key? Anything using it stops working at once.')"><button class="btn ghost danger small" type="submit">Revoke</button></form>`
               }</li>`,
           )
           .join("")}</ul>`
       : "";
     return `<section class="card card-aside" id="keys">
-  <div class="card-head"><div><h2>Simulator API</h2></div>${badge(plural(active.length, "active key"), active.length ? "info" : "", undefined, true)}</div>
-  <p class="card-desc">For chat simulators such as the AI Assistant Auditor. Simulated chats run the real journey; their leads are saved as test leads${tests ? ` (<a href="/admin/leads?seller=${slug}&amp;test=1">${tests} so far</a>)` : ""}.</p>
-  <dl class="kv"><dt>Base URL</dt><dd><code>${esc(origin)}</code></dd><dt>Bot slug</dt><dd><code>${slug}</code></dd><dt>Header</dt><dd><code>X-Bot-Key</code></dd><dt>Endpoint</dt><dd><code>POST /api/v1/bots/${slug}/chat</code></dd></dl>
+  <div class="card-head"><div><h2>Bot API</h2></div>${badge(plural(active.length, "active key"), active.length ? "info" : "", undefined, true)}</div>
+  <p class="card-desc">Lets another platform or a chat simulator talk to this bot. A <b>Live</b> key's chats save real leads; a <b>Test</b> key (the AI Assistant Auditor) saves test leads${tests ? ` (<a href="/admin/leads?seller=${slug}&amp;test=1">${tests} so far</a>)` : ""}. Both run the real journey.</p>
+  <dl class="kv"><dt>Base URL</dt><dd><code>${esc(origin)}</code></dd><dt>Bot slug</dt><dd><code>${slug}</code></dd>${exportId ? `<dt>Seller id</dt><dd><code>${esc(exportId)}</code></dd>` : ""}<dt>Header</dt><dd><code>X-Bot-Key</code></dd><dt>Calls</dt><dd><code>GET /api/v1/bots/${slug}</code><br><code>POST /api/v1/bots/${slug}/conversations</code><br><code>POST /api/v1/bots/${slug}/chat</code></dd></dl>
   ${list}
   <form class="keygen" method="post" action="/admin/sellers/${slug}/keys">
     <label for="key-label">New key label <span class="muted">(optional)</span></label>
-    <input id="key-label" type="text" name="label" maxlength="60" placeholder="e.g. Auditor">
+    <input id="key-label" type="text" name="label" maxlength="60" placeholder="e.g. Auditor, IndiaMART">
+    <div class="kind-choice" role="radiogroup" aria-label="Key kind">
+      <label class="check"><input type="radio" name="kind" value="test" checked> Test <span class="muted">· simulators; test leads</span></label>
+      <label class="check"><input type="radio" name="kind" value="live"> Live <span class="muted">· real buyers; real leads</span></label>
+    </div>
     <button class="btn primary" type="submit">${icon("key")} Generate key</button>
-    <span class="small muted">${keys.length ? `${plural(keys.length, "key")} so far` : "No keys yet"}. <a href="https://github.com/nitinsinghbalyan/chat-bot/blob/main/docs/SIMULATOR_API.md" target="_blank" rel="noopener">API reference ↗</a></span>
+    <span class="small muted">${keys.length ? `${plural(keys.length, "key")} so far` : "No keys yet"}. <a href="https://github.com/nitinsinghbalyan/chat-bot/blob/main/docs/BOT_API.md" target="_blank" rel="noopener">API reference ↗</a></span>
   </form>
 </section>`;
   }
@@ -488,11 +494,11 @@ export function mountAdmin(app: Express, d: AdminDeps) {
   const sourceLabel = (s: SellerContext) => (s.source === "admin" ? "added in admin" : "KB folder in the repo");
   const initialOf = (s: SellerContext) => esc(s.config.name.charAt(0).toUpperCase());
 
-  /** The badges shown on the list row and the seller page: knowledge base, crawl, persona, extra files, simulator keys. */
+  /** The badges shown on the list row and the seller page: knowledge base, crawl, persona, extra files, API keys. */
   function sellerBadges(s: SellerContext, st: ReturnType<typeof sellerStats>, persona: ReturnType<typeof personaState>): string {
     return `<div class="badges">${s.uploaded ? badge("JSON knowledge base", "ok") : badge("KB folder files", "info")}${crawlBadge(s)}${badge(persona.label, persona.tone)}${
       st.files ? badge(plural(st.files, "extra file"), "", undefined, true) : ""
-    }${st.activeKeys ? badge(plural(st.activeKeys, "simulator key"), "", "Keys for the simulator API", true) : ""}</div>`;
+    }${st.activeKeys ? badge(plural(st.activeKeys, "API key"), "", "Keys for the bot API (integrations and simulators)", true) : ""}</div>`;
   }
 
   /** One row of the sellers table. The name and Manage open the seller's page. */
@@ -511,7 +517,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
   <div class="upd"${title ? ` title="${esc(title)}"` : ""}><span>${esc(updated)}</span>${sub ? `<span class="muted-2 small">${sub}</span>` : ""}</div>
   <div class="acts">
     <a class="btn ghost small" href="/s/${slug}/" target="_blank" rel="noopener">View site ${icon("external", 14)}</a>
-    <a class="btn outline small" href="/admin/sellers/${slug}#keys" data-keys="${slug}" title="Keys for chat simulators (the simulator API)">Simulator key</a>
+    <a class="btn outline small" href="/admin/sellers/${slug}#keys" data-keys="${slug}" title="Keys for the bot API (integrations and chat simulators)">API key</a>
     <a class="btn small" href="/admin/sellers/${slug}">Manage ${icon("chevron", 14)}</a>
   </div>
 </div>`;
@@ -597,7 +603,7 @@ ${s.source === "admin" ? `<form method="post" action="/admin/sellers/${slug}/del
     if (s.source !== "admin") return "";
     const slug = esc(s.config.slug);
     return `<section class="card card-aside" id="remove">
-  <div><h2>Remove this seller</h2><p class="card-desc">Deletes the bot, its knowledge base, extra files and simulator keys. Leads are kept.</p></div>
+  <div><h2>Remove this seller</h2><p class="card-desc">Deletes the bot, its knowledge base, extra files and API keys. Leads are kept.</p></div>
   <form method="post" action="/admin/sellers/${slug}/delete" onsubmit="return confirm('Delete ${esc(s.config.name).replace(/'/g, "\\'")}? Its website and bot stop working. Leads and chats are kept.')"><button class="btn danger" type="submit">Delete seller</button></form>
 </section>`;
   }
@@ -671,7 +677,7 @@ ${DROPZONE_SCRIPT}${MENU_SCRIPT}`,
     <p class="card-desc">Prices, delivery and payment terms, turnover, staff numbers, year of establishment, GST, bank and rating details are never given to the bot. The website still shows listed starting prices.</p></div>
   <div class="card"><span class="overline">Deployment</span>
     <p class="card-desc">Build <code>${esc(BUILD_COMMIT)}</code> · running since ${esc(fmtIST(STARTED_AT))}</p>
-    <p class="card-desc">Keys for chat simulators: open a seller and use <b>Simulator key</b>. Simulated chats run the real journey; their leads are saved as test leads.</p></div>
+    <p class="card-desc">Bot API keys (for integrations and chat simulators): open a seller and use <b>API key</b>. A Live key's chats save real leads; a Test key's are saved as test leads.</p></div>
 </div>`;
     res.send(
       shell(
@@ -1290,26 +1296,28 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
     res.json(s.mapping ?? { error: "No knowledge base JSON uploaded for this seller." });
   });
 
-  // ---- Simulator API keys ----
+  // ---- Bot API keys ----
 
   app.post("/admin/sellers/:seller/keys", requireAdmin, sameOriginPost, express.urlencoded({ extended: false, limit: "4kb" }), (req, res) => {
     const s = sellers.get(String(req.params.seller));
     if (!s) return notFound(res);
     const label = String(req.body?.label ?? "").trim().slice(0, 60);
+    const kind = req.body?.kind === "live" ? "live" : "test";
     const { key, hash, prefix } = generateBotKey();
-    db.createBotKey(s.config.slug, hash, prefix, label);
+    db.createBotKey(s.config.slug, hash, prefix, label, kind);
     const slug = esc(s.config.slug);
+    const kindLabel = kind === "live" ? "Live" : "Test";
     // The key is shown on this page only: just its hash is stored.
     res.setHeader("Cache-Control", "no-store");
     res.send(
       shell(
-        "New simulator key",
-        `${crumbs(["Sellers", "/admin"], [s.config.name, `/admin/sellers/${slug}#keys`], "New simulator key")}<div class="page-head"><div><h1>New simulator key</h1><p class="muted">${esc(s.config.name)}${label ? ` · ${esc(label)}` : ""}</p></div></div>
+        `New ${kindLabel.toLowerCase()} API key`,
+        `${crumbs(["Sellers", "/admin"], [s.config.name, `/admin/sellers/${slug}#keys`], "New API key")}<div class="page-head"><div><h1>New ${kindLabel.toLowerCase()} API key</h1><p class="muted">${esc(s.config.name)}${label ? ` · ${esc(label)}` : ""} · ${kind === "live" ? "real buyers, real leads" : "simulators, test leads"}</p></div></div>
 <div class="card newkey">
   <p><b>Copy this key now.</b> It is shown only once; if you lose it, revoke it and generate another.</p>
   <div class="keybox"><code id="newkey">${esc(key)}</code><button class="btn small" type="button" onclick="navigator.clipboard.writeText(document.getElementById('newkey').textContent).then(()=>{this.textContent='Copied'})">Copy</button></div>
-  <dl class="kv"><dt>Base URL</dt><dd><code>${esc(`${req.protocol}://${req.headers.host}`)}</code></dd><dt>Bot slug</dt><dd><code>${slug}</code></dd><dt>Header</dt><dd><code>X-Bot-Key: ${esc(key)}</code></dd><dt>Endpoint</dt><dd><code>POST /api/v1/bots/${slug}/chat</code></dd></dl>
-  <p class="muted small">See docs/SIMULATOR_API.md in the repo for the request and reply format. <a href="/admin/sellers/${slug}#keys">Back to ${esc(s.config.name)}</a></p>
+  <dl class="kv"><dt>Base URL</dt><dd><code>${esc(`${req.protocol}://${req.headers.host}`)}</code></dd><dt>Bot slug</dt><dd><code>${slug}</code></dd><dt>Header</dt><dd><code>X-Bot-Key: ${esc(key)}</code></dd><dt>Calls</dt><dd><code>GET /api/v1/bots/${slug}</code><br><code>POST /api/v1/bots/${slug}/conversations</code><br><code>POST /api/v1/bots/${slug}/chat</code></dd></dl>
+  <p class="muted small">See docs/BOT_API.md in the repo for the request and reply format. <a href="/admin/sellers/${slug}#keys">Back to ${esc(s.config.name)}</a></p>
 </div>`,
         "sellers",
       ),
@@ -1326,7 +1334,7 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
   // ---- Leads and transcripts ----
 
   app.get("/admin/leads.csv", requireAdmin, (req, res) => {
-    const cols = ["createdAt", "seller", "name", "mobile", "product", "requirements", "quantity", "city", "pageUrl", "sessionId"] as const;
+    const cols = ["createdAt", "seller", "name", "mobile", "product", "requirements", "quantity", "city", "pageUrl", "sessionId", "buyerId"] as const;
     const lines = [[...cols, "langfuseSession", ...(req.query.test === "1" ? ["test"] : [])].join(",")];
     const withTest = req.query.test === "1";
     for (const lead of db.listLeads(10_000, sellerFilter(req), { includeTest: withTest })) {
@@ -1350,7 +1358,7 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
     const rows = leads
       .map(
         (l) =>
-          `<tr><td>${esc(fmtIST(l.createdAt))}</td><td>${esc(name(l.seller))}</td><td>${esc(l.name)}${l.test ? ' <span class="badge info">Test</span>' : ""}</td><td>${esc(l.mobile)}</td><td>${esc(l.product)}</td><td>${esc(l.requirements)}</td><td>${esc(l.quantity)}</td><td>${esc(l.city)}</td><td><a class="btn small" href="/admin/transcript/${encodeURIComponent(l.sessionId)}${l.chatId ? `?chat=${encodeURIComponent(l.chatId)}` : ""}">Chat</a>${sessionLink(l.chatId ? `${l.seller}:${l.chatId}` : null)}</td></tr>`,
+          `<tr><td>${esc(fmtIST(l.createdAt))}</td><td>${esc(name(l.seller))}</td><td>${esc(l.name)}${l.test ? ' <span class="badge info">Test</span>' : ""}${l.buyerId ? `<br><span class="muted small">Buyer id ${esc(l.buyerId)}</span>` : ""}</td><td>${esc(l.mobile)}</td><td>${esc(l.product)}</td><td>${esc(l.requirements)}</td><td>${esc(l.quantity)}</td><td>${esc(l.city)}</td><td><a class="btn small" href="/admin/transcript/${encodeURIComponent(l.sessionId)}${l.chatId ? `?chat=${encodeURIComponent(l.chatId)}` : ""}">Chat</a>${sessionLink(l.chatId ? `${l.seller}:${l.chatId}` : null)}</td></tr>`,
       )
       .join("");
     const options = [`<option value="">All sellers</option>`, ...sellers.list().map((s) => `<option value="${esc(s.config.slug)}"${s.config.slug === filter ? " selected" : ""}>${esc(s.config.name)}</option>`)].join("");

@@ -24,17 +24,21 @@ export interface StoredSession {
   chatId?: string;
 }
 
+export type BotKeyKind = "live" | "test";
+
 export interface StoredLead extends Lead {
   id: number;
 }
 
-/** A simulator API key (only its hash is stored; the key itself is shown once when generated). */
+/** A bot API key (only its hash is stored; the key itself is shown once when generated). */
 export interface BotKey {
   id: number;
   seller: string;
   /** The first characters of the key, so admins can tell keys apart. */
   prefix: string;
   label: string;
+  /** "live": real buyers, real leads. "test": a simulator; its leads are saved as test leads and its traces tagged eval. */
+  kind: BotKeyKind;
   createdAt: string;
   lastUsedAt?: string;
   revokedAt?: string;
@@ -171,6 +175,14 @@ export class ChatDb {
     if (!(this.db.prepare("PRAGMA table_info(leads)").all() as Array<{ name: string }>).some((c) => c.name === "test")) {
       this.db.exec("ALTER TABLE leads ADD COLUMN test INTEGER NOT NULL DEFAULT 0");
     }
+    // The buyer's id on the platform that started the chat through the bot API (POST .../conversations).
+    if (!(this.db.prepare("PRAGMA table_info(leads)").all() as Array<{ name: string }>).some((c) => c.name === "buyer_id")) {
+      this.db.exec("ALTER TABLE leads ADD COLUMN buyer_id TEXT");
+    }
+    // Keys made before key kinds existed served simulators, so they stay test keys.
+    if (!(this.db.prepare("PRAGMA table_info(bot_keys)").all() as Array<{ name: string }>).some((c) => c.name === "kind")) {
+      this.db.exec("ALTER TABLE bot_keys ADD COLUMN kind TEXT NOT NULL DEFAULT 'test'");
+    }
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS leads_seller ON leads(seller, id);
       CREATE INDEX IF NOT EXISTS guardrail_events_seller ON guardrail_events(seller, id);
@@ -264,8 +276,8 @@ export class ChatDb {
     return Number(
       this.db
         .prepare(
-          `INSERT INTO leads (created_at, seller, session_id, mobile, name, product, requirements, quantity, city, page_url, chat_id, test)
-           VALUES (@createdAt, @seller, @sessionId, @mobile, @name, @product, @requirements, @quantity, @city, @pageUrl, @chatId, @test)`,
+          `INSERT INTO leads (created_at, seller, session_id, mobile, name, product, requirements, quantity, city, page_url, chat_id, test, buyer_id)
+           VALUES (@createdAt, @seller, @sessionId, @mobile, @name, @product, @requirements, @quantity, @city, @pageUrl, @chatId, @test, @buyerId)`,
         )
         .run({
           createdAt: lead.createdAt,
@@ -280,6 +292,7 @@ export class ChatDb {
           pageUrl: lead.pageUrl ?? null,
           chatId: lead.chatId ?? null,
           test: lead.test ? 1 : 0,
+          buyerId: lead.buyerId ?? null,
         }).lastInsertRowid,
     );
   }
@@ -314,6 +327,7 @@ export class ChatDb {
       pageUrl: r.page_url ?? undefined,
       chatId: r.chat_id ?? undefined,
       ...(r.test ? { test: true } : {}),
+      ...(r.buyer_id ? { buyerId: r.buyer_id } : {}),
     }));
   }
 
@@ -331,9 +345,9 @@ export class ChatDb {
     return row.n;
   }
 
-  createBotKey(seller: string, keyHash: string, prefix: string, label: string): number {
+  createBotKey(seller: string, keyHash: string, prefix: string, label: string, kind: BotKeyKind = "test"): number {
     return Number(
-      this.db.prepare("INSERT INTO bot_keys (seller, key_hash, prefix, label, created_at) VALUES (?, ?, ?, ?, ?)").run(seller, keyHash, prefix, label, new Date().toISOString()).lastInsertRowid,
+      this.db.prepare("INSERT INTO bot_keys (seller, key_hash, prefix, label, created_at, kind) VALUES (?, ?, ?, ?, ?, ?)").run(seller, keyHash, prefix, label, new Date().toISOString(), kind).lastInsertRowid,
     );
   }
 
@@ -479,6 +493,7 @@ const botKeyRow = (r: Record<string, any>): BotKey => ({
   seller: r.seller,
   prefix: r.prefix,
   label: r.label,
+  kind: r.kind === "live" ? "live" : "test",
   createdAt: r.created_at,
   ...(r.last_used_at ? { lastUsedAt: r.last_used_at } : {}),
   ...(r.revoked_at ? { revokedAt: r.revoked_at } : {}),

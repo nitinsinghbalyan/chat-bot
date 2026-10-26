@@ -234,12 +234,12 @@ The seller's policy card (sections such as Business, Dispatch, Freight, GST, Pac
 |---|---|---|
 | `sessions` | Live chat state | `id` (`<seller>:<browserId>`), `chat_id`, messages, lead (JSON: stage, mobile, name, category, asked ISQs), seen catalogue, usage (tokens, cost) |
 | `transcript` | What buyers typed (redacted) and what they saw | `session_id`, `chat_id`, role, text, guardrails, `trace_id` |
-| `leads` | Verified enquiries | seller, `session_id`, `chat_id`, mobile, name, product, requirements, quantity, city, page_url, `test` (1 = from the simulator API, hidden on the Leads page by default) |
+| `leads` | Verified enquiries | seller, `session_id`, `chat_id`, mobile, name, product, requirements, quantity, city, page_url, `test` (1 = from a Test key of the bot API, hidden on the Leads page by default), `buyer_id` (the buyer's id on the platform that opened the chat) |
 | `guardrail_events` | Output-filter replacements | seller, session, rule, original |
 | `platform_prompts` | Admin edits of the common system prompt and guardrails | key, value, updated_at |
 | `seller_prompts` | Admin-saved brand personas | seller, system, user |
 | `prompt_versions` | History of all of the above plus shipped defaults | scope (`common` / `seller:<slug>`), a, b, source, note |
-| `bot_keys` | Simulator API keys | seller, `key_hash` (sha256; the key itself is shown once), prefix, label, created / last used / revoked |
+| `bot_keys` | Bot API keys | seller, `key_hash` (sha256; the key itself is shown once), prefix, label, `kind` (`live` = real leads, `test` = test leads and `eval` traces), created / last used / revoked |
 
 Files on the data disk:
 - `sellers/<slug>/seller_kb.json` (uploaded KB JSON)
@@ -256,7 +256,7 @@ Files on the data disk:
 |---|---|
 | Health | `GET /health` (build commit and start time, sellers, model, tracing status) |
 | Chat API | `GET /api/sellers/:seller` (widget settings, fixed intro) · `POST /api/chat` (SSE) · `POST /api/feedback` |
-| Simulator API (`X-Bot-Key`, any origin; see [SIMULATOR_API.md](SIMULATOR_API.md)) | `GET /api/v1/bots/:slug` (name, welcome, demo OTP) · `POST /api/v1/bots/:slug/chat` (one JSON reply per message; chat saved as test, traces tagged `eval`) |
+| Bot API (`X-Bot-Key`, any origin; see [BOT_API.md](BOT_API.md), Auditor notes in [SIMULATOR_API.md](SIMULATOR_API.md)) | `GET /api/v1/bots/:slug` (name, welcome, seller id, demo OTP, key kind) · `POST /api/v1/bots/:slug/conversations` (opens a chat with the buyer's name, mobile, `mobileVerified`, `buyerId`, `sellerId` check; the bot skips what it is given) · `POST /api/v1/bots/:slug/chat` (one JSON reply per message; a Live key saves real leads and tags traces `api`, a Test key saves test leads and tags `eval`) |
 | Website | `GET /` (directory, visit-only) · `/s/:seller/` · `/about` · `/products` · `/contact` · `/c/:slug` · `/p/:slug` · `/search` |
 | Admin (Basic auth, same-origin POSTs) | `/admin` (sellers list, tracing status) · `/admin/sellers/new` · `/admin/sellers/:seller` (one seller's page: knowledge base, extra files, mapping, catalogue, keys, persona, delete) · `/admin/sellers/:seller/kb` (+ `.json`, delete) · `/admin/sellers/:seller/files/:kind` (+ delete) · `/admin/sellers/:seller/recrawl` · `/admin/sellers/:seller/prompts` · `/admin/sellers/:seller/keys` (+ `/:id/revoke`) · `/admin/prompts` · `/admin/prompts/versions/:id` (+ restore) · `/admin/faq` (+ download, delete) · `/admin/tracing/test` · `/admin/leads` (+ `.csv`) · `/admin/transcript/:sessionId` |
 | Static | `public/` (widget.js, site.css, admin.css, demo.html) |
