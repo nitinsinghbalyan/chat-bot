@@ -21,8 +21,12 @@ export interface LeadState {
   askedIsqs?: string[];
   /** The reply buttons last shown, so a tapped answer isn't mistaken for a new machine. */
   lastOptions?: string[];
-  /** A simulated chat (the simulator API): its lead is saved as a test lead. */
+  /** A simulated chat (a test key of the bot API): its lead is saved as a test lead. */
   test?: boolean;
+  /** The buyer's id on the platform that opened the chat (bot API, POST .../conversations). */
+  buyerId?: string;
+  /** True once a lead row exists. A chat opened with a verified buyer is "captured" before its first save_lead. */
+  saved?: boolean;
 }
 
 /** Running totals for one chat: every Claude call's tokens and cost, for the Langfuse chat cost score. */

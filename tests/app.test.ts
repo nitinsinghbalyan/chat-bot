@@ -282,7 +282,7 @@ describe("admin", () => {
     expect(page).toContain(`data-upload="/admin/sellers/${ALPHA}/kb"`);
     expect(page).toContain(`action="/admin/sellers/${ALPHA}/recrawl"`);
     expect(page).toContain(`href="/admin/sellers/${ALPHA}/prompts"`);
-    expect(page).toContain("Simulator API");
+    expect(page).toContain("Bot API");
     expect(page).toContain("Extra files");
     expect(page).toContain("Knowledge mapping");
     // The Manage menu holds the quick actions; no KB download before an upload.

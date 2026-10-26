@@ -293,7 +293,7 @@ export async function runTurn(
       }
 
       const results: Anthropic.Beta.BetaToolResultBlockParam[] = toolUses.map((tu) => {
-        const stageBefore = session.lead.stage;
+        const savedBefore = session.lead.saved ?? session.lead.stage === "captured";
         const tool = trace.start(tu.name, "tool", { input: tu.name === "verify_otp" ? { otp: OTP_MASK } : tu.input });
         // save_lead also sets the chat's product from the named one and marks the questions it answers (tools.ts).
         const r = executeTool(session, tu.name, tu.input, { saveLead: deps.saveLead, pageUrl: opts.pageUrl, shareMedia: deps.shareMedia, isqs });
@@ -303,7 +303,7 @@ export async function runTurn(
         }
         if (r.ui?.summary) summary = r.ui.summary;
         if (r.ui?.cards) for (const c of r.ui.cards) if (cards.length < 12 && !cards.some((x) => x.url === c.url && x.type === c.type)) cards.push(c);
-        if (tu.name === "save_lead" && !r.isError) leadEvents.push(stageBefore === "captured" ? "updated" : "captured");
+        if (tu.name === "save_lead" && !r.isError) leadEvents.push(savedBefore ? "updated" : "captured");
         tool.update({
           output: { result: r.content, ...(r.ui?.chips ? { chips: r.ui.chips } : {}), ...(r.ui?.cards ? { cards: r.ui.cards.map((c) => `${c.type}: ${c.title}`) } : {}), ...(r.ui?.summary ? { summary: r.ui.summary } : {}) },
           metadata: { leadStage: session.lead.stage },

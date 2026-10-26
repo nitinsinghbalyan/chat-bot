@@ -178,8 +178,10 @@ export interface Lead {
   chatId?: string;
   /** True when save_lead runs again after the ISQs: update this session's lead instead of adding one. */
   update?: boolean;
-  /** From a simulated chat (the simulator API), not a real buyer. */
+  /** From a simulated chat (a test key of the bot API), not a real buyer. */
   test?: boolean;
+  /** The buyer's id on the platform that started the chat (bot API, POST .../conversations). */
+  buyerId?: string;
 }
 
 export type LeadSink = (lead: Lead) => void;
@@ -235,12 +237,19 @@ const SUMMARY_SHOWN =
 export function describeLeadStatus(lead: LeadState): string {
   switch (lead.stage) {
     case "none":
-      return "No contact details captured yet: reply only with a short request for the buyer's 10-digit mobile number, nothing else.";
+      return lead.name
+        ? `The buyer's name (${lead.name}) is already known, but no mobile number yet: reply only with a short request for their 10-digit mobile number, nothing else.`
+        : "No contact details captured yet: reply only with a short request for the buyer's 10-digit mobile number, nothing else.";
     case "otp_sent":
       return `OTP sent to mobile ${maskMobile(lead.mobile!)}. Waiting for the buyer to type the OTP (${MAX_OTP_ATTEMPTS - lead.otpAttempts} attempts left).`;
     case "verified":
-      return `Mobile ${maskMobile(lead.mobile!)} verified. Ask for the buyer's name next, then call save_lead straight away.`;
+      return lead.name
+        ? `Mobile ${maskMobile(lead.mobile!)} verified and the buyer's name (${lead.name}) is already known: call save_lead straight away with that name; do not ask for it.`
+        : `Mobile ${maskMobile(lead.mobile!)} verified. Ask for the buyer's name next, then call save_lead straight away.`;
     case "captured":
+      if (!lead.saved) {
+        return `The buyer, ${lead.name} (mobile ${maskMobile(lead.mobile!)}), is already identified by the platform that opened this chat. Never ask for contact details or an OTP. Ask which product they need if that isn't clear, else the first qualification question; call save_lead (with the name ${lead.name}) as you go and with complete set to true after the last answer.`;
+      }
       return lead.summarized
         ? `Enquiry saved for ${lead.name} (mobile ${maskMobile(lead.mobile!)}) and the buyer has seen the summary card. Do not ask for contact details again. If the buyer corrects or adds a detail, call save_lead again with all the details and complete set to true; this updates the enquiry and shows a new summary.`
         : `Enquiry saved for ${lead.name} (mobile ${maskMobile(lead.mobile!)}). Do not ask for contact details again. Continue the qualification questions one at a time; after the last answer, call save_lead again with all the details and complete set to true.`;
@@ -340,7 +349,9 @@ export function executeTool(
       // the model never decides on its own that the enquiry is complete.
       const stillNeeded = input.complete ? notComplete(lead, src, fields.product) : null;
       if (lead.stage === "captured" && lead.mobile && lead.name) {
-        opts.saveLead({ createdAt: new Date().toISOString(), seller: session.seller, sessionId: session.id, mobile: lead.mobile, name: lead.name, ...fields, update: true });
+        // A chat opened with a verified buyer (bot API) is "captured" before any row exists: the sink inserts when the update finds none.
+        opts.saveLead({ createdAt: new Date().toISOString(), seller: session.seller, sessionId: session.id, mobile: lead.mobile, name: lead.name, ...fields, ...(lead.buyerId ? { buyerId: lead.buyerId } : {}), update: true });
+        lead.saved = true;
         if (stillNeeded) return { content: `Enquiry updated, but it is not complete yet: ${stillNeeded}`, isError: false };
         if (!input.complete) {
           return { content: "Enquiry updated. Continue with the next qualification question; after the last one, call save_lead again with complete set to true.", isError: false };
@@ -351,10 +362,12 @@ export function executeTool(
       if (lead.stage !== "verified" || !lead.mobile) {
         return { content: `Cannot save yet: the mobile number must be verified with an OTP first. ${describeLeadStatus(lead)}`, isError: true };
       }
-      const name = input.name.trim();
+      // The name may already be known (bot API conversation start); the model may then leave it empty.
+      const name = input.name.trim() || lead.name?.trim() || "";
       if (name.length < 2) return { content: "Missing the buyer's name. Ask for it first.", isError: true };
-      opts.saveLead({ createdAt: new Date().toISOString(), seller: session.seller, sessionId: session.id, mobile: lead.mobile, name, ...fields });
+      opts.saveLead({ createdAt: new Date().toISOString(), seller: session.seller, sessionId: session.id, mobile: lead.mobile, name, ...fields, ...(lead.buyerId ? { buyerId: lead.buyerId } : {}) });
       lead.stage = "captured";
+      lead.saved = true;
       lead.name = name;
       if (stillNeeded) return { content: `Enquiry saved, but it is not complete yet. Thank the buyer in a few words; ${stillNeeded}`, isError: false };
       if (input.complete) {

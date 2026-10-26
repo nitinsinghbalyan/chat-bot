@@ -231,9 +231,9 @@ A replaced sentence becomes a short hand-off line. The model is told about the c
 
 To send real OTPs, replace the demo check in `src/tools.ts` with your SMS provider's calls, and stop returning `demo: true` from `/api/sellers/:slug` in `src/app.ts`.
 
-## Simulator API (chat simulators such as the AI Assistant Auditor)
+## Bot API (integrations and chat simulators)
 
-A simulator can run scripted buyer chats against any seller's bot, one JSON reply per message: `POST /api/v1/bots/<slug>/chat` with an `X-Bot-Key` header. Generate keys per seller: the **Simulator key** button on a seller's row in `/admin` opens the **Simulator API** card on its page. Each key is shown once and can be revoked. Simulated chats run the real journey. Their leads are saved as **test** leads, which the Leads page hides unless you tick **Show test chats**, and their traces are tagged `eval`. Full reference: [docs/SIMULATOR_API.md](docs/SIMULATOR_API.md).
+Another platform or a chat simulator can talk to any seller's bot with three JSON calls and a per-seller `X-Bot-Key`: `GET /api/v1/bots/<slug>` (name, welcome, seller id, demo OTP), `POST /api/v1/bots/<slug>/conversations` (optional: opens a conversation with the buyer's name, mobile and buyer id, so the bot skips asking for them; a mobile the platform has verified skips the OTP) and `POST /api/v1/bots/<slug>/chat` (one buyer message, one full reply: text, chips, cards, summary, `askFor`, `leadStage`). Keys are generated on the seller's page (**API key** on its row opens the **Bot API** card), each shown once and revocable, with a kind: a **Live** key's chats save real leads and are traced with the `api` tag; a **Test** key (the AI Assistant Auditor) saves **test** leads, hidden on the Leads page unless you tick **Show test chats**, traced with `eval`. Both run the real journey. Reference: [docs/BOT_API.md](docs/BOT_API.md); Auditor setup: [docs/SIMULATOR_API.md](docs/SIMULATOR_API.md).
 
 ## Tracing (Langfuse)
 
@@ -296,15 +296,15 @@ Set `ADMIN_PASSWORD` (at least 8 characters). The browser asks for a login: any 
 
 - `/admin`: the sellers list. A search box and status chips (All, Crawl failed, Crawl partial, No persona) filter the table; the Langfuse status sits above it and two info cards below (what the bot reads, and the deployment's build id). Each row shows:
   - the seller's name (a link to its page) and how it was added
-  - status badges: knowledge base, crawl (OK, partial or failed), persona, extra files and simulator keys
+  - status badges: knowledge base, crawl (OK, partial or failed), persona, extra files and API keys
   - leads, products and categories, when the JSON was uploaded (or the last crawl)
-  - **View site**, **Simulator key** (jumps to the keys card on the seller page) and **Manage** (opens the seller page)
+  - **View site**, **API key** (jumps to the Bot API card on the seller page) and **Manage** (opens the seller page)
 - `/admin/sellers/<slug>`: one seller's page. A summary card (badges, **View site**, **Re-crawl now**, a **Manage ▾** menu with Download KB JSON, Edit persona, Re-crawl and Delete seller) with leads, products, categories, photos, videos and PDFs, then cards:
   - **Knowledge base**: drag-and-drop JSON upload, with download and remove
   - **Extra files**: business card, MCAT specifications and product cards, each with Download, Replace and Remove
   - **Knowledge mapping**: categories → MCATs → questions, with notes to check
   - **Website catalogue** and **Re-crawl now**
-  - **Simulator API** (keys), **Brand persona** and, for sellers added in admin, **Remove this seller**
+  - **Bot API** (Live and Test keys, the seller id), **Brand persona** and, for sellers added in admin, **Remove this seller**
 - `/admin/sellers/new`: add a seller by uploading their JSON
 - `/admin/prompts`: the common system prompt and chat guardrails for all sellers
 - `/admin/kb-template.json`: a template for the knowledge base JSON

@@ -37,7 +37,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 | **model** | `claude-sonnet-5-5`, effort low, 1M context; system prompt ~43k tokens (Jayshree), cached |
 | **demo OTP** | `12345`; no SMS gateway yet |
 | **retrieval eval** | `npm run retrieval:eval -- <dir>`: catalogue search + server product pick scored on the sellers' test cases (local zip, never committed). Baseline Oct 23: top-1 77%, product discovery 33%. Re-run after search or product-pick changes. memory/projects/seller-assistants.md |
-| **simulator API / bot key** | For the AI Assistant Auditor: per-seller `X-Bot-Key` from the seller page's Simulator API card (`#keys`); `POST /api/v1/bots/<slug>/chat` (JSON); leads saved as **test**, traces tagged `eval`. docs/SIMULATOR_API.md |
+| **bot API / bot key** | Per-seller `X-Bot-Key` from the seller page's Bot API card (`#keys`), kind **Live** (real leads, traces tagged `api`) or **Test** (the Auditor: test leads, `eval`). `GET /api/v1/bots/<slug>`, `POST …/conversations` (buyer context: name, mobile, `mobileVerified`, `buyerId`; the bot skips what it is given), `POST …/chat` (JSON). docs/BOT_API.md |
 → Full glossary: memory/glossary.md
 
 ## Projects
