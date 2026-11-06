@@ -1,0 +1,8 @@
+[Unit]
+Description=Seller assistants: deploy the newest commit of main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/seller-assistants-deploy

@@ -17,6 +17,8 @@ import { FAQ_LIMIT_BYTES, parseFaq, unknownSellerNames, type FaqStore } from "./
 import { isSellerFileKind, SELLER_FILES, type SellerFileKind } from "./sellerFiles.js";
 import { parseSellerFile, sellerConfigSchema, SLUG_RE, type SellerContext, type SellerRegistry } from "./sellers.js";
 import { esc } from "./site/html.js";
+import { backupName, RESTORE_LIMIT_BYTES, stageRestore, writeBackup } from "./backup.js";
+import { buildCommit, paths } from "./config.js";
 import { langfuseSessionUrl, type ConnectionTest, type TracingStatus } from "./tracing.js";
 
 /** Maximum characters for each brand persona prompt. */
@@ -35,6 +37,10 @@ export interface AdminDeps {
   testTracing?: () => Promise<ConnectionTest>;
   /** The common FAQ (Excel), managed on /admin/prompts. */
   faq?: FaqStore;
+  /** DATA_DIR: what Download backup zips and Restore replaces. Default: paths.data. */
+  dataDir?: string;
+  /** Restarts the server after a restore is staged (server.ts exits; Render or systemd starts it again). Unset: the restore waits for the next restart. */
+  restart?: () => void;
 }
 
 /** Quotes a CSV cell and defuses spreadsheet formulas (a buyer could type "=HYPERLINK(...)"). */
@@ -99,8 +105,8 @@ function shell(title: string, body: string, active: Nav = ""): string {
 </body></html>`;
 }
 
-/** The deployed commit (Render sets RENDER_GIT_COMMIT) and when this process started: shown on the Sellers page and on /health, so a deploy can be confirmed. */
-const BUILD_COMMIT = process.env.RENDER_GIT_COMMIT?.slice(0, 12) ?? "local";
+/** The deployed commit (see buildCommit) and when this process started: shown on the Sellers page and on /health, so a deploy can be confirmed. */
+const BUILD_COMMIT = buildCommit() ?? "local";
 const STARTED_AT = new Date().toISOString();
 
 /** A status badge; `plain` leaves out the status dot (for counts such as "3 extra files"). */
@@ -282,6 +288,7 @@ const DROPZONE_SCRIPT = `<script>
     var format = zone.getAttribute("data-format");
     zone.addEventListener("file", function (e) {
       var file = e.detail;
+      if (zone.getAttribute("data-confirm") && !confirm(zone.getAttribute("data-confirm"))) return;
       adminShow(out, "busy", "Checking " + file.name + "…");
       (format === "binary" ? file.arrayBuffer() : file.text()).then(function (body) {
         if (format === "json") { try { JSON.parse(body); } catch (err) { throw new Error("This file is not valid JSON: " + err.message); } }
@@ -291,8 +298,8 @@ const DROPZONE_SCRIPT = `<script>
         return res.json().catch(function () { return { ok: false, errors: ["Upload failed (HTTP " + res.status + ")"] }; });
       }).then(function (r) {
         if (r.ok) {
-          adminShow(out, "ok", "✓ Uploaded: " + r.summary + ". Live from the next chat message.", r.warnings, "Notes");
-          setTimeout(function () { done(zone); }, r.warnings && r.warnings.length ? 6000 : 1800);
+          adminShow(out, "ok", "✓ Uploaded: " + r.summary + ". " + (r.note || "Live from the next chat message."), r.warnings, "Notes");
+          setTimeout(function () { done(zone); }, r.delay || (r.warnings && r.warnings.length ? 6000 : 1800));
         } else adminShow(out, "err", "Not uploaded. Fix these and try again:", r.errors);
       }).catch(function (err) { adminShow(out, "err", err.message); });
     });
@@ -787,6 +794,7 @@ ${DROPZONE_SCRIPT}${MENU_SCRIPT}${VIEWER_SCRIPT}`,
   ${list.map((s) => sellerListRow(s, counts[s.config.slug] ?? 0)).join("")}
   <p class="empty-filter" hidden>No seller matches that filter.</p>
 </div></div>`;
+    const restoredNote = q("restored") === "1" ? `<div class="flash ok">✓ Restored from the backup. Check the sellers, leads and prompts below; the replaced data is kept on the disk in a <code>.before-restore-…</code> folder.</div>` : "";
     const info = `<div class="info-cards">
   <div class="card"><span class="overline">What the bot reads</span>
     <p class="card-desc">The knowledge base JSON is the seller export (version 5.0 or 3.0): <code>seller</code> <code>company_pages</code> <code>photo_gallery</code> <code>categories</code> <code>products</code> with their <code>faqs</code>.</p>
@@ -794,6 +802,17 @@ ${DROPZONE_SCRIPT}${MENU_SCRIPT}${VIEWER_SCRIPT}`,
   <div class="card"><span class="overline">Deployment</span>
     <p class="card-desc">Build <code>${esc(BUILD_COMMIT)}</code> · running since ${esc(fmtIST(STARTED_AT))}</p>
     <p class="card-desc">Bot API keys (for integrations and chat simulators): open a seller and use <b>API key</b>. A Live key's chats save real leads; a Test key's are saved as test leads.</p></div>
+  <div class="card backup-card" id="backup"><span class="overline">Backup</span>
+    <p class="card-desc">Everything on the data disk in one zip: leads, chats, prompts and their versions, bot API keys, uploaded knowledge bases and extra files, crawls and the common FAQ. It holds GST, bank and buyer details: keep it private.</p>
+    <div class="btn-row"><a class="btn small" href="/admin/backup" download>${icon("download", 14)} Download backup</a></div>
+    <details class="notes"><summary>Restore from a backup</summary>
+      <p class="card-desc">Replaces <b>all</b> data on this server with the backup's, then restarts the server (about 20 seconds). The data it replaces is kept on the disk in a <code>.before-restore-…</code> folder. Use it to move to a new server.</p>
+      <div class="dropzone" data-file-upload="/admin/backup/restore" data-format="binary" data-done="/admin?restored=1#backup" data-confirm="Replace ALL data on this server with this backup? The server restarts.">
+        <input type="file" accept=".zip,application/zip" aria-label="Restore from a backup zip">
+        <div class="dz-text">Drop a backup zip here or <b>choose a file</b></div>
+      </div>
+      <div class="dz-result" aria-live="polite"></div>
+    </details></div>
 </div>`;
     res.send(
       shell(
@@ -803,8 +822,9 @@ ${DROPZONE_SCRIPT}${MENU_SCRIPT}${VIEWER_SCRIPT}`,
 ${flash}
 ${tracingNote(d.tracing, !!d.testTracing)}
 ${list.length ? `${filters}\n${table}` : `<div class="card empty">No sellers yet. <a href="/admin/sellers/new">Add the first one</a> by uploading its JSON.</div>`}
+${restoredNote}
 ${info}
-${LIST_SCRIPT}`,
+${LIST_SCRIPT}${DROPZONE_SCRIPT}`,
         "sellers",
       ),
     );
@@ -1044,6 +1064,37 @@ ${DROPZONE_SCRIPT}
     for (const f of ["xlsx", "csv"] as const) fs.rmSync(faq.pathFor(f), { force: true });
     faq.set(null);
     res.redirect(303, "/admin/prompts#faq");
+  });
+
+  // ---- Backup and restore (the whole data disk; see src/backup.ts) ----
+
+  const dataDir = d.dataDir ?? paths.data;
+
+  app.get("/admin/backup", requireAdmin, async (_req, res) => {
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${backupName()}"`);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    try {
+      const m = await writeBackup(db, dataDir, res, buildCommit());
+      console.log(`[backup] downloaded: ${m.files} files, ${(m.bytes / 1e6).toFixed(1)} MB`);
+      res.end();
+    } catch (err) {
+      console.error("[backup] failed", err);
+      if (!res.headersSent) res.status(500).type("text").send("Backup failed");
+      else res.destroy(err as Error);
+    }
+  });
+
+  app.post("/admin/backup/restore", requireAdmin, sameOriginPost, express.raw({ type: "*/*", limit: RESTORE_LIMIT_BYTES }), (req, res) => {
+    const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    if (!buf.length) return void res.status(400).json({ ok: false, errors: ["Choose the backup zip to restore."] });
+    const r = stageRestore(buf, dataDir);
+    if (!r.ok) return void res.status(400).json({ ok: false, errors: [r.error] });
+    const summary = `backup of ${fmtIST(r.manifest.createdAt)} with ${plural(r.sellers, "seller folder")}, ${plural(r.leads, "lead")} and ${plural(r.files, "file")}`;
+    console.log(`[backup] restore staged: ${summary}`);
+    const note = d.restart ? "The server is restarting with it; this page reloads in 20 seconds." : "It is applied on the next restart of the server.";
+    res.json({ ok: true, summary, note, delay: d.restart ? 20000 : 4000, warnings: [] });
+    if (d.restart) res.on("finish", () => setTimeout(d.restart!, 500));
   });
 
   /** The Common FAQ panel on /admin/prompts. */

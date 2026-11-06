@@ -62,7 +62,7 @@ Shorthand and internal language for the Seller assistants project.
 | mapping.json | `GET /admin/sellers/<slug>/mapping.json`: the Knowledge mapping as JSON for audits (same data as the Knowledge mapping card) | `src/admin.ts` |
 | test lead / test chat | A lead or transcript made through a **Test** key of the bot API (`leads.test = 1`); hidden on Leads unless "Show test chats" is ticked | `src/db.ts`, `src/admin.ts` |
 | sensitive fields | v5 export fields the bot never sees: `price`, `delivery_time`, `payment_terms`, `production_capacity`, `packaging_details`, `port_of_dispatch`, `year_established`, `employees`, `member_since`, `gst_verified`, `trustseal_url`, `ratings` (the website still shows prices) | `src/sellerKb.ts` |
-| build id | The deployed commit (Render's `RENDER_GIT_COMMIT`, "local" elsewhere) in the Deployment card on `/admin` and `/health` `build.commit`, with the process start time; the way to confirm a deploy is live | `src/admin.ts` `shell`, `/health` |
+| build id | The deployed commit (`buildCommit()`: `GIT_COMMIT`, else Render's `RENDER_GIT_COMMIT`, else the Oracle deploy script's `.build-commit`; "local" elsewhere) in the Deployment card on `/admin` and `/health` `build.commit`, with the process start time; the way to confirm a deploy is live | `src/admin.ts` `shell`, `/health` |
 | API key button | On each seller row; opens the seller page at its **Bot API** card (`/admin/sellers/<slug>#keys`, label input focused) where keys are generated (Test/Live radio) and revoked; rows with keys show an "N API keys" badge | `sellerListRow`, `keysCard`, `MENU_SCRIPT` |
 | Test Langfuse | /admin button: server version → keys → upload a test trace → is it stored; the failing step names the cause | `runConnectionTest` in `src/tracing.ts` |
 | langfuse.intermesh.net | The self-hosted Langfuse production traces go to | `LANGFUSE_BASE_URL` on Render |
@@ -121,4 +121,7 @@ Shorthand and internal language for the Seller assistants project.
 | retrieval eval | `npm run retrieval:eval`: scores the catalogue search and the server's product pick on those test cases; baseline Oct 23 top-1 77%, product discovery 33% (memory/projects/seller-assistants.md) |
 | product discovery | Scenario suite where the buyer describes a need without naming the product; the retrieval's weak spot |
 | NIVA, Maxi | Other vendors' bots in the AI Assistant Auditor; not ours. Their keys sit in the FAQ sheet's second tab: never use or copy them |
-| jayshree-chatbot | The Render service name (`jayshree-chatbot.onrender.com`) |
+| jayshree-chatbot | The Render service name (`jayshree-chatbot.onrender.com`); paid, being replaced by the Oracle server (#36) |
+| Oracle server | The free production host (Oracle Cloud Always Free, Ubuntu ARM): app in `/opt/seller-assistants/current`, data in `/var/data`, settings in `/etc/seller-assistants.env`, address `<ip-with-dashes>.sslip.io`; set up with `deploy/oracle/setup.sh` | `docs/DEPLOY_ORACLE.md` |
+| backup / restore | `/admin` Backup card: **Download backup** (zip of everything on the data disk) and **Restore from a backup** (replaces it all, restarts; old data in `DATA_DIR/.before-restore-*`); nightly copies in `/var/data/backups` on the Oracle server | `src/backup.ts` |
+| pull deploy | The Oracle server's timer: every 2 min checks `main`, builds the new commit in `releases/<commit>`, switches `current`, checks `/health`, rolls back on failure | `deploy/oracle/deploy.sh` |

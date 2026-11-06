@@ -1,6 +1,6 @@
 # Seller assistants (platform)
 
-**Repo:** `nitinsinghbalyan/chat-bot` · **Production:** Render service `jayshree-chatbot` (Singapore, starter plan, 1 GB disk at `/var/data`), auto-deploys `main`.
+**Repo:** `nitinsinghbalyan/chat-bot` · **Production:** Render service `jayshree-chatbot` (Singapore, paid starter plan, 1 GB disk at `/var/data`), auto-deploys `main`. **Moving to a free Oracle Cloud Always Free server** (#36, Nov 6): Nitin follows `docs/DEPLOY_ORACLE.md` (Mumbai/Hyderabad, `<ip>.sslip.io`, data carried over with Download backup → Restore). Until he confirms the move, production is still Render.
 **Status:** live. Jayshree is the first seller (v3 export, repo seller). Five more sellers' **v5** files arrived on Oct 18 (Exotica Steel, Herbaveda Overseas, National Industries, Sewa Enterprises, Unicorn Equipment: v5 JSON, MCAT specs, policy card .md, product cards, plus one FAQ sheet for 11 sellers); Nitin adds them on `/admin` by uploading those files.
 
 ## What it does
@@ -81,7 +81,8 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | Common FAQ Excel (Question, Answer, optional Category), searched per message as `<faq>`, scoped per seller by category; guardrails win | Nitin |
 | Simulator API for the AI Assistant Auditor: new vendor there (not NIVA impersonation), per-seller `X-Bot-Key` keys made in admin (hash stored, shown once), one JSON reply per message at `/api/v1/bots/<slug>/chat`; simulated leads saved as **test** (hidden on Leads by default), traces tagged `eval` | Nitin (Oct 16) |
 | **Master JSON v5** replaces v3 (old files still load). Questions per **MCAT within a category**: the buyer's product's MCAT (else the category's main one), only the MCAT file's specs the seller's products carry, chips show all MCAT options with the seller's first; cards stay knowledge (no card-driven questions); policy card .md kept whole as handling rules with amounts/terms stripped; v5 product FAQs + FAQ sheet "Seller Name" column merged per seller; Knowledge mapping report in admin | Nitin (Oct 18) |
-| SQLite on a Render disk; Render hosting | Nitin |
+| SQLite on a Render disk; Render hosting | Nitin (superseded Nov 6: hosting moves to Oracle) |
+| **Free hosting:** Render charges because the disk needs a paid instance; move to an **Oracle Cloud Always Free** VM (Ubuntu ARM, 1 OCPU/6 GB, Mumbai or Hyderabad) with a free **sslip.io** address + Caddy HTTPS (own domain later), and **carry the data over** via an admin backup zip. Auto-deploy kept by a pull timer (every 2 min, build per release, health check, rollback). Rejected: Google e2-micro (US only, 1 GB), Render free + outside DB (sleeps, rewrite) | Nitin (Nov 6) |
 | Multi-seller; KB supplied per seller | Nitin |
 | Widget bottom-right (was bottom-left) | Nitin |
 | Directory is visit-only; no chat on `/` | Nitin |
@@ -139,6 +140,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | #32 | Project memory refresh after #31 |
 | #35 | File viewer overlay on the seller page; new journey (login first, greeting + name, requirement, card must-ask specs → MCAT file → products, quantity, individual/business + firm, time frame, delivery city); `src/cardQuestions.ts`; `leads.buyer_type` / `firm_name` / `timeframe`; summary rows; card lookup in the retrieval eval |
 | #34 | Bot API for integrators: `docs/BOT_API.md` (the vendor's four calls mapped to ours), `POST /api/v1/bots/<slug>/conversations` with buyer context, Live/Test key kinds (`bot_keys.kind`, radio in the Bot API card), `leads.buyer_id` on the Leads page and CSV, `sellerId` + `keyKind` on `GET /api/v1/bots/<slug>`, lead-status texts for known name / verified mobile / identified buyer |
+| #36 | Free hosting: `/admin` Backup card (Download backup = zip of DATA_DIR with a consistent DB copy; Restore = staged in `.restore-pending`, swapped in on restart, old data kept in `.before-restore-*`), `src/backup.ts`; `buildCommit()` (`GIT_COMMIT` → `RENDER_GIT_COMMIT` → `.build-commit`); `TRUST_PROXY`; `deploy/oracle/` kit (setup.sh, deploy.sh, backup.sh, systemd units, Caddyfile); `docs/DEPLOY_ORACLE.md` |
 | #33 | Retrieval eval: `scripts/retrieval-eval.ts` (`npm run retrieval:eval -- <dir>`) scores the catalogue search and the server's product pick on the sellers' own test cases; baseline below |
 
 ## Retrieval baseline (Oct 23, #33)
@@ -177,6 +179,7 @@ What it says:
 Next steps in order, each re-measured with the eval (target: top-1 85%+ overall, discovery 50%+, off-topic picks under 15%): query cleanup in `Catalogue.search`; per-seller synonym and transliteration list; tighter pick rule; `search_catalogue` tool; embeddings hybrid only if discovery is still poor after that.
 
 ## Open items / ideas
+- **Hosting move (#36):** Nitin to create the Oracle server, run `setup.sh`, restore Render's backup, switch the Auditor's Base URL (and any widget `src` on seller sites), then suspend and delete Render. Afterwards: update memory (production address, CLAUDE.md gotchas) and drop the "still Render" notes. If the self-hosted Langfuse filters by IP, it must allow the new server.
 - **Langfuse (self-hosted `langfuse.intermesh.net`):** after #16/#18, check that traces appear grouped by conversation. If not, **Test Langfuse** on /admin names the failing step (server version, upload refused, or accepted but not stored, which is for the intermesh Langfuse admins).
 - **Jayshree's files are still the old set:** v3 export (no product FAQs, no `seller_id`) and an MCAT file of mostly construction MCATs (only the ironworkers match by id). A v5 export plus a generated MCAT file for their real ids (e.g. 25058 press brakes, 1669, 123956, 185336 shears, 182186 laser) would make those questions authoritative; until then the Knowledge mapping block shows them as **derived**.
 - Check the live bot asks the right questions per machine (press brake vs shear vs laser), and that categories with no ISQs (single-product ones like H Frame Hydraulic Press) behave well.

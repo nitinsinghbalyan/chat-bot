@@ -470,6 +470,11 @@ export class ChatDb {
     return r ? this.getPromptVersion(r.id) : null;
   }
 
+  /** A consistent copy of the whole database in `file` (SQLite's online backup; chats can go on meanwhile). */
+  async backupTo(file: string): Promise<void> {
+    await this.db.backup(file);
+  }
+
   close() {
     this.db.close();
   }

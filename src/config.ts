@@ -1,4 +1,5 @@
 import "dotenv/config";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -45,6 +46,13 @@ const schema = z.object({
   /** EU: https://cloud.langfuse.com, US: https://us.cloud.langfuse.com, or a self-hosted URL. Unset: EU, else US if the keys are from there. Also read from LANGFUSE_HOST. */
   LANGFUSE_BASE_URL: optional(z.string().url()),
   /** Shown as the trace environment in Langfuse. Default: NODE_ENV, else "development". */
+  /**
+   * Express "trust proxy": true (default; Render's proxy), "loopback" (behind Caddy on the same server,
+   * so a buyer can't fake their IP for the rate limits), a hop count, or false.
+   */
+  TRUST_PROXY: optional(z.string())
+    .default("true")
+    .transform((v): boolean | number | string => (v === "true" ? true : v === "false" ? false : /^\d+$/.test(v) ? Number(v) : v)),
   LANGFUSE_ENVIRONMENT: optional(z.string().regex(/^[a-z0-9_-]{1,40}$/, "use lowercase letters, digits, - or _")),
 });
 
@@ -71,3 +79,18 @@ export const paths = {
   /** Runtime data per seller (the refreshed catalogue), kept on the persistent disk. */
   sellerData: path.join(dataDir, "sellers"),
 };
+
+/**
+ * The deployed commit, shown on /admin and /health and sent to Langfuse as the release: GIT_COMMIT,
+ * else Render's RENDER_GIT_COMMIT, else the .build-commit file deploy/oracle/deploy.sh writes. Null locally.
+ */
+export function buildCommit(env: NodeJS.ProcessEnv = process.env, root = ROOT): string | null {
+  const fromEnv = env.GIT_COMMIT?.trim() || env.RENDER_GIT_COMMIT?.trim();
+  if (fromEnv) return fromEnv.slice(0, 12);
+  try {
+    const file = fs.readFileSync(path.join(root, ".build-commit"), "utf8").trim();
+    return /^[0-9a-f]{7,40}$/i.test(file) ? file.slice(0, 12) : null;
+  } catch {
+    return null;
+  }
+}

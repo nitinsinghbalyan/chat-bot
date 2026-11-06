@@ -11,7 +11,9 @@
 | zod v4 | Config, seller.json and KB JSON validation (use `z.looseObject`; `ZodSafeParseResult`) |
 | read-excel-file | The common FAQ sheet (first sheet only) |
 | vitest, tsx | Tests, scripts and dev |
-| Render | Hosting: Blueprint `render.yaml`, auto-deploy `main`, disk `/var/data` |
+| Render | Hosting until the move: Blueprint `render.yaml`, auto-deploy `main`, disk `/var/data` (paid starter plan) |
+| Oracle Cloud Always Free | New free host (#36): Ubuntu 24.04 ARM VM, Node 22 + Caddy (HTTPS on `<ip>.sslip.io`), systemd units and timers from `deploy/oracle/`; guide `docs/DEPLOY_ORACLE.md` |
+| fflate | Backup zips (`src/backup.ts`) |
 | GitHub MCP tools | PRs and merges (no `gh` CLI in cloud sessions) |
 | Langfuse JS v6 (`@langfuse/tracing`, `@langfuse/otel`, `@langfuse/client`) + OpenTelemetry `NodeTracerProvider` | Tracing, scores |
 
@@ -32,10 +34,11 @@
 | `npm run dev` | Local server, port 3000 |
 
 ## Environment variables
-`ANTHROPIC_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_ENVIRONMENT`, `ADMIN_PASSWORD` (8+ characters; enables `/admin`), `BOT_MODEL`, `BOT_EFFORT`, `BOT_FALLBACKS`, `DATA_DIR`, `SELLERS_DIR`, `ALLOWED_ORIGINS`, `CRAWL_ON_START`, `CRAWL_INTERVAL_HOURS`, `DEMO_OTP`, `PORT`.
+`TRUST_PROXY` (`true` on Render, `loopback` on the Oracle server), `GIT_COMMIT` (build id override), `ANTHROPIC_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_ENVIRONMENT`, `ADMIN_PASSWORD` (8+ characters; enables `/admin`), `BOT_MODEL`, `BOT_EFFORT`, `BOT_FALLBACKS`, `DATA_DIR`, `SELLERS_DIR`, `ALLOWED_ORIGINS`, `CRAWL_ON_START`, `CRAWL_INTERVAL_HOURS`, `DEMO_OTP`, `PORT`.
 Don't call them `CLAUDE_*`: the harness sets `CLAUDE_EFFORT`, which once clashed.
 
-## Data on the Render disk (`/var/data`)
+## Data on the data disk (`/var/data` on Render and on the Oracle server)
+- All of it moves as one zip: `/admin` → Backup → **Download backup**, then **Restore from a backup** on the other server (restarts it; the replaced data stays in `.before-restore-*`). The Oracle server also keeps nightly zips in `/var/data/backups` (newest 7).
 - `chatbot.db`: sessions, transcript, leads, guardrail_events, seller_prompts (personas), platform_prompts (common prompts), prompt_versions (history of both).
 - `chatbot.db` also holds `bot_keys` (bot API keys, sha256, `kind` live/test), `leads.test` and `leads.buyer_id`.
 - `sellers/<slug>/catalogue.json`: runtime crawl.

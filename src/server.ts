@@ -7,6 +7,10 @@ import { SellerRegistry, type SellerContext } from "./sellers.js";
 import { SessionStore } from "./session.js";
 import { FaqStore } from "./faq.js";
 import { initTracing } from "./tracing.js";
+import { applyPendingRestore } from "./backup.js";
+
+// A backup restored on /admin is staged on the disk and swapped in here, before anything opens the data.
+applyPendingRestore(paths.data);
 
 const sellers = SellerRegistry.load();
 const db = new ChatDb(paths.db);
@@ -39,7 +43,7 @@ async function recrawlAll() {
 const tracing = await initTracing();
 const faq = await FaqStore.load(paths.data);
 if (faq.file) console.log(`[faq] ${faq.file.summary}`);
-const app = createApp({ client: new Anthropic(), sellers, sessions, db, recrawl, tracing, faq });
+const app = createApp({ client: new Anthropic(), sellers, sessions, db, recrawl, tracing, faq, dataDir: paths.data, restart: () => shutdown("restore", 1) });
 
 function prune() {
   const removed = db.pruneSessions(30);
@@ -59,10 +63,11 @@ const server = app.listen(config.PORT, () => {
   setInterval(prune, 24 * 3_600_000).unref();
 });
 
-function shutdown(signal: string) {
-  console.log(`${signal} received, shutting down`);
+/** Closes the server cleanly. A restore exits with code 1 so Render or systemd starts the server again, which applies it. */
+function shutdown(signal: string, code = 0) {
+  console.log(signal === "restore" ? "restarting to apply the restored backup" : `${signal} received, shutting down`);
   // Send buffered traces before exiting, so the last chats before a redeploy aren't lost.
-  const exit = () => void tracing.flush().finally(() => process.exit(0));
+  const exit = () => void tracing.flush().finally(() => process.exit(code));
   server.close(() => {
     db.close();
     exit();

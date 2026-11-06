@@ -25,7 +25,7 @@ Two differences worth knowing. The bot is addressed by its **slug** in the URL, 
 
 | Field | Value |
 |---|---|
-| Base URL | The platform's address, e.g. `https://<your-app>.onrender.com` |
+| Base URL | The platform's address, e.g. `https://<server-ip-with-dashes>.sslip.io` (the production server's address, shown on `/admin`) |
 | Bot slug | The seller's slug, e.g. `jayshree-machinetools`. Shown on the seller's page in `/admin` (Bot API card). |
 | Seller id | The IndiaMART seller id from the seller's export, shown on the same card. `null` until an export is uploaded. |
 | Key | Generated on the seller's page in `/admin` (**API key** on the seller's row opens the **Bot API** card). Pick the kind: **Live** for real buyers, **Test** for simulators. The key is shown once; only its hash is stored. Revoke it any time. |

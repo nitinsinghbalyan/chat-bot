@@ -4,7 +4,7 @@
 **Role:** Project owner of Seller assistants; decides scope and checks production.
 
 ## Working style
-- Gives short, outcome-focused asks ("make ui proper", "push changes to production"). Production means merging to `main` (Render auto-deploys).
+- Gives short, outcome-focused asks ("make ui proper", "push changes to production"). Production means merging to `main` (Render auto-deploys; after the move, the Oracle server pulls it within 2 minutes). Cost-conscious: asked to leave Render for a free host (Nov 6).
 - Often switches on plan mode for bigger changes and answers 1–3 multiple-choice questions. Recommended options are usually accepted.
 - Tests on production and sends screenshots of what looks wrong. Fix the issue in the screenshot and anything clearly related (e.g. the partial crawl seen in an admin screenshot).
 - Wants plain-language summaries: what changed, what to do next, what couldn't be verified.

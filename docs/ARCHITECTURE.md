@@ -6,7 +6,7 @@ Seller assistants is one Node.js service that gives every B2B seller three thing
 2. **A generated website** (`/s/<slug>/`): home, about, products, category, product, contact and search pages.
 3. **An admin** (`/admin`) for the team: sellers, knowledge bases, extra files, prompts and their versions, the common FAQ, leads and transcripts, and Langfuse status.
 
-Everything runs in a single Express process on Render, with a SQLite database and seller files on a persistent disk. The bot uses Claude (`claude-sonnet-5-5`, effort low) through the Anthropic SDK. Langfuse traces each buyer message when keys are set.
+Everything runs in a single Express process on a free Oracle Cloud server (Render before Nov 2026), with a SQLite database and seller files on its disk (`DATA_DIR`). The bot uses Claude (`claude-sonnet-5-5`, effort low) through the Anthropic SDK. Langfuse traces each buyer message when keys are set.
 
 See [REPO_STRUCTURE.md](REPO_STRUCTURE.md) for the file tree.
 
@@ -255,14 +255,16 @@ Files on the data disk:
 | Chat API | `GET /api/sellers/:seller` (widget settings, fixed intro) · `POST /api/chat` (SSE) · `POST /api/feedback` |
 | Bot API (`X-Bot-Key`, any origin; see [BOT_API.md](BOT_API.md), Auditor notes in [SIMULATOR_API.md](SIMULATOR_API.md)) | `GET /api/v1/bots/:slug` (name, welcome, seller id, demo OTP, key kind) · `POST /api/v1/bots/:slug/conversations` (opens a chat with the buyer's name, mobile, `mobileVerified`, `buyerId`, `sellerId` check; the bot skips what it is given) · `POST /api/v1/bots/:slug/chat` (one JSON reply per message; a Live key saves real leads and tags traces `api`, a Test key saves test leads and tags `eval`) |
 | Website | `GET /` (directory, visit-only) · `/s/:seller/` · `/about` · `/products` · `/contact` · `/c/:slug` · `/p/:slug` · `/search` |
-| Admin (Basic auth, same-origin POSTs) | `/admin` (sellers list, tracing status) · `/admin/sellers/new` · `/admin/sellers/:seller` (one seller's page: knowledge base, extra files, mapping, catalogue, keys, persona, delete) · `/admin/sellers/:seller/kb` (+ `.json`, delete) · `/admin/sellers/:seller/files/:kind` (+ delete) · `/admin/sellers/:seller/view/:kind` (`kb`, `business-card`, `mcat`, `product-cards`: the stored file inline, `no-store`, `?download=1`) · `/admin/sellers/:seller/recrawl` · `/admin/sellers/:seller/prompts` · `/admin/sellers/:seller/keys` (+ `/:id/revoke`) · `/admin/prompts` · `/admin/prompts/versions/:id` (+ restore) · `/admin/faq` (+ download, delete) · `/admin/tracing/test` · `/admin/leads` (+ `.csv`) · `/admin/transcript/:sessionId` |
+| Admin (Basic auth, same-origin POSTs) | `/admin` (sellers list, tracing status) · `/admin/sellers/new` · `/admin/sellers/:seller` (one seller's page: knowledge base, extra files, mapping, catalogue, keys, persona, delete) · `/admin/sellers/:seller/kb` (+ `.json`, delete) · `/admin/sellers/:seller/files/:kind` (+ delete) · `/admin/sellers/:seller/view/:kind` (`kb`, `business-card`, `mcat`, `product-cards`: the stored file inline, `no-store`, `?download=1`) · `/admin/sellers/:seller/recrawl` · `/admin/sellers/:seller/prompts` · `/admin/sellers/:seller/keys` (+ `/:id/revoke`) · `/admin/prompts` · `/admin/prompts/versions/:id` (+ restore) · `/admin/faq` (+ download, delete) · `/admin/tracing/test` · `/admin/backup` (zip of the data disk) · `/admin/backup/restore` (staged, applied on restart) · `/admin/leads` (+ `.csv`) · `/admin/transcript/:sessionId` |
 | Static | `public/` (widget.js, site.css, admin.css, demo.html) |
 
 ---
 
 ## 10. Deployment and configuration
 
-- **Render** (`render.yaml`): Node 22 web service with a 1 GB disk at `/var/data` (`DATA_DIR`). It auto-deploys `main`.
+- **Oracle Cloud Always Free** (`deploy/oracle/`, guide in `docs/DEPLOY_ORACLE.md`): Ubuntu 24.04 ARM, Node 22 behind Caddy (HTTPS), data at `/var/data` (`DATA_DIR`). A systemd timer deploys `main` within 2 minutes: each commit is built in its own release folder, switched to and checked on `/health`, with a rollback on failure. A nightly timer saves the backup zip.
+- **Backup and restore** (`src/backup.ts`, `/admin` Backup card): `GET /admin/backup` zips a consistent copy of the database (SQLite online backup) plus every file under `DATA_DIR`. `POST /admin/backup/restore` checks a zip and stages it in `DATA_DIR/.restore-pending`, then the server exits. On the next start, `applyPendingRestore` swaps it in before anything opens the data and keeps the old data in `.before-restore-<time>`.
+- **Render** (`render.yaml`): the paid alternative, a Node 22 web service with a 1 GB disk at `/var/data`.
 - **Start:** `npm run build` (tsc), then `node dist/src/server.js`.
 - **Startup** (`src/server.ts`):
   1. Load sellers (KB folders + admin sellers + uploads + extra files).

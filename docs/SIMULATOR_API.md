@@ -6,7 +6,7 @@ Chat simulators run scripted buyer conversations against a seller's bot through 
 
 | Field | Value |
 |---|---|
-| Base URL | The platform's address, e.g. `https://<your-app>.onrender.com` |
+| Base URL | The platform's address, e.g. `https://<server-ip-with-dashes>.sslip.io` |
 | Bot slug | The seller's slug, shown on the seller's page in `/admin` |
 | Key | On the seller's page, **Bot API** card (`/admin/sellers/<slug>#keys`, or **API key** on the seller's row): add a label, choose **Test**, press **Generate key**. The key is shown once. |
 | Header | `X-Bot-Key: sa_live_…` |

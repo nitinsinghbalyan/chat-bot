@@ -3,7 +3,7 @@
 Project memory for **Seller assistants**: an AI chat assistant and generated website for each B2B seller. Detail lives in `memory/`.
 
 ## Me
-**Nitin** (GitHub `nitinsinghbalyan`) owns this repo: adds sellers, uploads their knowledge base JSON and checks production on Render.
+**Nitin** (GitHub `nitinsinghbalyan`) owns this repo: adds sellers, uploads their knowledge base JSON and checks production (Render, moving to a free Oracle server: docs/DEPLOY_ORACLE.md).
 
 ## People
 | Who | Role |
@@ -40,6 +40,8 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 | **model** | `claude-sonnet-5-5`, effort low, 1M context; system prompt ~43k tokens (Jayshree), cached |
 | **demo OTP** | `12345`; no SMS gateway yet |
 | **retrieval eval** | `npm run retrieval:eval -- <dir>`: catalogue search + server product pick scored on the sellers' test cases (local zip, never committed). Baseline Oct 23: top-1 77%, product discovery 33%. Re-run after search or product-pick changes. memory/projects/seller-assistants.md |
+| **backup / restore** | `/admin` Backup card: **Download backup** zips the whole data disk (consistent DB copy + files); **Restore from a backup** stages it and restarts, old data kept in `.before-restore-*`. How data moves between hosts. `src/backup.ts` |
+| **Oracle server** | Free production host (Oracle Always Free, Ubuntu ARM, `<ip>.sslip.io`, Caddy HTTPS); `deploy/oracle/` kit: `setup.sh` once, `deploy.sh` timer pulls `main` every 2 min (build per release, `/health` check, rollback), nightly backup. Until Nitin confirms the move, production is still Render |
 | **bot API / bot key** | Per-seller `X-Bot-Key` from the seller page's Bot API card (`#keys`), kind **Live** (real leads, traces tagged `api`) or **Test** (the Auditor: test leads, `eval`). `GET /api/v1/bots/<slug>`, `POST …/conversations` (buyer context: name, mobile, `mobileVerified`, `buyerId`; the bot skips what it is given), `POST …/chat` (JSON). docs/BOT_API.md |
 → Full glossary: memory/glossary.md
 
@@ -58,7 +60,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 - Chat widget sits **bottom-right**. The public directory `/` is **visit-only** (no chat there).
 
 ## How we work
-- Develop on branch `claude/practical-clarke-0tbalp`, restarted from `origin/main` after each merge. Open a PR and **merge it to `main`**; Render then auto-deploys production.
+- Develop on branch `claude/practical-clarke-0tbalp`, restarted from `origin/main` after each merge. Open a PR and **merge it to `main`**; production deploys it (Render now; the Oracle server pulls `main` within 2 minutes).
 - Before a push: `npm test`, `npm run build`, `npm run kb:check`, plus a Chromium check for UI changes and the retrieval eval for search or product-pick changes.
 - No vector RAG unless the retrieval eval shows the lexical search can't be fixed: the bot already retrieves per turn (catalogue + FAQ search) and small sellers have the whole KB in the cached prompt.
 - Bigger asks often come in plan mode: ask a few sharp questions, then build.
@@ -67,7 +69,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 - UI designs come as `.dc.html` mockup uploads; implement them as classes in `public/admin.css` (no inline styles) and keep every existing route and control.
 
 ## Environment gotchas (cloud sessions)
-- The agent proxy **blocks** jayshreemachinetools.in, imimg.com images and the Render URL, so production and live crawls can't be checked from here.
+- The agent proxy **blocks** jayshreemachinetools.in, imimg.com images and the Render URL (likely the Oracle server too), so production and live crawls can't be checked from here.
 - There is no `ANTHROPIC_API_KEY` here. Run the local server with `env -u ANTHROPIC_BASE_URL` and test chat with a scripted fake client.
 - Never `pkill -f src/server.ts`: it kills the shell. Find PIDs with `ps -eo pid,args | grep -E "node.*src/server\.ts"`.
 - Playwright: `$(npm root -g)/playwright/index.mjs` with `executablePath: "/opt/pw-browsers/chromium"`.

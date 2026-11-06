@@ -10,7 +10,8 @@ chat-bot/
 ├── package-lock.json          Locked dependency versions
 ├── tsconfig.json              TypeScript settings (Node 22 ESM, strict)
 ├── vitest.config.ts           Test runner settings
-├── render.yaml                Render blueprint: web service, persistent disk at DATA_DIR, env vars
+├── deploy/oracle/             Production server kit (Oracle Always Free): setup.sh, deploy.sh, backup.sh, systemd units, Caddyfile, env.example
+├── render.yaml                Render blueprint (paid alternative): web service, persistent disk at DATA_DIR, env vars
 ├── .env.example               Every environment variable, with a comment (copy to .env locally)
 ├── .node-version              Node 22
 ├── .gitignore                 node_modules, dist, data, .env, logs
@@ -55,8 +56,9 @@ chat-bot/
 │   └── retrieval-eval.ts ~280 CLI (`npm run retrieval:eval -- <dir>`): catalogue search + product pick scored on the sellers' test cases (no model calls)
 │
 ├── src/
-│   ├── server.ts         ~80  Entry point: config, DB, registry, tracing, crawl schedule, graceful shutdown (flushes traces)
-│   ├── config.ts         ~70  Reads environment variables (DATA_DIR, ADMIN_PASSWORD, model, LANGFUSE_*, …)
+│   ├── server.ts         ~85  Entry point: applies a staged restore, then config, DB, registry, tracing, crawl schedule, graceful shutdown (flushes traces)
+│   ├── backup.ts        ~210  Backup zip of DATA_DIR (consistent DB copy + files), restore checks and staging, swap on start
+│   ├── config.ts         ~95  Reads environment variables (DATA_DIR, ADMIN_PASSWORD, model, LANGFUSE_*, TRUST_PROXY, …); buildCommit()
 │   ├── app.ts           ~660  Express app: chat turn (shared), widget API (SSE), bot API (/api/v1: bot details, conversations, chat), feedback, sites, /health
 │   ├── botKeys.ts        ~20  Bot API keys: generate, hash, shape check
 │   ├── claude.ts        ~370  The chat turn loop: builds per-turn blocks, streams Claude, runs tools, ends on show_options
@@ -116,6 +118,6 @@ chat-bot/
 
 | Path | What |
 |------|------|
-| `data/` (`DATA_DIR`) | SQLite DB, crawled catalogues, admin sellers, uploaded KB JSON and extra files, common FAQ. A persistent disk on Render. |
+| `data/` (`DATA_DIR`) | SQLite DB, crawled catalogues, admin sellers, uploaded KB JSON and extra files, common FAQ. `/var/data` on the production server; Download backup / Restore on `/admin`. |
 | `.env` | Local secrets (API keys, admin password, Langfuse keys) |
 | Seller raw exports | Hold GST, bank and turnover data: upload on `/admin`, never commit |
