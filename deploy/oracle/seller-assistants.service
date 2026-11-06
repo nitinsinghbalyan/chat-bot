@@ -1,0 +1,25 @@
+[Unit]
+Description=Seller assistants (chat bots, seller sites, admin)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=bot
+Group=bot
+# The release deploy.sh switched to last.
+WorkingDirectory=/opt/seller-assistants/current
+EnvironmentFile=/etc/seller-assistants.env
+ExecStart=/usr/bin/node dist/src/server.js
+# Also brings the server back after a restore on /admin (it exits to apply it).
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+MemoryMax=4G
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/data
+
+[Install]
+WantedBy=multi-user.target

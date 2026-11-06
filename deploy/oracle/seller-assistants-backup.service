@@ -1,0 +1,9 @@
+[Unit]
+Description=Seller assistants: nightly backup of the data disk
+After=seller-assistants.service
+
+[Service]
+Type=oneshot
+User=bot
+EnvironmentFile=/etc/seller-assistants.env
+ExecStart=/usr/local/sbin/seller-assistants-backup

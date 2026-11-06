@@ -75,7 +75,7 @@ npm run crawl -- <slug>     # optional: crawl now and commit kb/sellers/<slug>/c
 git add kb/sellers/<slug> && git commit -m "Add <seller>" && git push
 ```
 
-On Render, the push redeploys. The server then crawls every seller's sitemap on start and every 24 hours after that, and the new seller appears in the directory. An invalid folder stops the server from starting, with every problem listed in the log, so run `kb:check` first.
+Merging to `main` redeploys. The server then crawls every seller's sitemap on start and every 24 hours after that, and the new seller appears in the directory. An invalid folder stops the server from starting, with every problem listed in the log, so run `kb:check` first.
 
 ## Seller knowledge base (JSON upload)
 
@@ -85,7 +85,7 @@ Once uploaded, the JSON is the **main source** for both the bot and the seller's
 - **The bot:** it replaces `business_card.json` and `product_cards.json` for that seller.
 - **The website:** every product and category page is built from it (photos, specifications, description, videos, PDFs and the listed starting price). Crawled pages only fill gaps and add pages the JSON doesn't have.
 
-The site keeps working even when the seller's own website blocks the crawler. The file is kept on the Render disk (`DATA_DIR/sellers/<slug>/seller_kb.json`), so it survives redeploys. **Download** returns it and **Remove** goes back to the KB folder files.
+The site keeps working even when the seller's own website blocks the crawler. The file is kept on the data disk (`DATA_DIR/sellers/<slug>/seller_kb.json`), so it survives redeploys. **Download** returns it and **Remove** goes back to the KB folder files.
 
 What the bot is given from it:
 
@@ -200,7 +200,7 @@ Each seller's assistant can have its own voice. On the directory, click **Edit p
 | **User prompt: added to every buyer message** (up to 2,000 characters) | Each buyer turn, as `<seller_instructions>` | A short standing instruction to keep in mind on every reply |
 
 - Both are **added on top of** the built-in prompt. The 9 guardrails, the knowledge-source rules and the OTP enquiry steps always apply, and the prompt tells the model they win if anything conflicts. The code-level output guardrails also still check every sentence.
-- Saving takes effect on the next chat turn; there's no redeploy. The prompts are stored in the SQLite database (`seller_prompts` table), so they survive restarts and redeploys on the Render disk.
+- Saving takes effect on the next chat turn; there's no redeploy. The prompts are stored in the SQLite database (`seller_prompts` table), so they survive restarts and redeploys on the data disk.
 - **Reset to default** goes back to the seller's `persona.json` (or nothing, if it has none). The form also shows a preview of the full system prompt.
 - Tags such as `<business_card>` or `<seller_instructions>` are stripped from both the prompts and buyer messages, so neither can break out of its block.
 
@@ -237,7 +237,7 @@ Another platform or a chat simulator can talk to any seller's bot with three JSO
 
 ## Tracing (Langfuse)
 
-Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to send traces to Langfuse, plus `LANGFUSE_BASE_URL` (or `LANGFUSE_HOST`) for a self-hosted Langfuse. Without the keys nothing is sent. On Render, add them under Environment and redeploy. The release is the deployed git commit (`RENDER_GIT_COMMIT`), and the environment is `LANGFUSE_ENVIRONMENT`, else `NODE_ENV`.
+Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to send traces to Langfuse, plus `LANGFUSE_BASE_URL` (or `LANGFUSE_HOST`) for a self-hosted Langfuse. Without the keys nothing is sent. On the server, add them to `/etc/seller-assistants.env` and restart (`sudo systemctl restart seller-assistants`). The release is the deployed git commit (the build id), and the environment is `LANGFUSE_ENVIRONMENT`, else `NODE_ENV`.
 
 **Startup check:** at startup the server asks Langfuse whether it accepts the keys. Without `LANGFUSE_BASE_URL` it tries the EU cloud (`https://cloud.langfuse.com`), then the US cloud (`https://us.cloud.langfuse.com`), and uses whichever accepts them. Keys are trimmed, since a pasted space makes Langfuse reject them. The result appears in the startup log (`[tracing] …`), on `/health` (`tracing.state`: `off`, `ok`, `auth_failed`, `unreachable`) and on `/admin`. `/admin` shows a red banner when the keys are rejected and a warning when exports fail. Export failures are also logged as `[tracing] export of N spans failed: …`.
 
@@ -339,28 +339,26 @@ Without a crawled catalogue, a seller's site shows the business card and product
 | `ALLOWED_ORIGINS` | (none) | Extra websites allowed to embed **any** seller's bot. Each seller's own site goes in `seller.json` |
 | `CRAWL_ON_START` / `CRAWL_INTERVAL_HOURS` | `false` / `24` | Re-crawls every seller, one after another. A crawl that fetches fewer than 80% of the pages already in the catalogue (the site blocking or rate-limiting part-way) doesn't replace it, and shows as **Crawl partial** on `/admin` |
 | `DEMO_OTP` | `12345` | Demo OTP |
+| `TRUST_PROXY` | `true` | Express `trust proxy`: `true` behind Render, `loopback` behind Caddy on the same server (so buyers can't fake their IP for the rate limits), a hop count, or `false` |
+| `GIT_COMMIT` | (none) | The build id shown on `/admin` and `/health`; else Render's `RENDER_GIT_COMMIT` or the deploy script's `.build-commit` file |
 
-## Deploying on Render
+## Deploying
 
-`render.yaml` is a Render Blueprint. It sets up:
+Production runs on a free **Oracle Cloud Always Free** server (Ubuntu 24.04, ARM). Step by step, including moving the data from Render: [docs/DEPLOY_ORACLE.md](docs/DEPLOY_ORACLE.md). The kit is in `deploy/oracle/`:
 
-- a Node 22 web service in Singapore, the closest Render region to India
-- a 1 GB persistent disk at `/var/data` for the database and the crawled catalogues
-- a health check on `/health`, which reports the running build (`build.commit` from Render's `RENDER_GIT_COMMIT`, `build.startedAt`), the model, tracing status and each seller's catalogue size. The admin footer shows the same build id, so a deploy can be confirmed at a glance
-- automatic deploys from `main`
+- `setup.sh`: one-time setup. Installs Node 22 and Caddy (free HTTPS on `<ip>.sslip.io` or your own domain), creates the user `bot` and the data folder `/var/data`, asks for the secrets and starts everything.
+- `deploy.sh`: a timer runs it every 2 minutes. When `main` moved, it builds the new commit in its own folder, switches over, restarts and checks `/health`. A failed build or health check keeps the previous version.
+- `backup.sh`: a nightly copy of the **Download backup** zip in `/var/data/backups` (newest 7).
 
-Steps:
+`/health` reports the running build (`build.commit`: `GIT_COMMIT`, Render's `RENDER_GIT_COMMIT` or the deploy script's `.build-commit`; `build.startedAt`), the model, tracing status and each seller's catalogue size. The admin's Deployment card shows the same build id, so a deploy can be confirmed at a glance.
 
-1. In Render, choose **New → Blueprint** and pick this repo.
-2. When prompted, enter `ANTHROPIC_API_KEY` and `ADMIN_PASSWORD`.
-3. Apply. When the build finishes, open the service URL: `/` is the seller directory.
-4. Optional: under the service's **Settings → Custom Domains**, add a domain and create the CNAME record Render shows.
+**Backup and restore** (on `/admin`, Backup card):
+- **Download backup** zips everything on the data disk: a consistent copy of the database, uploaded KBs, extra files, crawls and the FAQ sheet.
+- **Restore from a backup** replaces it all and restarts the server. The data it replaces is kept in `DATA_DIR/.before-restore-<time>/`.
 
-Things to know:
+### Render (paid alternative)
 
-- **Cost:** a persistent disk needs a paid instance (`starter`), which also never sleeps.
-- **Downtime on deploy:** with a disk attached, each deploy causes a few seconds of downtime.
-- **Backups:** download `/admin/leads.csv` regularly. Render also takes daily snapshots of the disk.
+`render.yaml` is a Render Blueprint: a Node 22 web service in Singapore with a 1 GB disk at `/var/data` and auto-deploys from `main`. The disk needs a paid instance (`starter`), which is why production moved. To use it: **New → Blueprint**, pick this repo, enter `ANTHROPIC_API_KEY` and `ADMIN_PASSWORD`, and apply.
 
 ## Embedding a bot on the seller's own website
 
@@ -410,5 +408,6 @@ src/                 app.ts (HTTP: chat API, website), admin.ts (admin pages), s
 public/              widget.js (embeddable chat), site.css, admin.css, demo.html
 scripts/             crawl.ts, kb-check.ts, eval.ts
 tests/               vitest tests + fixtures (HTML pages, two sample sellers, a sample KB JSON, a sample FAQ .xlsx)
-render.yaml          Render Blueprint (web service + persistent disk)
+deploy/oracle/        Production server kit: setup.sh, deploy.sh, backup.sh, systemd units, Caddyfile
+render.yaml          Render Blueprint (paid alternative: web service + persistent disk)
 ```

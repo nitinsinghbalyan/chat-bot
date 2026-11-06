@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { runTurn, type TurnResult } from "./claude.js";
-import { config, paths } from "./config.js";
+import { buildCommit, config, paths } from "./config.js";
 import { hashBotKey, looksLikeBotKey } from "./botKeys.js";
 import type { CatalogueEntry } from "./crawler.js";
 import type { BotKey, ChatDb } from "./db.js";
@@ -34,6 +34,10 @@ export interface AppDeps {
   tracing?: Tracing;
   /** The common FAQ (see src/faq.ts). */
   faq?: FaqStore;
+  /** DATA_DIR, for the admin backup and restore. Default: paths.data. */
+  dataDir?: string;
+  /** Restarts the server (after a restore is staged). */
+  restart?: () => void;
 }
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
@@ -72,7 +76,7 @@ export function createApp(deps: AppDeps) {
 
   const app = express();
   app.disable("x-powered-by");
-  app.set("trust proxy", true);
+  app.set("trust proxy", config.TRUST_PROXY);
   // Chat requests are small; the admin KB upload has its own, larger limit.
   app.use("/api", express.json({ limit: "16kb" }));
 
@@ -124,8 +128,8 @@ export function createApp(deps: AppDeps) {
   });
   app.use("/api", (req, res, next) => (req.path.startsWith("/v1/") ? next() : cors(req, res, next)));
 
-  // Which build is running, so a deploy can be confirmed from outside (Render sets RENDER_GIT_COMMIT).
-  const build = { commit: process.env.RENDER_GIT_COMMIT?.slice(0, 12) ?? null, startedAt: new Date().toISOString() };
+  // Which build is running, so a deploy can be confirmed from outside (see buildCommit).
+  const build = { commit: buildCommit(), startedAt: new Date().toISOString() };
   app.get("/health", (_req, res) => {
     res.json({
       ok: true,
@@ -600,7 +604,7 @@ export function createApp(deps: AppDeps) {
   );
 
   // ---- Admin (team only) ----
-  mountAdmin(app, { sellers, db, adminPassword, recrawl: deps.recrawl, sameHost, tracing: tracing.status, testTracing: () => tracing.testConnection(), faq: deps.faq });
+  mountAdmin(app, { sellers, db, adminPassword, recrawl: deps.recrawl, sameHost, tracing: tracing.status, testTracing: () => tracing.testConnection(), faq: deps.faq, dataDir: deps.dataDir, restart: deps.restart });
 
   app.use(
     express.static(paths.public, {

@@ -1,0 +1,6 @@
+# /etc/caddy/Caddyfile (written by setup.sh with your address in place of SITE_HOST).
+# Caddy gets and renews the HTTPS certificate on its own, and passes chat streams straight through.
+SITE_HOST {
+	encode gzip
+	reverse_proxy 127.0.0.1:3000
+}

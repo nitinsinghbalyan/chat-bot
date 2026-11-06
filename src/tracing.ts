@@ -16,7 +16,7 @@ import type { ReadableSpan, Span, SpanExporter, SpanProcessor } from "@opentelem
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { propagateAttributes, startActiveObservation, startObservation } from "@langfuse/tracing";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
-import { config } from "./config.js";
+import { buildCommit, config } from "./config.js";
 
 export type ObservationType = "span" | "generation" | "tool" | "retriever" | "guardrail" | "event";
 
@@ -501,7 +501,7 @@ export async function initTracing(env: LangfuseEnv = config, fetchImpl: typeof f
   }
   const { baseUrl, state, message } = await resolveLangfuse(env, fetchImpl);
   const environment = env.LANGFUSE_ENVIRONMENT ?? (process.env.NODE_ENV || "development").toLowerCase();
-  const release = process.env.RENDER_GIT_COMMIT?.slice(0, 12);
+  const release = buildCommit() ?? undefined;
   const version = await langfuseVersion(baseUrl, fetchImpl);
   const tooOld = versionWarning(version);
   const status: TracingStatus = { state, host: host(baseUrl), baseUrl, projectId: state === "ok" ? probedProjectId : undefined, message: tooOld ?? message, version, exports: 0, spansExported: 0, exportErrors: 0 };
