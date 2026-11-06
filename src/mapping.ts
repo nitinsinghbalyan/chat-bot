@@ -8,6 +8,7 @@ import type { ProductCard } from "./kb.js";
 import type { BusinessCardMd, McatSpec } from "./sellerFiles.js";
 import { namesEqual, namesMatch } from "./sellerFiles.js";
 import type { Isq, KbView } from "./sellerKb.js";
+import { cardQuestions } from "./cardQuestions.js";
 
 export interface CategoryMapping {
   name: string;
@@ -16,8 +17,8 @@ export interface CategoryMapping {
   mainMcat: { id: string; name: string | null; products: number; inFile: boolean } | null;
   /** The category's other MCATs (a site category often pools several). */
   otherMcats: Array<{ id: string; name: string | null; products: number; inFile: boolean }>;
-  /** The questions asked when only the category is known (the main MCAT's). */
-  questions: { source: "mcat" | "derived" | "none"; mcat: string | null; isqs: Isq[]; presentOn: number };
+  /** The questions asked when the buyer's product has no card with must-ask specs: the main MCAT's file specs, else the products' own values. */
+  questions: { source: "card" | "mcat" | "derived" | "none"; mcat: string | null; isqs: Isq[]; presentOn: number };
   flags: string[];
 }
 
@@ -27,6 +28,8 @@ export interface CardMapping {
   category: string | null;
   mcat: { id: string; name: string | null } | null;
   how: "product" | "category" | "mcat" | "contains" | "word" | "none";
+  /** The card's must-ask specs as the bot asks them (empty: the product falls back to the MCAT file). */
+  questions: Isq[];
 }
 
 export interface KnowledgeMapping {
@@ -54,11 +57,11 @@ export interface KnowledgeMapping {
 }
 
 /** Maps a product card to the seller's catalogue: a product, a category, an MCAT name, else a containing name. */
-export function mapCard(card: ProductCard, view: KbView, mcats: McatSpec[]): CardMapping {
+export function mapCard(card: ProductCard, view: KbView, mcats: McatSpec[]): Omit<CardMapping, "questions"> {
   const names = [card.canonical_name, card.category ?? "", ...(card.aliases ?? []), ...(card.flow.categories ?? [])].filter(Boolean);
   const kb = view.kb;
   const mcatName = (id: string | null) => (id ? (mcats.find((m) => m.id === id)?.name ?? null) : null);
-  const place = (categoryName: string | null, id: string | null, how: CardMapping["how"]): CardMapping => ({ name: card.canonical_name, category: categoryName, mcat: id ? { id, name: mcatName(id) } : null, how });
+  const place = (categoryName: string | null, id: string | null, how: CardMapping["how"]): Omit<CardMapping, "questions"> => ({ name: card.canonical_name, category: categoryName, mcat: id ? { id, name: mcatName(id) } : null, how });
   for (const n of names) {
     const p = kb.products.find((x) => namesEqual(view.title(x), n) || namesEqual(x.name, n));
     if (p) return place(view.categoryOf(p)?.name ?? null, view.mcatOf(p), "product");
@@ -119,7 +122,7 @@ export function buildMapping(view: KbView, files: { mcats: McatSpec[]; mcatUploa
     if (!list.length) cf.push("no MCAT ids on its products");
     else if (!list[0].inFile) cf.push(`main MCAT ${list[0].id} is not in the MCAT file`);
     if (!plan.isqs.length) cf.push("no spec questions");
-    else if (plan.source === "derived") cf.push(plan.mcat ? `MCAT ${plan.mcat}'s specs aren't on these products; questions derived from the products` : "questions derived from the products (no MCAT match)");
+    else if (plan.source === "derived") cf.push("no MCAT file entry: questions derived from the products");
     const toM = (m: (typeof list)[number]) => ({ id: m.id, name: m.name ?? null, products: m.products, inFile: m.inFile });
     return {
       name: c.name,
@@ -133,7 +136,15 @@ export function buildMapping(view: KbView, files: { mcats: McatSpec[]; mcatUploa
   const byName = new Set(categories.filter((c) => c.questions.source === "mcat" && c.mainMcat && !c.mainMcat.inFile).map((c) => c.questions.mcat));
   const usedByName = mcats.filter((m) => !usedIds.has(m.id) && byName.has(m.name)).map((m) => m.name);
   const unused = mcats.filter((m) => !usedIds.has(m.id) && !byName.has(m.name)).map((m) => m.name);
-  const cardMaps = cards.map((card) => mapCard(card, view, mcats));
+  const cardMaps = cards.map((card) => {
+    const m = mapCard(card, view, mcats);
+    const c = m.category ? view.categoryNamed(m.category) : undefined;
+    const products = c ? (m.mcat ? view.productsOfMcat(c, m.mcat.id) : view.productsIn(c)) : [];
+    const mcat = m.mcat ? mcats.find((x) => x.id === m.mcat!.id) : undefined;
+    return { ...m, questions: cardQuestions(card, mcat, products.map((p) => view.specs(p))) };
+  });
+  const noAsk = cardMaps.filter((c) => !c.questions.length);
+  const open = cardMaps.flatMap((c) => c.questions.filter((q) => !q.options.length).map((q) => `${c.name}: ${q.question}`));
   const loose = view.looseProducts().length;
   const noQuestions = categories.filter((c) => c.questions.source === "none").length;
   const derived = categories.filter((c) => c.questions.source === "derived").length;
@@ -141,7 +152,9 @@ export function buildMapping(view: KbView, files: { mcats: McatSpec[]; mcatUploa
   if (!files.mcatUploaded) flags.push("No MCAT specifications file: questions come from the products' own specification values.");
   if (missing.size) flags.push(`${missing.size} MCAT id${missing.size === 1 ? "" : "s"} used by products are not in the MCAT file (${[...missing.entries()].slice(0, 5).map(([id, e]) => `${id}: ${e.products} product${e.products === 1 ? "" : "s"}`).join(", ")}${missing.size > 5 ? ", …" : ""}).`);
   if (noQuestions) flags.push(`${noQuestions} categor${noQuestions === 1 ? "y has" : "ies have"} no spec questions.`);
-  if (derived) flags.push(`${derived} categor${derived === 1 ? "y uses" : "ies use"} questions derived from the products instead of the MCAT file.`);
+  if (derived) flags.push(`${derived} categor${derived === 1 ? "y has" : "ies have"} no MCAT file entry, so their fallback questions are derived from the products.`);
+  if (cards.length && noAsk.length) flags.push(`${noAsk.length} of ${cards.length} product cards have no must-ask specs; their products get the MCAT file's questions (${noAsk.slice(0, 5).map((c) => c.name).join(", ")}${noAsk.length > 5 ? ", …" : ""}).`);
+  if (open.length) flags.push(`${open.length} must-ask spec${open.length === 1 ? " has" : "s have"} fewer than two options in the files and ${open.length === 1 ? "is" : "are"} asked in words (${open.slice(0, 4).join("; ")}${open.length > 4 ? "; …" : ""}).`);
   if (loose) flags.push(`${loose} product${loose === 1 ? " is" : "s are"} in no category and never get spec questions.`);
   if (unmatchedCards) flags.push(`${unmatchedCards} product card${unmatchedCards === 1 ? "" : "s"} match${unmatchedCards === 1 ? "es" : ""} no product or category (${cardMaps.filter((c) => c.how === "none").slice(0, 5).map((c) => c.name).join(", ")}).`);
   if (unused.length) flags.push(`${unused.length} MCAT file entr${unused.length === 1 ? "y is" : "ies are"} not used by any product or category.`);

@@ -179,6 +179,12 @@ export class ChatDb {
     if (!(this.db.prepare("PRAGMA table_info(leads)").all() as Array<{ name: string }>).some((c) => c.name === "buyer_id")) {
       this.db.exec("ALTER TABLE leads ADD COLUMN buyer_id TEXT");
     }
+    // The closing details asked after the spec questions (Nov 2026): individual or business, firm name, time frame.
+    for (const col of ["buyer_type", "firm_name", "timeframe"]) {
+      if (!(this.db.prepare("PRAGMA table_info(leads)").all() as Array<{ name: string }>).some((c) => c.name === col)) {
+        this.db.exec(`ALTER TABLE leads ADD COLUMN ${col} TEXT NOT NULL DEFAULT ''`);
+      }
+    }
     // Keys made before key kinds existed served simulators, so they stay test keys.
     if (!(this.db.prepare("PRAGMA table_info(bot_keys)").all() as Array<{ name: string }>).some((c) => c.name === "kind")) {
       this.db.exec("ALTER TABLE bot_keys ADD COLUMN kind TEXT NOT NULL DEFAULT 'test'");
@@ -276,8 +282,8 @@ export class ChatDb {
     return Number(
       this.db
         .prepare(
-          `INSERT INTO leads (created_at, seller, session_id, mobile, name, product, requirements, quantity, city, page_url, chat_id, test, buyer_id)
-           VALUES (@createdAt, @seller, @sessionId, @mobile, @name, @product, @requirements, @quantity, @city, @pageUrl, @chatId, @test, @buyerId)`,
+          `INSERT INTO leads (created_at, seller, session_id, mobile, name, product, requirements, quantity, city, page_url, chat_id, test, buyer_id, buyer_type, firm_name, timeframe)
+           VALUES (@createdAt, @seller, @sessionId, @mobile, @name, @product, @requirements, @quantity, @city, @pageUrl, @chatId, @test, @buyerId, @buyerType, @firm, @timeframe)`,
         )
         .run({
           createdAt: lead.createdAt,
@@ -293,17 +299,20 @@ export class ChatDb {
           chatId: lead.chatId ?? null,
           test: lead.test ? 1 : 0,
           buyerId: lead.buyerId ?? null,
+          buyerType: lead.buyerType ?? "",
+          firm: lead.firm ?? "",
+          timeframe: lead.timeframe ?? "",
         }).lastInsertRowid,
     );
   }
 
   /** Updates the requirement details of a session's lead (save_lead called again after the ISQs). */
-  updateLead(seller: string, sessionId: string, fields: Pick<Lead, "product" | "requirements" | "quantity" | "city">): boolean {
+  updateLead(seller: string, sessionId: string, fields: Pick<Lead, "product" | "requirements" | "quantity" | "city" | "buyerType" | "firm" | "timeframe">): boolean {
     const row = this.db.prepare("SELECT id FROM leads WHERE seller = ? AND session_id = ? ORDER BY id DESC LIMIT 1").get(seller, sessionId) as { id: number } | undefined;
     if (!row) return false;
     this.db
-      .prepare("UPDATE leads SET product = @product, requirements = @requirements, quantity = @quantity, city = @city WHERE id = @id")
-      .run({ ...fields, id: row.id });
+      .prepare("UPDATE leads SET product = @product, requirements = @requirements, quantity = @quantity, city = @city, buyer_type = @buyerType, firm_name = @firm, timeframe = @timeframe WHERE id = @id")
+      .run({ product: fields.product, requirements: fields.requirements, quantity: fields.quantity, city: fields.city, buyerType: fields.buyerType ?? "", firm: fields.firm ?? "", timeframe: fields.timeframe ?? "", id: row.id });
     return true;
   }
 
@@ -328,6 +337,9 @@ export class ChatDb {
       chatId: r.chat_id ?? undefined,
       ...(r.test ? { test: true } : {}),
       ...(r.buyer_id ? { buyerId: r.buyer_id } : {}),
+      ...(r.buyer_type ? { buyerType: r.buyer_type } : {}),
+      ...(r.firm_name ? { firm: r.firm_name } : {}),
+      ...(r.timeframe ? { timeframe: r.timeframe } : {}),
     }));
   }
 

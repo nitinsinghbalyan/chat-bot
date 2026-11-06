@@ -36,7 +36,7 @@
     } catch (e) {
       s = null;
     }
-    if (!s || !s.sessionId || Date.now() - (s.updatedAt || 0) > TTL) s = { sessionId: newId(), history: [], askFor: null };
+    if (!s || !s.sessionId || Date.now() - (s.updatedAt || 0) > TTL) s = { sessionId: newId(), history: [], askFor: "mobile" };
     return s;
   }
   function persist() {
@@ -400,8 +400,8 @@
   }
 
   function greeting(c) {
-    // The same welcome for every seller (sent by the server); it asks the buyer nothing.
-    return c.greeting || "Welcome to " + c.name + ". I can tell you about our products, share photos and brochures, and pass your enquiry to our team.";
+    // The same opening for every seller (sent by the server): the buyer logs in first, so it asks for the mobile number.
+    return c.greeting || "Welcome to " + c.name + ". Please share your 10-digit mobile number to get started.";
   }
   function setAskFor(kind) {
     if (state) state.askFor = kind;
@@ -593,7 +593,7 @@
   function reset(ask) {
     if (sending || !current || !state) return false;
     if (ask && state.history.length && !window.confirm("Start a new chat? This conversation will be cleared.")) return false;
-    state = { sessionId: newId(), history: [], askFor: null, chips: null };
+    state = { sessionId: newId(), history: [], askFor: "mobile", chips: null };
     persist();
     render();
     input.focus();

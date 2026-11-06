@@ -4,7 +4,8 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { buildMapping, type KnowledgeMapping } from "./mapping.js";
+import { buildMapping, mapCard, type KnowledgeMapping } from "./mapping.js";
+import { CardIndex } from "./cardQuestions.js";
 import { z } from "zod";
 import { Catalogue } from "./catalogue.js";
 import type { CatalogueEntry } from "./crawler.js";
@@ -147,6 +148,8 @@ export interface SellerContext {
   terms: SellerTerms;
   /** How the KB JSON, MCAT file, product cards, FAQs and policy card join up (KB JSON sellers only). */
   mapping: KnowledgeMapping | null;
+  /** The uploaded product cards, found per turn: their must-ask specs are the bot's spec questions (KB JSON sellers only). */
+  cardIndex: CardIndex | null;
 }
 
 function readJsonFile(file: string, errors: string[]): unknown {
@@ -294,6 +297,7 @@ export class SellerRegistry {
       mcatUse: { matched: [], filled: [] },
       terms: { names: [], mcatIds: new Set() },
       mapping: null,
+      cardIndex: null,
     };
     s.files = readSellerFiles(s.filesDir, config.slug);
     this.sellers.set(config.slug, s);
@@ -391,11 +395,13 @@ export class SellerRegistry {
       const fromJson = knowledgeFromKb(view, s.fileKb);
       kb = { ...fromJson, productCards: [...fromJson.productCards, ...extra], productCardsText: fromJson.productCardsText + extraText };
       s.mapping = buildMapping(view, { mcats, mcatUploaded: !!s.files.mcat, cards: uploadedCards, policyCard: md ?? null }, view.faqs());
+      s.cardIndex = uploadedCards.length ? new CardIndex(uploadedCards, new Map(uploadedCards.map((c) => [c.product_id, (({ category, mcat }) => ({ category, mcatId: mcat?.id ?? null }))(mapCard(c, view, mcats))]))) : null;
     } else {
       // The same kind of file as the KB folder's product_cards.json: the uploaded copy replaces it.
       const cards = fill(uploadedCards.length ? uploadedCards : s.fileKb.productCards);
       kb = { ...s.fileKb, productCards: cards, productCardsText: cards.map(renderProductCard).join("\n\n---\n\n") };
       s.mapping = null;
+      s.cardIndex = null;
     }
     kb.businessCardText += mdText;
     if (md?.phones.length) kb.allowedPhones = [...new Set([...kb.allowedPhones, ...md.phones])];

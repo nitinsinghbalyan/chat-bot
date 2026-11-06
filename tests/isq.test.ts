@@ -84,36 +84,34 @@ describe("ISQs per category and MCAT", () => {
       { mcat_id: 2, mcat_name: "Machine", specifications: [{ name: "Colour", options: ["Red", "Blue"] }] },
     ]);
 
-  it("with the MCAT file: the seller's own specs first (seller's values, then the MCAT's other options), then the MCAT's specs the seller doesn't carry", () => {
+  it("with the MCAT file and no product card: the MCAT's specs in the file's order, the seller's values leading each spec's options", () => {
     const m = file();
     if (!m.ok) throw new Error("parse");
     const v = new KbView(kb(), { mcats: m.value });
     const [a, b, shears] = v.kb.categories;
-    // By MCAT id 25058: Capacity and Control Axis are the seller's own specs (their values lead the options, the MCAT's
-    // other options follow); Bending Length is on no product, so it comes last as the MCAT's standard question.
+    // By MCAT id 25058: the file's specs in its order. Capacity and Control Axis are on the seller's products, so their
+    // values lead (the MCAT's other options follow); Bending Length is on no product and keeps the file's options.
     expect(v.isqPlan(a)).toMatchObject({ source: "mcat", mcat: "CNC Press Brake", label: "CNC PRESS BRAKE · CNC Press Brake", mcatId: "25058", presentOn: 2 });
-    expect(v.isqPlan(a).isqs.slice(0, 2)).toEqual([
+    expect(v.isqPlan(a).isqs).toEqual([
+      { question: "Bending Length", options: ["2500 mm", "3200 mm"], from: "mcat" },
       { question: "Capacity", options: ["100 Ton", "200 Ton", "300 Ton", "500 Ton"], from: "products" },
       { question: "Control Axis", options: ["4 AXIS", "5 AXIS", "3 AXIS"], from: "products" },
     ]);
-    expect(v.isqPlan(a).isqs.at(-1)).toEqual({ question: "Bending Length", options: ["2500 mm", "3200 mm"], from: "mcat" });
-    expect(v.isqPlan(a).isqs.length).toBeLessThanOrEqual(4);
     // The same MCAT in another category is checked against that category's products: one product here, so its own values
     // lead each MCAT spec it carries, even a value the MCAT doesn't list ("8 + 1 AXIS").
-    expect(v.isqPlan(b).isqs.slice(0, 2)).toEqual([
+    expect(v.isqPlan(b).isqs.slice(1)).toEqual([
       { question: "Capacity", options: ["500 Ton", "300 Ton", "100 Ton", "200 Ton"], from: "products" },
       { question: "Control Axis", options: ["8 + 1 AXIS", "3 AXIS", "4 AXIS"], from: "products" },
     ]);
-    // No entry for 185336, but "Shearing Machines" equals "Shearing Machine"; "Max Shearing Thickness" covers "Shearing Thickness",
-    // so the derived "Shearing Thickness" is not asked twice; the products' Automation Grade and the MCAT's Blade Length follow.
+    // No entry for 185336, but "Shearing Machines" equals "Shearing Machine": only the file's specs are asked, so the
+    // products' own Automation Grade is not (the MCAT file is the fallback, not the products).
     const sh = v.isqPlan(shears);
     expect(sh).toMatchObject({ source: "mcat", mcat: "Shearing Machines" });
     expect(sh.isqs.map((q) => [q.question, q.from])).toEqual([
-      ["Max Shearing Thickness", "products"],
-      ["Automation Grade", "derived"],
       ["Blade Length", "mcat"],
+      ["Max Shearing Thickness", "products"],
     ]);
-    expect(sh.isqs[0].options).toEqual(["6 mm", "12 mm", "4 mm"]);
+    expect(sh.isqs[1].options).toEqual(["6 mm", "12 mm", "4 mm"]);
     expect(v.systemText()).toContain("ISQs (from MCAT CNC Press Brake)");
     expect(v.systemText()).not.toContain("Colour");
   });
@@ -131,17 +129,16 @@ describe("ISQs per category and MCAT", () => {
     const c = v.kb.categories[0];
     expect(v.mcatsOf(c).map((x) => [x.id, x.products])).toEqual([["25058", 2], ["999", 1]]);
     expect(v.isqPlan(c).mcat).toBe("CNC Press Brake");
-    // The H-frame press's MCAT: the seller's values are compared across the whole category (all three presses). The MCAT's
-    // own specs lead (Capacity on all three, Frame Type on the H-frame press with the seller's H Frame first), then the
-    // seller-only Control Axis.
+    // The H-frame press's MCAT: its file specs in the file's order, the seller's values (compared across the whole
+    // category) leading each; the seller-only Control Axis is not asked.
     expect(v.isqPlan(c, "999")).toMatchObject({
       mcat: "H Frame Hydraulic Press",
       isqs: [
-        { question: "Capacity", options: ["100 Ton", "200 Ton", "50 Ton"], from: "products" },
         { question: "Frame Type", options: ["H Frame", "C Frame"], from: "products" },
-        { question: "Control Axis", options: ["4 AXIS", "5 AXIS"], from: "derived" },
+        { question: "Capacity", options: ["100 Ton", "200 Ton", "50 Ton"], from: "products" },
       ],
     });
+    expect(v.isqPlan(c, "999").isqs).toHaveLength(2);
     expect(v.isqPlan(c, "777").mcat).toBe("CNC Press Brake");
     // A product MCAT with nothing to ask falls back to the category's main MCAT rather than asking nothing.
     data.products.push({ ...data.products[0], product_id: "7", product_url: "https://seller.example/7.html", name: "Odd Press", taxonomy: { category_name: "", glmcat_ids: ",555,", glcat_ids: "" }, specifications: [] });
@@ -211,7 +208,7 @@ describe("the chat's machine, picked by the server", () => {
     markAsked(l, plan, ["100 Ton", "200 Ton", "500 Ton"]);
     expect(l.askedIsqs).toEqual(["Capacity"]);
     const text = specQuestionsText(plan, l.askedIsqs);
-    expect(text).toContain("Product: CNC PRESS BRAKE · CNC Press Brake.");
+    expect(text).toContain("Product: CNC PRESS BRAKE · CNC Press Brake (from the MCAT specifications).");
     expect(text).toContain("1. Capacity? Options: 100 Ton / 200 Ton / 500 Ton");
     expect(text).toContain("Already asked: Capacity.");
     expect(text).toContain("Next: Control Axis.");

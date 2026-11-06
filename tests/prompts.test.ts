@@ -32,11 +32,15 @@ describe("system prompt", () => {
     expect(sys).not.toMatch(/\{\{[A-Z_]+\}\}/);
   });
 
-  it("asks for the mobile on the first message, then OTP, then the name", () => {
-    expect(sys).toContain("1. Mobile number first: on the buyer's first message, whatever it is, reply only with a short request for their mobile number");
-    expect(sys).toContain("2. OTP, then name");
-    expect(sys.indexOf("1. Mobile number first")).toBeLessThan(sys.indexOf("3. Product: if it still isn't clear"));
-    expect(sys).toContain("don't introduce yourself or greet at length");
+  it("logs the buyer in first, then greets and asks the name, the requirement, the specs and the closing details", () => {
+    expect(sys).toContain("1. Login: the buyer's mobile number, then the OTP.");
+    expect(sys).toContain("2. Greeting and name: once verified, welcome them to our company");
+    const order = ["1. Login", "2. Greeting and name", "3. Requirement", "4. Specifications", "5. Quantity, then individual or business", "6. Summary"].map((h) => sys.indexOf(h));
+    expect(order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1]))).toBe(true);
+    for (const step of ["**Quantity.**", "**Individual or business.**", "**Time frame.**", "**Delivery city.**"]) expect(sys).toContain(step);
+    expect(sys).toContain('"Immediately", "Within 15 days", "Within a month", "1–3 months" and "Just exploring"');
+    expect(sys).toContain("the must-ask specifications of its product card, else its MCAT's specifications");
+    expect(sys).toContain("don't introduce yourself");
   });
 
   it("includes all nine guardrails and both cards", () => {

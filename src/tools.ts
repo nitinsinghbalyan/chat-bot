@@ -2,7 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { config } from "./config.js";
 import type { MediaCard, MediaKind } from "./media.js";
-import type { LeadState, Session } from "./session.js";
+import type { EnquiryDetails, LeadState, Session } from "./session.js";
 import { currentPlan, markAnswered, pendingQuestions, setPlace, type IsqSource } from "./isqTracker.js";
 
 const MAX_OTP_ATTEMPTS = 3;
@@ -42,7 +42,7 @@ export const toolDefinitions: Anthropic.Beta.BetaTool[] = [
   {
     name: "save_lead",
     description:
-      "Pass the buyer's enquiry to our sales team. Call it as soon as the mobile number is verified and the buyer has told you their name, then call it again after the last qualification question with all the answers and complete set to true (later calls update the same enquiry). When complete is true the buyer sees a summary card of the enquiry. Use an empty string or empty list for anything the buyer has not told you.",
+      "Pass the buyer's enquiry to our sales team. Call it as soon as the mobile number is verified and the buyer has told you their name, again as details arrive, and finally with every detail and complete set to true once the delivery city is known (later calls update the same enquiry). When complete is true the buyer sees a summary card of the enquiry. Use an empty string or empty list for anything the buyer has not told you.",
     strict: true,
     eager_input_streaming: true,
     input_schema: {
@@ -67,14 +67,17 @@ export const toolDefinitions: Anthropic.Beta.BetaTool[] = [
           type: "string",
           description: "Any other requirement details the buyer shared that are not in specs. Empty string if none.",
         },
-        quantity: { type: "string", description: "Quantity the buyer mentioned, with unit. Empty string if not mentioned." },
-        city: { type: "string", description: "Buyer's city or delivery location if mentioned. Empty string if not mentioned." },
+        quantity: { type: "string", description: "Quantity the buyer needs, with unit (e.g. 50 sets, 2 pieces). Empty string if not given yet." },
+        buyer_type: { type: "string", description: "\"individual\" or \"business\" as the buyer said (or their own words if they declined). Empty string if not asked yet." },
+        firm: { type: "string", description: "The buyer's firm or company name, when they buy for a business. Empty string otherwise." },
+        timeframe: { type: "string", description: "When the buyer plans to buy, e.g. \"Within a month\". Empty string if not asked yet." },
+        city: { type: "string", description: "The delivery city. Empty string if not given yet." },
         complete: {
           type: "boolean",
           description: "True once every qualification question is answered (or none apply), and when saving a correction the buyer made afterwards. False on the first save before the qualification questions.",
         },
       },
-      required: ["name", "product", "specs", "requirements", "quantity", "city", "complete"],
+      required: ["name", "product", "specs", "requirements", "quantity", "buyer_type", "firm", "timeframe", "city", "complete"],
       additionalProperties: false,
     },
   },
@@ -129,6 +132,9 @@ const inputSchemas = {
         .default([]),
       requirements: z.string().max(1500),
       quantity: z.string().max(100),
+      buyer_type: z.string().max(60).default(""),
+      firm: z.string().max(120).default(""),
+      timeframe: z.string().max(60).default(""),
       city: z.string().max(100),
       complete: z.boolean().default(false),
     })
@@ -182,6 +188,10 @@ export interface Lead {
   test?: boolean;
   /** The buyer's id on the platform that started the chat (bot API, POST .../conversations). */
   buyerId?: string;
+  /** "individual", "business" or the buyer's own words. */
+  buyerType?: string;
+  firm?: string;
+  timeframe?: string;
 }
 
 export type LeadSink = (lead: Lead) => void;
@@ -205,14 +215,61 @@ export function requirementsText(input: SaveLeadInput): string {
   return [...answeredSpecs(input).map((s) => `${s.label}: ${s.value}`), input.requirements.trim()].filter(Boolean).join("; ");
 }
 
-/** The summary card: the machine, each spec, quantity, city, name and the masked mobile; empty rows left out. */
-export function enquirySummary(input: SaveLeadInput, name: string, mobile: string): EnquirySummary {
+/** The time-frame buttons, the same for every seller. */
+export const TIMEFRAME_OPTIONS = ["Immediately", "Within 15 days", "Within a month", "1–3 months", "Just exploring"];
+export const BUYER_TYPE_OPTIONS = ["Individual", "Business"];
+
+/** "Business", "for my shop", "company" → business; "myself", "personal", "Individual" → individual; else "". */
+export function buyerKind(v: string | undefined): "individual" | "business" | "" {
+  const t = (v ?? "").toLowerCase();
+  if (/business|firm|company|shop|store|factory|office|trader|dealer|pvt|ltd|wholesale|resell/.test(t)) return "business";
+  if (/individual|personal|myself|self|home|ghar|own use|apne liye/.test(t)) return "individual";
+  return "";
+}
+
+/** The details saved so far with this call's non-empty fields on top. */
+export function mergeDetails(prev: EnquiryDetails | undefined, input: SaveLeadInput): EnquiryDetails {
+  const next: EnquiryDetails = { ...(prev ?? {}) };
+  const take = (k: keyof EnquiryDetails, v: string) => {
+    if (v.trim()) next[k] = v.trim();
+  };
+  take("product", input.product);
+  take("quantity", input.quantity);
+  take("buyerType", input.buyer_type);
+  take("firm", input.firm);
+  take("timeframe", input.timeframe);
+  take("city", input.city);
+  const kind = buyerKind(next.buyerType);
+  if (kind) next.buyerType = kind;
+  return next;
+}
+
+/**
+ * The next closing step still missing after the spec questions, as an instruction for the model, or
+ * null when all are known: quantity (in the card's selling unit), individual or business, the firm
+ * name for a business, the time frame, the delivery city. Any answer counts ("not sure" included).
+ */
+export function closingStep(d: EnquiryDetails, unit?: string): string | null {
+  if (!d.quantity) return `the quantity: ask how many they need${unit ? ` (in ${unit}s)` : ""}, in words without buttons`;
+  if (!d.buyerType) return `whether they are buying as an individual or for a business: ask it with show_options ${BUYER_TYPE_OPTIONS.map((o) => `"${o}"`).join(" and ")}`;
+  if (buyerKind(d.buyerType) === "business" && !d.firm) return "their firm or company name: ask it in words without buttons";
+  if (!d.timeframe) return `when they plan to buy: ask it with show_options ${TIMEFRAME_OPTIONS.map((o) => `"${o}"`).join(", ")}`;
+  if (!d.city) return "the delivery city: ask it in words without buttons";
+  return null;
+}
+
+/** The summary card: the product, each spec, quantity, buyer type, firm, time frame, delivery city, name and the masked mobile; empty rows left out. */
+export function enquirySummary(input: SaveLeadInput, name: string, mobile: string, d: EnquiryDetails = mergeDetails(undefined, input)): EnquirySummary {
+  const kind = buyerKind(d.buyerType);
   const rows = [
-    { label: "Product", value: input.product.trim() },
+    { label: "Product", value: d.product ?? input.product.trim() },
     ...answeredSpecs(input),
     { label: "Other details", value: input.requirements.trim() },
-    { label: "Quantity", value: input.quantity.trim() },
-    { label: "City", value: input.city.trim() },
+    { label: "Quantity", value: d.quantity ?? "" },
+    { label: "Buying as", value: kind === "business" ? "Business" : kind === "individual" ? "Individual" : (d.buyerType ?? "") },
+    { label: "Firm", value: kind === "individual" ? "" : (d.firm ?? "") },
+    { label: "Time frame", value: d.timeframe ?? "" },
+    { label: "Delivery city", value: d.city ?? "" },
     { label: "Name", value: name },
     { label: "Mobile", value: maskMobile(mobile) },
   ].filter((r) => r.value);
@@ -224,35 +281,51 @@ export function enquirySummary(input: SaveLeadInput, name: string, mobile: strin
  * the product must be known, and every spec question of its plan asked (buttons shown) or answered.
  */
 function notComplete(lead: LeadState, src: IsqSource | null, product: string): string | null {
-  if (!product) return "the product is not known. Ask which product the buyer needs, then its specification questions, and call save_lead with complete set to true only after the last answer.";
-  const pending = src ? pendingQuestions(lead, currentPlan(lead, src)) : [];
-  if (!pending.length) return null;
-  const [next, ...rest] = pending;
-  return `still to ask: ${next.question} (options: ${next.options.join(" / ")})${rest.length ? ` and then ${rest.map((q) => q.question).join(", ")}` : ""}. Ask it now, one question per message with show_options, and call save_lead with complete set to true only after the last answer.`;
+  if (!product) return "the product is not known. Ask what they are looking for, then its specification questions, and call save_lead with complete set to true only after the delivery city.";
+  const plan = src ? currentPlan(lead, src) : null;
+  const pending = pendingQuestions(lead, plan);
+  if (pending.length) {
+    const [next, ...rest] = pending;
+    const how = next.options.length ? `options: ${next.options.join(" / ")}; ask it with show_options` : "no buttons: ask it in words";
+    return `still to ask: ${next.question} (${how})${rest.length ? ` and then ${rest.map((q) => q.question).join(", ")}` : ""}, then the quantity, individual or business, the time frame and the delivery city. Ask one question per message and call save_lead with complete set to true only after the delivery city.`;
+  }
+  const step = closingStep(lead.details ?? {}, plan?.unit);
+  return step ? `still to ask: ${step}. Ask one question per message and call save_lead with complete set to true only after the delivery city.` : null;
+}
+
+/** What to ask next in a saved enquiry, for the lead-status text (null when everything is known). */
+function nextAsk(lead: LeadState, src: IsqSource | null | undefined): string | null {
+  const d = lead.details ?? {};
+  if (!d.product && !lead.category && !lead.cardId) return "ask what they are looking for (the product), in words";
+  const plan = src ? currentPlan(lead, src) : null;
+  if (pendingQuestions(lead, plan).length) return "the next specification question in <spec_questions>";
+  return closingStep(d, plan?.unit);
 }
 
 const SUMMARY_SHOWN =
   "The buyer now sees a summary card with all these details. In one short sentence, say our team will contact them and ask if anything needs changing, then call show_options with \"All correct\" and \"Change a detail\". Do not repeat the details or promise a time.";
 
-export function describeLeadStatus(lead: LeadState): string {
+export function describeLeadStatus(lead: LeadState, src?: IsqSource | null): string {
+  const next = nextAsk(lead, src);
+  const nextLine = next ? ` Next, ask ${next}.` : " Every detail is known: call save_lead with all of them and complete set to true.";
   switch (lead.stage) {
     case "none":
       return lead.name
-        ? `The buyer's name (${lead.name}) is already known, but no mobile number yet: reply only with a short request for their 10-digit mobile number, nothing else.`
-        : "No contact details captured yet: reply only with a short request for the buyer's 10-digit mobile number, nothing else.";
+        ? `The buyer's name (${lead.name}) is already known, but they haven't logged in yet: reply only with a short request for their 10-digit mobile number, nothing else.`
+        : "The buyer hasn't logged in yet (the opening message already asked for their mobile number): reply only with a short request for their 10-digit mobile number, nothing else. If they asked something, don't answer it yet.";
     case "otp_sent":
       return `OTP sent to mobile ${maskMobile(lead.mobile!)}. Waiting for the buyer to type the OTP (${MAX_OTP_ATTEMPTS - lead.otpAttempts} attempts left).`;
     case "verified":
       return lead.name
         ? `Mobile ${maskMobile(lead.mobile!)} verified and the buyer's name (${lead.name}) is already known: call save_lead straight away with that name; do not ask for it.`
-        : `Mobile ${maskMobile(lead.mobile!)} verified. Ask for the buyer's name next, then call save_lead straight away.`;
+        : `Mobile ${maskMobile(lead.mobile!)} verified: the buyer is logged in. In one short message, say they're verified, welcome them to our company by name and ask for their name. When they give it, call save_lead straight away.`;
     case "captured":
       if (!lead.saved) {
-        return `The buyer, ${lead.name} (mobile ${maskMobile(lead.mobile!)}), is already identified by the platform that opened this chat. Never ask for contact details or an OTP. Ask which product they need if that isn't clear, else the first qualification question; call save_lead (with the name ${lead.name}) as you go and with complete set to true after the last answer.`;
+        return `The buyer, ${lead.name} (mobile ${maskMobile(lead.mobile!)}), is already identified by the platform that opened this chat. Never ask for contact details or an OTP. Greet them by name in a few words.${nextLine} Call save_lead (with the name ${lead.name}) as details arrive, and with complete set to true after the delivery city.`;
       }
       return lead.summarized
         ? `Enquiry saved for ${lead.name} (mobile ${maskMobile(lead.mobile!)}) and the buyer has seen the summary card. Do not ask for contact details again. If the buyer corrects or adds a detail, call save_lead again with all the details and complete set to true; this updates the enquiry and shows a new summary.`
-        : `Enquiry saved for ${lead.name} (mobile ${maskMobile(lead.mobile!)}). Do not ask for contact details again. Continue the qualification questions one at a time; after the last answer, call save_lead again with all the details and complete set to true.`;
+        : `Enquiry saved for ${lead.name} (mobile ${maskMobile(lead.mobile!)}). Do not ask for contact details again.${nextLine} One question per message; call save_lead with the details as they arrive, and with complete set to true after the delivery city.`;
     case "locked":
       return lead.otpSends >= MAX_OTP_SENDS
         ? "OTP verification is locked for this chat after too many wrong attempts. Apologise and suggest the buyer tries again later."
@@ -342,22 +415,28 @@ export function executeTool(
       // Which product the chat is about, and which of its questions this call answers (by spec label).
       const src = opts.isqs ?? null;
       if (src) {
-        if (!lead.category && fields.product) setPlace(lead, src, src.locateText(fields.product));
+        if (!lead.category && !lead.cardId && fields.product) setPlace(lead, src, src.locateText(fields.product));
         markAnswered(lead, currentPlan(lead, src), input.specs.map((s) => s.label));
       }
       // The summary is shown only once every spec question for the product was asked or answered:
       // the model never decides on its own that the enquiry is complete.
+      lead.details = mergeDetails(lead.details, input);
+      const d = lead.details;
+      const extra = { buyerType: d.buyerType ?? "", firm: buyerKind(d.buyerType) === "individual" ? "" : (d.firm ?? ""), timeframe: d.timeframe ?? "" };
+      // Later calls may leave out what an earlier one saved: the lead row keeps the merged details.
+      Object.assign(fields, { product: d.product ?? fields.product, quantity: d.quantity ?? fields.quantity, city: d.city ?? fields.city });
       const stillNeeded = input.complete ? notComplete(lead, src, fields.product) : null;
       if (lead.stage === "captured" && lead.mobile && lead.name) {
         // A chat opened with a verified buyer (bot API) is "captured" before any row exists: the sink inserts when the update finds none.
-        opts.saveLead({ createdAt: new Date().toISOString(), seller: session.seller, sessionId: session.id, mobile: lead.mobile, name: lead.name, ...fields, ...(lead.buyerId ? { buyerId: lead.buyerId } : {}), update: true });
+        opts.saveLead({ createdAt: new Date().toISOString(), seller: session.seller, sessionId: session.id, mobile: lead.mobile, name: lead.name, ...fields, ...extra, ...(lead.buyerId ? { buyerId: lead.buyerId } : {}), update: true });
         lead.saved = true;
         if (stillNeeded) return { content: `Enquiry updated, but it is not complete yet: ${stillNeeded}`, isError: false };
         if (!input.complete) {
-          return { content: "Enquiry updated. Continue with the next qualification question; after the last one, call save_lead again with complete set to true.", isError: false };
+          const next = nextAsk(lead, src);
+          return { content: `Enquiry updated. ${next ? `Next, ask ${next}.` : "Every detail is known: call save_lead with all of them and complete set to true."}`, isError: false };
         }
         lead.summarized = true;
-        return { content: `Enquiry updated. ${SUMMARY_SHOWN}`, isError: false, ui: { summary: enquirySummary(input, lead.name, lead.mobile) } };
+        return { content: `Enquiry updated. ${SUMMARY_SHOWN}`, isError: false, ui: { summary: enquirySummary(input, lead.name, lead.mobile, d) } };
       }
       if (lead.stage !== "verified" || !lead.mobile) {
         return { content: `Cannot save yet: the mobile number must be verified with an OTP first. ${describeLeadStatus(lead)}`, isError: true };
@@ -365,18 +444,18 @@ export function executeTool(
       // The name may already be known (bot API conversation start); the model may then leave it empty.
       const name = input.name.trim() || lead.name?.trim() || "";
       if (name.length < 2) return { content: "Missing the buyer's name. Ask for it first.", isError: true };
-      opts.saveLead({ createdAt: new Date().toISOString(), seller: session.seller, sessionId: session.id, mobile: lead.mobile, name, ...fields, ...(lead.buyerId ? { buyerId: lead.buyerId } : {}) });
+      opts.saveLead({ createdAt: new Date().toISOString(), seller: session.seller, sessionId: session.id, mobile: lead.mobile, name, ...fields, ...extra, ...(lead.buyerId ? { buyerId: lead.buyerId } : {}) });
       lead.stage = "captured";
       lead.saved = true;
       lead.name = name;
       if (stillNeeded) return { content: `Enquiry saved, but it is not complete yet. Thank the buyer in a few words; ${stillNeeded}`, isError: false };
       if (input.complete) {
         lead.summarized = true;
-        return { content: `Enquiry saved. ${SUMMARY_SHOWN}`, isError: false, ui: { summary: enquirySummary(input, name, lead.mobile) } };
+        return { content: `Enquiry saved. ${SUMMARY_SHOWN}`, isError: false, ui: { summary: enquirySummary(input, name, lead.mobile, d) } };
       }
+      const next = nextAsk(lead, src);
       return {
-        content:
-          "Enquiry saved. Thank the buyer in a few words, then ask which product they need if that isn't clear yet, else the first qualification question you still need (with show_options). After the last answer, call save_lead again with complete set to true.",
+        content: `Enquiry saved. Thank ${name} in a few words, then ${next ? `ask ${next}` : "call save_lead with all the details and complete set to true"}. One question per message; call save_lead with complete set to true only after the delivery city.`,
         isError: false,
       };
     }

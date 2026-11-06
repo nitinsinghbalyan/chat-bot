@@ -331,7 +331,7 @@ const SPEC_NOT_ASKED = /country\s+of\s+origin|brand|make|model|item\s*code|produ
 /** A product attribute label too long to be a question ("Police verified nanny, infant & newborn baby care experience"). */
 const MAX_LABEL = 40;
 /** MCAT file specs that are never questions (the file's specs are curated ISQs, so only identity rows are skipped). */
-const SPEC_NEVER_ASKED = /brand|^make$|model|item\s*code/i;
+export const SPEC_NEVER_ASKED = /brand|^make$|model|item\s*code/i;
 const PRICE_KEY = /price|rate|cost|mrp|discount/i;
 /** Factsheet rows that are verified company details (Guardrail 7 allows these). Everything else is skipped. */
 const FACTSHEET_ALLOWED = new Set([
@@ -363,8 +363,10 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 export interface Isq {
   question: string;
   options: string[];
-  /** Where the question comes from: an MCAT file spec the seller's products carry, the products' own spec values, or an MCAT file spec no product lists (the category's standard question). */
-  from?: "products" | "derived" | "mcat";
+  /** Where the question comes from: a must-ask spec of the product card ("card"), an MCAT file spec the seller's products carry ("products"), the products' own spec values ("derived"), or an MCAT file spec no product lists ("mcat"). */
+  from?: "card" | "products" | "derived" | "mcat";
+  /** How the seller phrases it (a product card's qualification question), or the one value listed when there are no buttons. */
+  hint?: string;
   /** IndiaMART ISQ type when the MCAT file marks it (asked in this order: key, config, regular). */
   type?: IsqType;
 }
@@ -374,7 +376,7 @@ const TYPE_RANK: Record<IsqType, number> = { key: 0, config: 1, regular: 2 };
 /** The questions a plan may hold: the most asked in one conversation. */
 export const MAX_ISQS = 8;
 /** Options shown per question (the chat shows up to 8 chips; 6 keeps them readable). */
-const MAX_OPTIONS = 6;
+export const MAX_OPTIONS = 6;
 
 /**
  * The spec questions for one machine: a category and the MCAT within it (the one the buyer's
@@ -385,9 +387,13 @@ export interface IsqPlan {
   /** "<category> · <MCAT name>" (just the category when no MCAT is known). */
   label: string;
   mcatId: string | null;
-  /** "mcat": at least one question is an MCAT file spec (carried by the products, or the MCAT's standard one); "derived": all come from the products' own specification values. Each question says where it is from. */
-  source: "mcat" | "derived";
+  /** "card": the must-ask specs of the buyer's product card; "mcat": the MCAT file's specs for the product's MCAT; "derived": the products' own specification values (no card questions and no MCAT entry). Each question says where it is from. */
+  source: "card" | "mcat" | "derived";
   mcat?: string;
+  /** The product card the questions come from (source "card"). */
+  card?: { id: string; name: string };
+  /** The unit the buyer's product is sold in (the product card's selling unit), for the quantity question. */
+  unit?: string;
   isqs: Isq[];
   /** How many of the seller's products the questions were checked against. */
   presentOn: number;
@@ -413,7 +419,7 @@ export function specNamesMatch(a: string, b: string): boolean {
   return subset(ta, tb) || subset(tb, ta);
 }
 /** An MCAT option the seller's products carry: equal to a product value, or all its words are in it ("22 Gauge" ~ "22 gauge thick"). */
-function optionSeen(option: string, values: Set<string>): boolean {
+export function optionSeen(option: string, values: Set<string>): boolean {
   const o = valueKey(option);
   if (values.has(o)) return true;
   const to = specTokens(option);
@@ -431,7 +437,7 @@ function similarOption(a: string, b: string): boolean {
 
 /** Spec rows that aren't questions a buyer can answer (on top of brand, model and price). */
 const SPEC_NOT_A_QUESTION = /usage|application|machine\s*type|^type$|^product\s*type$|^model\s*name/i;
-const normKey = (s: string) => s.toLowerCase().replace(/[-_/]+/g, " ").replace(/\s+/g, " ").trim();
+export const normKey = (s: string) => s.toLowerCase().replace(/[-_/]+/g, " ").replace(/\s+/g, " ").trim();
 
 /** One product attribute across a set of products: how many carry it and its distinct values, most common first. */
 export interface SpecStat {
@@ -482,13 +488,13 @@ export function specStats(productsSpecs: Array<Array<[string, string]>>, minShar
 }
 
 /** A spec value's identity: case, separators, the space before a unit ("2.5mm" = "2.5 mm") and plurals ("350 grams" = "350 GRAM") don't count. */
-const valueKey = (v: string) =>
+export const valueKey = (v: string) =>
   normKey(v)
     .replace(/\b([a-z]{4,})s\b/g, "$1")
     .replace(/(\d)\s+([a-z])/g, "$1$2");
 
 /** Distinct spec values as written (split on commas and slashes, spellings merged, bare numbers and long values dropped). */
-function cleanValues(values: string[]): string[] {
+export function cleanValues(values: string[]): string[] {
   const out = new Map<string, string>();
   for (const raw of values.flatMap((v) => v.split(/\s*[,/|]\s*/))) {
     const v = raw.trim();
@@ -688,6 +694,27 @@ export class KbView {
     });
     const byRank = (a: Ranked, b: Ranked) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.rank[2] - b.rank[2];
     return [...own.sort(byRank), ...standard.sort(byRank)].map(({ rank: _rank, ...q }) => q);
+  }
+
+  /**
+   * The MCAT file's specs for one MCAT, as questions: ordered by ISQ type (key, config, regular)
+   * when the file marks it, else in the file's order. Options are the file's, with the values the
+   * seller's own products list for that spec first ("products"); a spec none of them lists keeps
+   * the file's options ("mcat"). Brand, model and item code are never asked.
+   */
+  private fileQuestions(m: McatSpec, products: KbProduct[]): Isq[] {
+    const rows = products.map((p) => this.specs(p));
+    return m.specs
+      .map((f, i) => ({ f, i }))
+      .filter(({ f }) => !SPEC_NEVER_ASKED.test(f.name))
+      .sort((a, b) => (a.f.type ? TYPE_RANK[a.f.type] : 1) - (b.f.type ? TYPE_RANK[b.f.type] : 1) || a.i - b.i)
+      .map(({ f }) => {
+        const own = cleanValues(rows.flatMap((r) => r.filter(([n]) => specNamesMatch(f.name, n)).map(([, v]) => v)));
+        const ownSet = new Set(own.map(valueKey));
+        const options = [...own, ...f.options.filter((o) => !optionSeen(o, ownSet))].slice(0, MAX_OPTIONS);
+        return { question: f.name, options, from: own.length ? ("products" as const) : ("mcat" as const), ...(f.type ? { type: f.type } : {}) };
+      })
+      .filter((q) => q.options.length >= 2);
   }
 
     // ---- media ----
@@ -956,12 +983,14 @@ export class KbView {
         const shared = q.options.filter((o) => x.options.some((p) => similarOption(o, p))).length;
         return q.options.length > 0 && shared * 2 >= q.options.length;
       });
-    for (const q of this.orderedSpecs(m, products)) if (isqs.length < MAX_ISQS && !repeats(q)) isqs.push(q);
+    // The MCAT file's specs when the product's MCAT has an entry, else the products' own spec values.
+    const fromFile = m ? this.fileQuestions(m, products) : [];
+    for (const q of fromFile.length ? fromFile : this.orderedSpecs(undefined, products)) if (isqs.length < MAX_ISQS && !repeats(q)) isqs.push(q);
     let plan: IsqPlan = {
       category: c.name,
       label,
       mcatId: id,
-      source: isqs.some((q) => q.from !== "derived") ? "mcat" : "derived",
+      source: fromFile.length ? "mcat" : "derived",
       ...(m ? { mcat: m.name } : {}),
       isqs: isqs.slice(0, MAX_ISQS),
       presentOn: products.length,
@@ -1024,6 +1053,11 @@ export class KbView {
   categoryNamed(name: string): SellerKb["categories"][number] | undefined {
     const n = name.toLowerCase();
     return this.kb.categories.find((c) => c.name.toLowerCase() === n);
+  }
+
+  /** The MCAT file's entries that have specs (the file uploaded for this seller). */
+  mcatEntries(): McatSpec[] {
+    return (this.options.mcats ?? []).filter((m) => m.specs.length);
   }
 
   /** Categories whose ISQs come from an MCAT, for the admin summary. */

@@ -47,13 +47,13 @@ curl --location 'https://<base>/api/v1/bots/jayshree-machinetools' \
   "slug": "jayshree-machinetools",
   "name": "Jayshree Machinetools Private Limited",
   "sellerId": "14321376",
-  "greeting": "Welcome to Jayshree Machinetools Private Limited. I can tell you about our machines, share photos and brochures, and pass your enquiry to our team.",
+  "greeting": "Welcome to Jayshree Machinetools Private Limited. Please share your 10-digit mobile number to get started.",
   "demoOtp": "12345",
   "keyKind": "live"
 }
 ```
 
-Show `greeting` as the bot's first message: it asks nothing and has no buttons. `sellerId` is `null` when the seller has no uploaded export. No SMS gateway is connected yet, so when the bot asks for an OTP the code is always `demoOtp`.
+Show `greeting` as the bot's first message: it asks for the buyer's mobile number (the buyer logs in first) and has no buttons. If you start the conversation with a verified buyer (call 2), the bot skips the login and its first reply moves straight to the product. `sellerId` is `null` when the seller has no uploaded export. No SMS gateway is connected yet, so when the bot asks for an OTP the code is always `demoOtp`.
 
 ## 2. Start a conversation (optional)
 
@@ -146,7 +146,7 @@ Response:
 | `reply` | The bot's text. Show it as one message. |
 | `chips` | Reply buttons to show under the reply (`[]` if none). Sending a chip's text as the next `message` is the tap. |
 | `cards` | Product, photo, video or brochure cards the bot shared: `{ type: "product" \| "image" \| "video" \| "document", title, url }` |
-| `summary` | Present once requirement gathering is done: `{ rows: [{ label, value }], note }`, the enquiry summary card. Show it; the buyer can still correct a detail. |
+| `summary` | Present once requirement gathering is done: `{ rows: [{ label, value }], note }`, the enquiry summary card (Product, each spec, Quantity, Buying as, Firm, Time frame, Delivery city, Name, Mobile). Show it; the buyer can still correct a detail. |
 | `askFor` | What the bot is waiting for: `"mobile"`, `"otp"`, `"name"` or `null`. Useful for input hints (numeric keypad, one-time-code field). |
 | `leadStage` | `none` → `otp_sent` → `verified` → `captured` (lead saved) → `locked` (too many wrong OTPs) |
 | `traceId` | The Langfuse trace id of this reply, when tracing is on |
@@ -160,10 +160,12 @@ Send one message at a time per `sessionId` and wait for the reply. Different con
 |---|---|---|
 | 1 | call 2 with name, verified mobile, buyer id | `greeting` shown · `captured` |
 | 2 | `i need cnc cutting machine` | "Which cutting capacity do you need?" with `chips` · `captured` |
-| 3 | a chip, e.g. `6–12 mm` | the next spec question with `chips` |
-| … | the last answer | `summary` card; lead updated; "Anything to change?" with chips All correct / Change a detail |
+| 3 | a chip, e.g. `6–12 mm` | the next spec question with `chips` (the product card's must-ask specs, else the MCAT's) |
+| 4 | after the last spec: `2` | "Are you buying as an individual or for a business?" with chips Individual / Business |
+| 5 | `Business`, then the firm name | "When do you plan to buy?" with chips Immediately · Within 15 days · Within a month · 1–3 months · Just exploring |
+| 6 | a chip, then the delivery city | `summary` card; lead updated; "Anything to change?" with chips All correct / Change a detail |
 
-The lead is saved on the seller's Leads page with the name, mobile, product, specs, quantity, city and your `buyerId`. Without call 2 the same conversation starts with "Please share your 10-digit mobile number" (`askFor: "mobile"`), then the OTP (`demoOtp`), then the name.
+The lead is saved on the seller's Leads page with the name, mobile, product, specs, quantity, buyer type, firm, time frame, delivery city and your `buyerId`. Without call 2 the same conversation starts with "Please share your 10-digit mobile number" (`askFor: "mobile"`), then the OTP (`demoOtp`), then the name.
 
 ## Errors
 

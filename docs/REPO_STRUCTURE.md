@@ -70,7 +70,8 @@ chat-bot/
 │   ├── sellers.ts       ~575  Seller registry: loads repo + admin sellers, merges KB JSON + extra files, builds cached system prompts
 │   ├── kb.ts            ~130  KB folder loader: business card, product cards, allowed phones
 │   ├── sellerKb.ts     ~1020  KB JSON (export v5.0 / 3.0): sanitised view, MCATs per category, ISQ plans per MCAT, product FAQs, large-catalogue index
-│   ├── mapping.ts       ~150  Knowledge mapping report: categories → MCATs → questions, MCAT file use, cards, FAQs, policy card
+│   ├── mapping.ts       ~165  Knowledge mapping report: categories → MCATs → questions, MCAT file use, cards with their must-ask questions, FAQs, policy card
+│   ├── cardQuestions.ts ~225  Spec questions from the product cards' must-ask (ASK) specs with grounded options; CardIndex finds the buyer's card; planFor: card → MCAT file → products
 │   ├── sellerFiles.ts   ~330  Extra files: policy card .md (handling rules, amounts stripped), MCAT specs JSON, product cards JSON; name matching
 │   ├── prompts.ts       ~100  Loads common prompt defaults and checks required placeholders
 │   ├── promptVersions.ts~115  Version history for common prompts and personas; auto-applies newer shipped defaults
@@ -82,7 +83,7 @@ chat-bot/
 │   ├── shareMedia.ts    ~175  Resolves share_media ids to cards from the KB JSON and catalogue
 │   │
 │   ├── tracing.ts       ~580  Langfuse (OTLP): one trace per buyer message, session <seller>:<chatId>, cost score, test button
-│   ├── admin.ts        ~1410  /admin pages: sellers list, seller page (KB, extra files, mapping, catalogue, keys, persona), add seller, crawls, common prompts, FAQ, leads, versions
+│   ├── admin.ts        ~1540  /admin pages: sellers list, seller page (KB, extra files, mapping, catalogue, keys, persona), add seller, crawls, common prompts, FAQ, leads, versions
 │   └── site/
 │       ├── html.ts       ~60  Escaping helpers and safe URL checks
 │       └── pages.ts     ~635  Server-rendered directory (/) and seller websites (/s/<slug>/…)
@@ -90,9 +91,10 @@ chat-bot/
 └── tests/                     Vitest (`npm test`); no network, scripted fake Claude client
     ├── app.test.ts            API, OTP, lead save rules, intro, sites, health
     ├── claude.test.ts         Turn loop, tool rounds, per-turn blocks
-    ├── tools.test.ts          Tool handlers, lead status text, summary card
+    ├── tools.test.ts          Tool handlers, lead status text, closing steps (quantity, buyer type, firm, time frame, city), summary card
     ├── guardrails.test.ts     Price scrub, phone allow-list, logging
-    ├── isq.test.ts            ISQ plans per category and MCAT, specs present on products, machine switching
+    ├── isq.test.ts            ISQ plans per category and MCAT (MCAT file order, seller's values first), machine switching
+    ├── cardQuestions.test.ts  Must-ask specs from product cards, grounded options, card lookup, card → MCAT → products, closing-step answers
     ├── kbV5.test.ts           Master JSON v5: sensitive fields, product FAQs, FAQ seller column, mapping report
     ├── sellerKb.test.ts       KB JSON view, sanitising, large-catalogue mode
     ├── sellerFiles.test.ts    Policy card parser, MCAT and card parsers, name matching

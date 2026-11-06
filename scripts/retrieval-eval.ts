@@ -18,8 +18,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { Catalogue } from "../src/catalogue.js";
 import type { CatalogueEntry } from "../src/crawler.js";
-import { updateCategory, type IsqSource } from "../src/isqTracker.js";
-import { parseMcatSpecs, type McatSpec } from "../src/sellerFiles.js";
+import { updateCategory, type IsqSource, type Place } from "../src/isqTracker.js";
+import { parseMcatSpecs, parseProductCards, type McatSpec } from "../src/sellerFiles.js";
+import { CardIndex, planFor } from "../src/cardQuestions.js";
+import { mapCard } from "../src/mapping.js";
 import { KbView, validateSellerKb } from "../src/sellerKb.js";
 import type { LeadState } from "../src/session.js";
 
@@ -60,11 +62,13 @@ interface Tally {
   topCorrect: number;
   anyCorrect: number;
   pickedCorrect: number;
+  /** A product card was found for the buyer's product (its must-ask specs become the questions). */
+  card: number;
   pickedWrong: number;
   notPicked: number;
 }
 
-const emptyTally = (): Tally => ({ cases: 0, withHits: 0, topCorrect: 0, anyCorrect: 0, pickedCorrect: 0, pickedWrong: 0, notPicked: 0 });
+const emptyTally = (): Tally => ({ cases: 0, withHits: 0, topCorrect: 0, anyCorrect: 0, pickedCorrect: 0, card: 0, pickedWrong: 0, notPicked: 0 });
 
 /** Words that don't tell products apart in a focus name ("Stainless Steel Mugs" → "mugs"). */
 const GENERIC = new Set("machine machines service services stainless steel ss metal industrial heavy duty manual automatic semi electric hand new premium".split(" "));
@@ -149,16 +153,29 @@ function evaluateSeller(dir: string, maxMisses: number): SellerReport | string {
   const view = new KbView(parsed.kb, { mcats });
   const catalogue = new Catalogue(view.catalogueEntries());
   const mcatName = new Map(mcats.map((m) => [m.id, m.name]));
+  // The product cards, found the same way as in a chat (src/app.ts isqSourceFor).
+  const cardsFile = find(dir, /^product_cards\.json$/i)[0];
+  const parsedCards = cardsFile ? parseProductCards(JSON.parse(fs.readFileSync(cardsFile, "utf8"))) : null;
+  const cardList = parsedCards?.ok ? parsedCards.value : [];
+  const cards = cardList.length ? new CardIndex(cardList, new Map(cardList.map((c) => [c.product_id, (({ category, mcat }) => ({ category, mcatId: mcat?.id ?? null }))(mapCard(c, view, mcats))]))) : null;
+  const locate = (e: CatalogueEntry): Place | null => {
+    const p = view.locateEntry(e);
+    return p ? { ...p, cardId: cards?.forProduct(e.kind === "product" ? e.title : "", p.category, p.mcatId) ?? null } : null;
+  };
+  const locateCard = (text: string): Place | null => {
+    const id = cards?.forText(text);
+    if (!id) return null;
+    const at = cards!.place(id);
+    return { category: at?.category ?? "", mcatId: at?.mcatId ?? null, cardId: id, named: cards!.coreWordsIn(id, text) };
+  };
   const src: IsqSource = {
-    plan: (category, mcatId) => {
-      const c = view.categoryNamed(category);
-      return c ? view.isqPlan(c, mcatId) : null;
-    },
-    locate: (e) => view.locateEntry(e),
+    plan: (category, mcatId, cardId) => planFor(view, cards, category, mcatId, cardId),
+    locate,
     locateText: (text) => {
       const hit = catalogue.search(text, 1)[0];
-      return hit ? view.locateEntry(hit) : null;
+      return (hit ? locate(hit) : null) ?? locateCard(text);
     },
+    locateCard,
   };
 
   const describe = (h: CatalogueEntry) => {
@@ -181,7 +198,7 @@ function evaluateSeller(dir: string, maxMisses: number): SellerReport | string {
   const report: SellerReport = { seller, cases: cases.length, product: emptyTally(), byLanguage: {}, bySuite: {}, other: { cases: 0, falsePicks: 0, boundaryPicks: 0, withHits: 0 }, misses: [], falsePicks: [], boundaryPicks: [] };
   for (const c of cases) {
     const hits = catalogue.search(c.input);
-    const lead: LeadState = { stage: "none", otpAttempts: 0, otpSends: 0 };
+    const lead: LeadState = { stage: "captured", otpAttempts: 0, otpSends: 1 };
     updateCategory(lead, src, { buyerText: c.input, hits, ownHits: hits.length > 0 });
     const top = hits[0];
     const r: CaseResult = {
@@ -191,8 +208,15 @@ function evaluateSeller(dir: string, maxMisses: number): SellerReport | string {
       topMcat: top ? describe(top).mcat : null,
       topCorrect: !!top && !!c.focus && correct(c.focus, top),
       anyCorrect: !!c.focus && hits.some((h) => correct(c.focus, h)),
-      picked: lead.category ? `${lead.category}${lead.mcatId ? ` · ${mcatName.get(lead.mcatId) ?? lead.mcatId}` : ""}` : null,
+      picked: lead.category || lead.cardId ? `${lead.category ?? ""}${lead.mcatId ? ` · ${mcatName.get(lead.mcatId) ?? lead.mcatId}` : ""}${lead.cardId ? ` [card ${cards?.get(lead.cardId)?.canonical_name}]` : ""}` : null,
     };
+    const pickedCard = cards?.get(lead.cardId);
+    // A card counts as right when its name or aliases name the focus product.
+    const cardRight = !!pickedCard && !!c.focus && alternatives(c.focus).some((alt) => {
+      const want = keyWords(alt);
+      const have = new Set(words([pickedCard.canonical_name, ...(pickedCard.aliases ?? []), ...(pickedCard.flow.categories ?? [])].join(" ")));
+      return want.length > 0 && want.filter((w) => have.has(stem(w))).length >= Math.ceil(want.length / 2);
+    });
     if (!c.focus) {
       report.other.cases++;
       if (hits.length) report.other.withHits++;
@@ -205,7 +229,9 @@ function evaluateSeller(dir: string, maxMisses: number): SellerReport | string {
       if (hits.length) t.withHits++;
       if (r.topCorrect) t.topCorrect++;
       if (r.anyCorrect) t.anyCorrect++;
-      if (r.picked && r.topCorrect) t.pickedCorrect++;
+      if (pickedCard) t.card++;
+      // With a card, the questions are the card's: judge the card. Without one, the catalogue's pick.
+      if (r.picked && (pickedCard ? cardRight || r.topCorrect && cards?.forProduct(top?.title ?? "", null, null) === lead.cardId : r.topCorrect)) t.pickedCorrect++;
       else if (r.picked) t.pickedWrong++;
       else t.notPicked++;
     }
@@ -220,7 +246,7 @@ const cell = (s: string, w: number) => s.padEnd(w);
 
 function printTally(label: string, t: Tally) {
   console.log(
-    `  ${cell(label, 18)} ${cell(String(t.cases), 6)} ${cell(pct(t.withHits, t.cases), 7)} ${cell(pct(t.topCorrect, t.cases), 7)} ${cell(pct(t.anyCorrect, t.cases), 7)} ${cell(pct(t.pickedCorrect, t.cases), 8)} ${cell(pct(t.pickedWrong, t.cases), 8)} ${pct(t.notPicked, t.cases)}`,
+    `  ${cell(label, 18)} ${cell(String(t.cases), 6)} ${cell(pct(t.withHits, t.cases), 7)} ${cell(pct(t.topCorrect, t.cases), 7)} ${cell(pct(t.anyCorrect, t.cases), 7)} ${cell(pct(t.pickedCorrect, t.cases), 8)} ${cell(pct(t.pickedWrong, t.cases), 8)} ${cell(pct(t.notPicked, t.cases), 8)} ${pct(t.card, t.cases)}`,
   );
 }
 
@@ -255,7 +281,7 @@ function main() {
     }
     reports.push(r);
     console.log(`\n${r.seller}: ${r.cases} cases (${r.product.cases} name a product, ${r.other.cases} don't)`);
-    console.log(`  ${cell("", 18)} ${cell("cases", 6)} ${cell("hits", 7)} ${cell("top1", 7)} ${cell("top4", 7)} ${cell("picked✓", 8)} ${cell("picked✗", 8)} no pick`);
+    console.log(`  ${cell("", 18)} ${cell("cases", 6)} ${cell("hits", 7)} ${cell("top1", 7)} ${cell("top4", 7)} ${cell("picked✓", 8)} ${cell("picked✗", 8)} ${cell("no pick", 8)} card`);
     printTally("all", r.product);
     for (const [lang, t] of Object.entries(r.byLanguage).sort()) printTally(lang, t);
     for (const [suite, t] of Object.entries(r.bySuite).sort()) printTally(suite, t);
@@ -276,7 +302,7 @@ function main() {
   }
   if (reports.length > 1) {
     console.log(`\nAll ${reports.length} sellers`);
-    console.log(`  ${cell("", 18)} ${cell("cases", 6)} ${cell("hits", 7)} ${cell("top1", 7)} ${cell("top4", 7)} ${cell("picked✓", 8)} ${cell("picked✗", 8)} no pick`);
+    console.log(`  ${cell("", 18)} ${cell("cases", 6)} ${cell("hits", 7)} ${cell("top1", 7)} ${cell("top4", 7)} ${cell("picked✓", 8)} ${cell("picked✗", 8)} ${cell("no pick", 8)} card`);
     printTally("product", total);
     for (const [lang, t] of Object.entries(byLanguage).sort()) printTally(lang, t);
     for (const [suite, t] of Object.entries(bySuite).sort()) printTally(suite, t);
