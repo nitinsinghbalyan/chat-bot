@@ -5,6 +5,18 @@ import type { ChatDb, StoredSession } from "./db.js";
 
 export type LeadStage = "none" | "otp_sent" | "verified" | "captured" | "locked";
 
+/** The enquiry's closing details, in the order the bot asks them after the spec questions. */
+export interface EnquiryDetails {
+  product?: string;
+  quantity?: string;
+  /** "individual", "business" or the buyer's own words. */
+  buyerType?: string;
+  firm?: string;
+  timeframe?: string;
+  /** The delivery city. */
+  city?: string;
+}
+
 export interface LeadState {
   stage: LeadStage;
   mobile?: string;
@@ -17,6 +29,10 @@ export interface LeadState {
   category?: string;
   /** The MCAT within that category (the buyer's product's, else the category's main one). */
   mcatId?: string;
+  /** The buyer's product card (its product_id), whose must-ask specs are the questions when it has any. */
+  cardId?: string;
+  /** The enquiry details saved so far (save_lead merges each call's non-empty fields), for the closing steps and the summary. */
+  details?: EnquiryDetails;
   /** That category's ISQs already asked (by question). */
   askedIsqs?: string[];
   /** The reply buttons last shown, so a tapped answer isn't mistaken for a new machine. */

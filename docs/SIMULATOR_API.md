@@ -26,12 +26,14 @@ A simulator that wants to start a scenario with the buyer already identified (na
 
 | Buyer sends | Bot (`reply`, then `askFor` / `leadStage`) |
 |---|---|
-| *(shows `greeting`)* | |
-| `do you make press brakes?` | "Please share your 10-digit mobile number." · `mobile` / `none` |
+| *(shows `greeting`: "Welcome to … Please share your 10-digit mobile number to get started.")* | |
 | `9876543210` | "OTP sent…" · `otp` / `otp_sent` |
-| `12345` | "Verified. May I have your name?" · `name` / `verified` |
-| `Ramesh` | Lead saved; the first spec question, with `chips` · `null` / `captured` |
-| a chip, e.g. `CNC` | The next spec question… |
-| the last answer | `summary` card; the lead is updated |
+| `12345` | "You're verified. Welcome to …! May I have your name?" · `name` / `verified` |
+| `Ramesh` | Lead saved; "What are you looking for?" · `null` / `captured` |
+| `do you make press brakes?` | The first spec question, with `chips` |
+| a chip, e.g. `CNC` | The next spec question… then quantity, individual or business (chips), firm name, time frame (chips), delivery city |
+| the delivery city | `summary` card; the lead is updated |
+
+A scripted buyer that opens with a question instead of the number gets only the mobile ask until it sends one.
 
 Errors and rate limits: see BOT_API.md (409 means the previous turn of that conversation is still being answered; 429 means more than 15 messages a minute in one conversation or 120 a minute on one key).

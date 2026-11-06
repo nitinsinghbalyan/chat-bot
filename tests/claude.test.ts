@@ -328,7 +328,7 @@ describe("chat cost and enquiry summary", () => {
     const session = new SessionStore().get("jayshree-machinetools", "s-sum-000001");
     session.lead = { stage: "captured", mobile: "9876543210", name: "Ramesh", otpAttempts: 0, otpSends: 1 };
     const leads: Lead[] = [];
-    const input = { name: "Ramesh", product: "CNC Press Brake", specs: [{ label: "Material", value: "Mild steel" }], requirements: "", quantity: "1", city: "Rajkot", complete: true };
+    const input = { name: "Ramesh", product: "CNC Press Brake", specs: [{ label: "Material", value: "Mild steel" }], requirements: "", quantity: "1", buyer_type: "Business", firm: "Shah Works", timeframe: "Immediately", city: "Rajkot", complete: true };
     const { d } = deps(
       [
         { content: [{ type: "tool_use", id: "s1", name: "save_lead", input }], stop_reason: "tool_use" },
@@ -351,7 +351,7 @@ describe("chat cost and enquiry summary", () => {
     const plan = { category: "Hing", label: "Hing · Hing", mcatId: "21046", source: "mcat", isqs: [{ question: "Physical Form", options: ["Granules / Lumps", "Powder"] }], presentOn: 7 };
     const isqs = { plan: () => plan as never, locate: () => null, locateText: () => ({ category: "Hing", mcatId: "21046" }) };
     const leads: Lead[] = [];
-    const base = { name: "Nitin", product: "Hing", specs: [], requirements: "", quantity: "", city: "", complete: true };
+    const base = { name: "Nitin", product: "Hing", specs: [], requirements: "", quantity: "5 kg", buyer_type: "individual", firm: "", timeframe: "Within 15 days", city: "Delhi", complete: true };
     // The model jumps to complete; the tool result sends it back to the question, which it then asks with buttons.
     const first = deps(
       [

@@ -15,7 +15,8 @@ import { activeVersionId, applyNewerBuiltIn, applyNewerBuiltInPersonas, COMMON_S
 import { maskMobile, noTracing, OTP_MASK, type Tracing } from "./tracing.js";
 import { shareMedia } from "./shareMedia.js";
 import type { FaqStore } from "./faq.js";
-import type { IsqSource } from "./isqTracker.js";
+import type { IsqSource, Place } from "./isqTracker.js";
+import { planFor } from "./cardQuestions.js";
 import { normalizeMobile, type EnquirySummary } from "./tools.js";
 import { aboutPage, categoryPage, contactPage, directoryPage, notFoundPage, productPage, productsPage, searchPage, sellerHomePage } from "./site/pages.js";
 
@@ -617,23 +618,35 @@ export function createApp(deps: AppDeps) {
   return app;
 }
 
-/** The chat's opening message: the same for every seller, and it asks the buyer nothing (no chips under it). */
-export const introFor = (sellerName: string) =>
-  `Welcome to ${sellerName}. I can tell you about our products, share photos and brochures, and pass your enquiry to our team.`;
+/** The chat's opening message: the same for every seller; the buyer logs in first, so it asks for the mobile number (no chips). */
+export const introFor = (sellerName: string) => `Welcome to ${sellerName}. Please share your 10-digit mobile number to get started.`;
 
 /** The seller's spec questions per category and MCAT, for the server to pick the chat's machine (KB JSON sellers). */
 function isqSourceFor(seller: SellerContext): IsqSource {
   const view = seller.uploaded!.view;
+  const cards = seller.cardIndex;
+  // A catalogue entry's place, with the product card for it (by title, else category and MCAT).
+  const locate = (e: CatalogueEntry): Place | null => {
+    const p = view.locateEntry(e);
+    if (!p) return null;
+    const cardId = cards?.forProduct(e.kind === "product" ? e.title : "", p.category, p.mcatId) ?? null;
+    return { ...p, cardId };
+  };
+  // The card the words name, placed where the card maps in the KB JSON (an empty category when it maps nowhere).
+  const locateCard = (text: string): Place | null => {
+    const id = cards?.forText(text);
+    if (!id) return null;
+    const at = cards!.place(id);
+    return { category: at?.category ?? "", mcatId: at?.mcatId ?? null, cardId: id, named: cards!.coreWordsIn(id, text) };
+  };
   return {
-    plan: (category, mcatId) => {
-      const c = view.categoryNamed(category);
-      return c ? view.isqPlan(c, mcatId) : null;
-    },
-    locate: (e) => view.locateEntry(e),
+    plan: (category, mcatId, cardId) => planFor(view, cards, category, mcatId, cardId),
+    locate,
     locateText: (text) => {
       const hit = seller.catalogue.search(text, 1)[0];
-      return hit ? view.locateEntry(hit) : null;
+      return (hit ? locate(hit) : null) ?? locateCard(text);
     },
+    locateCard,
   };
 }
 

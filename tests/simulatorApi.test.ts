@@ -110,7 +110,7 @@ describe("simulator API", () => {
       slug: ALPHA,
       name: "Alpha Presses",
       sellerId: null,
-      greeting: "Welcome to Alpha Presses. I can tell you about our products, share photos and brochures, and pass your enquiry to our team.",
+      greeting: "Welcome to Alpha Presses. Please share your 10-digit mobile number to get started.",
       demoOtp: "12345",
       keyKind: "test",
     });

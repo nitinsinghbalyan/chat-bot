@@ -110,10 +110,11 @@ describe("chat API", () => {
   it("serves each seller's widget settings", async () => {
     const res = await fetch(`${base}/api/sellers/${ALPHA}`);
     expect(await res.json()).toMatchObject({ slug: ALPHA, name: "Alpha Presses", color: "#aa3300", chips: ["Press Brake"], position: "right" });
-    // The same welcome for every seller, and it asks the buyer nothing.
+    // The same opening for every seller.
     for (const slug of [ALPHA, BETA]) {
       const { greeting, name } = await (await fetch(`${base}/api/sellers/${slug}`)).json();
-      expect(greeting).toBe(`Welcome to ${name}. I can tell you about our products, share photos and brochures, and pass your enquiry to our team.`);
+      // The buyer logs in first: the opening asks for the mobile number.
+      expect(greeting).toBe(`Welcome to ${name}. Please share your 10-digit mobile number to get started.`);
       expect(greeting).not.toContain("?");
     }
     expect((await fetch(`${base}/api/sellers/nobody`)).status).toBe(404);
@@ -130,7 +131,7 @@ describe("chat API", () => {
   });
 
   it("sends the enquiry summary card once the specs are in, and keeps the chat's running cost", async () => {
-    const input = { name: "Ramesh", product: "Press Brake", specs: [{ label: "Material", value: "Mild steel" }], requirements: "", quantity: "1 piece", city: "Rajkot", complete: true };
+    const input = { name: "Ramesh", product: "Press Brake", specs: [{ label: "Material", value: "Mild steel" }], requirements: "", quantity: "1 piece", buyer_type: "individual", firm: "", timeframe: "Within a month", city: "Rajkot", complete: true };
     script.push(
       { content: [{ type: "tool_use", id: "d", name: "save_lead", input }], stop_reason: "tool_use" },
       { content: [{ type: "text", text: "Our team will contact you. Anything to change?" }], stop_reason: "end_turn" },
@@ -143,7 +144,7 @@ describe("chat API", () => {
     // Still one lead, now with the specs; admin's transcript shows what the buyer saw.
     expect(db.listLeads(10, ALPHA)).toHaveLength(1);
     expect(db.listLeads(10, ALPHA)[0]).toMatchObject({ requirements: "Material: Mild steel", city: "Rajkot" });
-    expect(db.transcript(`${ALPHA}:app-test-session`).at(-1)!.text).toContain("[Summary: Product: Press Brake; Material: Mild steel; Quantity: 1 piece; City: Rajkot; Name: =Ramesh; Mobile: xxxxxx3210]");
+    expect(db.transcript(`${ALPHA}:app-test-session`).at(-1)!.text).toContain("[Summary: Product: Press Brake; Material: Mild steel; Quantity: 1 piece; Buying as: Individual; Time frame: Within a month; Delivery city: Rajkot; Name: =Ramesh; Mobile: xxxxxx3210]");
     // 4 buyer messages, 2 Claude calls each at 1 + 1 tokens, kept across restarts.
     expect(db.loadSession(`${ALPHA}:app-test-session`)?.usage).toMatchObject({ turns: 4, input: 8, output: 8, costKnown: true });
   });
@@ -340,6 +341,37 @@ describe("knowledge base upload", () => {
     const bad = await upload(ALPHA, JSON.stringify({ seller: {}, products: [] }));
     expect(bad.status).toBe(400);
     expect((await bad.json()).errors).toContain("seller.company_name: Invalid input: expected string, received undefined");
+  });
+
+  it("shows each knowledge file as stored, in an overlay on the seller page", async () => {
+    expect((await upload(ALPHA, kbJson)).status).toBe(200);
+    const sellerPage = await (await fetch(`${base}/admin/sellers/${ALPHA}`, { headers: auth(PASSWORD) })).text();
+    expect(sellerPage).toContain('<dialog class="viewer" id="viewer"');
+    expect(sellerPage).toContain(`data-view="/admin/sellers/${ALPHA}/view/kb" data-format="json" data-title="Knowledge base JSON"`);
+    // No extra files uploaded yet: no View button for them.
+    expect(sellerPage).not.toContain(`data-view="/admin/sellers/${ALPHA}/view/mcat"`);
+    const view = await fetch(`${base}/admin/sellers/${ALPHA}/view/kb`, { headers: auth(PASSWORD) });
+    expect(view.status).toBe(200);
+    expect(view.headers.get("cache-control")).toBe("no-store");
+    expect(view.headers.get("content-disposition")).toBeNull();
+    // The file as uploaded (the Download on the KB card serves the cleaned view instead).
+    expect(JSON.parse(await view.text())).toEqual(JSON.parse(kbJson));
+    const dl = await fetch(`${base}/admin/sellers/${ALPHA}/view/kb?download=1`, { headers: auth(PASSWORD) });
+    expect(dl.headers.get("content-disposition")).toBe(`attachment; filename="${ALPHA}-seller_kb.json"`);
+    expect((await fetch(`${base}/admin/sellers/${ALPHA}/view/kb`)).status).toBe(401);
+    expect((await fetch(`${base}/admin/sellers/${ALPHA}/view/mcat`, { headers: auth(PASSWORD) })).status).toBe(404);
+    expect((await fetch(`${base}/admin/sellers/${ALPHA}/view/nope`, { headers: auth(PASSWORD) })).status).toBe(404);
+
+    // An extra file: its View serves the Markdown exactly as uploaded.
+    const md = "## Dispatch\n- Dispatch after payment.";
+    const put = await fetch(`${base}/admin/sellers/${ALPHA}/files/business-card`, { method: "POST", headers: { ...auth(PASSWORD), Origin: base, "Content-Type": "text/markdown" }, body: md });
+    expect(put.status).toBe(200);
+    const page2 = await (await fetch(`${base}/admin/sellers/${ALPHA}`, { headers: auth(PASSWORD) })).text();
+    expect(page2).toContain(`data-view="/admin/sellers/${ALPHA}/view/business-card" data-format="text"`);
+    const mdView = await fetch(`${base}/admin/sellers/${ALPHA}/view/business-card`, { headers: auth(PASSWORD) });
+    expect(mdView.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(await mdView.text()).toBe(md);
+    await fetch(`${base}/admin/sellers/${ALPHA}/files/business-card/delete`, { method: "POST", headers: { ...auth(PASSWORD), Origin: base }, redirect: "manual" });
   });
 
   it("uploads a KB the next chat turn is grounded in, with chips, cards and no prices", async () => {

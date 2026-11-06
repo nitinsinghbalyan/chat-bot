@@ -9,7 +9,7 @@ function setup() {
   return { session, leads, run };
 }
 
-const leadInput = { name: "Ramesh Patel", product: "CNC Press Brake", requirements: "100 ton, 3 m, MS 4 mm", quantity: "1 piece", city: "Ahmedabad" };
+const leadInput = { name: "Ramesh Patel", product: "CNC Press Brake", requirements: "100 ton, 3 m, MS 4 mm", quantity: "1 piece", buyer_type: "business", firm: "Patel Fabricators", timeframe: "Within a month", city: "Ahmedabad" };
 
 describe("normalizeMobile", () => {
   it.each([
@@ -70,7 +70,7 @@ describe("lead capture flow", () => {
     expect(run("send_otp", { mobile: "9876543210" }).isError).toBe(true);
     expect(describeLeadStatus(session.lead)).toMatch(/locked for this chat/);
     // Mobile first: before any contact details, the bot is told to ask for the number now.
-    expect(describeLeadStatus({ stage: "none", otpAttempts: 0, otpSends: 0 })).toMatch(/reply only with a short request for the buyer's 10-digit mobile number/);
+    expect(describeLeadStatus({ stage: "none", otpAttempts: 0, otpSends: 0 })).toMatch(/reply only with a short request for their 10-digit mobile number/);
   });
 
   it("refuses save_lead before OTP verification", () => {
@@ -126,6 +126,7 @@ describe("enquiry summary", () => {
   it("shows the summary card once requirement gathering is complete", () => {
     const { session, leads, run } = captured();
     expect(session.lead.summarized).toBeUndefined();
+    // The city was saved earlier: a later call that leaves it empty keeps it.
     const r = run("save_lead", { ...leadInput, specs, requirements: "Needs back gauge", city: "", complete: true });
     expect(r.isError).toBe(false);
     expect(r.ui?.summary).toEqual({
@@ -135,6 +136,10 @@ describe("enquiry summary", () => {
         { label: "Sheet thickness", value: "6 mm" },
         { label: "Other details", value: "Needs back gauge" },
         { label: "Quantity", value: "1 piece" },
+        { label: "Buying as", value: "Business" },
+        { label: "Firm", value: "Patel Fabricators" },
+        { label: "Time frame", value: "Within a month" },
+        { label: "Delivery city", value: "Ahmedabad" },
         { label: "Name", value: "Ramesh Patel" },
         { label: "Mobile", value: "xxxxxx3210" },
       ],
@@ -143,7 +148,7 @@ describe("enquiry summary", () => {
     expect(r.content).toMatch(/summary card/);
     expect(JSON.stringify(r.ui)).not.toContain("9876543210");
     // The lead keeps a plain requirements string for the leads table and CSV.
-    expect(leads[1]).toMatchObject({ update: true, requirements: "Material: Mild steel; Sheet thickness: 6 mm; Needs back gauge" });
+    expect(leads[1]).toMatchObject({ update: true, requirements: "Material: Mild steel; Sheet thickness: 6 mm; Needs back gauge", buyerType: "business", firm: "Patel Fabricators", timeframe: "Within a month", city: "Ahmedabad" });
     expect(session.lead.summarized).toBe(true);
     expect(describeLeadStatus(session.lead)).toMatch(/seen the summary card/);
   });
@@ -169,13 +174,57 @@ describe("enquiry summary", () => {
     run("send_otp", { mobile: "9876543210" });
     run("verify_otp", { otp: "12345" });
     const r = run("save_lead", { ...leadInput, specs: [], complete: true });
-    expect(r.ui?.summary?.rows.map((x) => x.label)).toEqual(["Product", "Other details", "Quantity", "City", "Name", "Mobile"]);
+    expect(r.ui?.summary?.rows.map((x) => x.label)).toEqual(["Product", "Other details", "Quantity", "Buying as", "Firm", "Time frame", "Delivery city", "Name", "Mobile"]);
   });
 
   it("rejects malformed specs", () => {
     const { run } = captured();
     expect(run("save_lead", { ...leadInput, specs: [{ label: "Material" }], complete: true }).isError).toBe(true);
     expect(run("save_lead", { ...leadInput, specs: "Mild steel", complete: true }).isError).toBe(true);
+  });
+});
+
+describe("closing steps (after the spec questions)", () => {
+  const steps = () => {
+    const t = setup();
+    t.run("send_otp", { mobile: "9876543210" });
+    t.run("verify_otp", { otp: "12345" });
+    return t;
+  };
+  const empty = { ...leadInput, specs: [], requirements: "", quantity: "", buyer_type: "", firm: "", timeframe: "", city: "" };
+
+  it("asks quantity, individual or business, firm (business only), time frame and delivery city, in that order", () => {
+    const { session, leads, run } = steps();
+    const said: string[] = [];
+    const save = (extra: object) => {
+      const r = run("save_lead", { ...empty, ...extra, complete: true });
+      said.push(r.content);
+      return r;
+    };
+    expect(save({}).ui).toBeUndefined();
+    expect(said.at(-1)).toContain("still to ask: the quantity");
+    expect(save({ quantity: "50 pieces" }).ui).toBeUndefined();
+    expect(said.at(-1)).toContain('individual or for a business: ask it with show_options "Individual" and "Business"');
+    expect(save({ buyer_type: "For my shop" }).ui).toBeUndefined();
+    expect(said.at(-1)).toContain("firm or company name");
+    expect(save({ firm: "Shah Traders" }).ui).toBeUndefined();
+    expect(said.at(-1)).toContain('when they plan to buy: ask it with show_options "Immediately", "Within 15 days", "Within a month", "1–3 months", "Just exploring"');
+    expect(save({ timeframe: "Not sure" }).ui).toBeUndefined();
+    expect(said.at(-1)).toContain("the delivery city");
+    const done = save({ city: "Surat" });
+    expect(done.ui?.summary?.rows).toEqual(expect.arrayContaining([{ label: "Buying as", value: "Business" }, { label: "Firm", value: "Shah Traders" }, { label: "Time frame", value: "Not sure" }, { label: "Delivery city", value: "Surat" }]));
+    expect(session.lead.details).toEqual({ product: "CNC Press Brake", quantity: "50 pieces", buyerType: "business", firm: "Shah Traders", timeframe: "Not sure", city: "Surat" });
+    expect(leads.at(-1)).toMatchObject({ quantity: "50 pieces", buyerType: "business", firm: "Shah Traders", timeframe: "Not sure", city: "Surat" });
+  });
+
+  it("skips the firm name for an individual buyer and greets after login", () => {
+    const { session, run } = steps();
+    expect(describeLeadStatus(session.lead)).toContain("welcome them to our company by name and ask for their name");
+    run("save_lead", { ...empty, complete: false });
+    expect(describeLeadStatus(session.lead)).toContain("Next, ask the quantity");
+    const r = run("save_lead", { ...empty, quantity: "1", buyer_type: "Individual", timeframe: "Immediately", city: "Pune", complete: true });
+    expect(r.ui?.summary?.rows.map((x) => x.label)).not.toContain("Firm");
+    expect(r.ui?.summary?.rows).toContainEqual({ label: "Buying as", value: "Individual" });
   });
 });
 
@@ -208,7 +257,7 @@ describe("completion guard (the server decides when the enquiry is complete)", (
     expect(r.isError).toBe(false);
     expect(r.ui).toBeUndefined();
     expect(r.content).toMatch(/not complete yet/);
-    expect(r.content).toContain("still to ask: Physical Form (options: Granules / Lumps / Powder / Resin) and then Country of Origin");
+    expect(r.content).toContain("still to ask: Physical Form (options: Granules / Lumps / Powder / Resin; ask it with show_options) and then Country of Origin, then the quantity");
     // The lead itself is saved, with the product's place worked out from its name.
     expect(leads).toHaveLength(1);
     expect(session.lead).toMatchObject({ stage: "captured", category: "Hing", mcatId: "21046" });
@@ -217,13 +266,13 @@ describe("completion guard (the server decides when the enquiry is complete)", (
     // A spec label counts as an answer ("Form" matches "Physical Form"); the next question is then named.
     const r2 = run("save_lead", { ...hing, specs: [{ label: "Form", value: "Powder" }], complete: true });
     expect(r2.ui).toBeUndefined();
-    expect(r2.content).toContain("still to ask: Country of Origin (options: Afghanistan / Uzbekistan).");
+    expect(r2.content).toContain("still to ask: Country of Origin (options: Afghanistan / Uzbekistan; ask it with show_options)");
     expect(session.lead.askedIsqs).toEqual(["Physical Form"]);
 
     // Once the last question's buttons were shown (markAsked) the summary can go out.
     session.lead.askedIsqs = ["Physical Form", "Country of Origin"];
     const r3 = run("save_lead", { ...hing, specs: [{ label: "Form", value: "Powder" }, { label: "Country of Origin", value: "Afghanistan" }], complete: true });
-    expect(r3.ui?.summary?.rows.map((x) => x.label)).toEqual(["Product", "Form", "Country of Origin", "Quantity", "City", "Name", "Mobile"]);
+    expect(r3.ui?.summary?.rows.map((x) => x.label)).toEqual(["Product", "Form", "Country of Origin", "Quantity", "Buying as", "Firm", "Time frame", "Delivery city", "Name", "Mobile"]);
     expect(session.lead.summarized).toBe(true);
   });
 
@@ -231,7 +280,7 @@ describe("completion guard (the server decides when the enquiry is complete)", (
     const { run } = verified();
     const r = run("save_lead", { ...hing, product: "", specs: [], complete: true });
     expect(r.ui).toBeUndefined();
-    expect(r.content).toMatch(/Ask which product the buyer needs/);
+    expect(r.content).toMatch(/Ask what they are looking for/);
     const noQuestions = { plan: () => ({ ...plan, isqs: [] }) as never, locate: () => null, locateText: () => ({ category: "Tea", mcatId: null }) };
     const session = new SessionStore().get("herbaveda", "guard-2");
     const run2 = (name: string, input: unknown) => executeTool(session, name, input, { saveLead: () => {}, isqs: noQuestions });

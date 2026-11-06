@@ -13,18 +13,21 @@ export interface BusinessCard {
   [key: string]: unknown;
 }
 
-interface CardAttributeValue {
+export interface CardAttributeValue {
   value: string;
 }
 
-interface CardAttribute {
+/** One attribute of a product card. `role: "ASK"` (with `required_for_lead`) marks a must-ask spec; RARE, DEFER and ON_REQUEST are answered only if raised. */
+export interface CardAttribute {
   key: string;
   role: string;
   required_for_lead?: boolean;
   values?: CardAttributeValue[];
+  /** The order the seller asks must-ask specs in (1 first). */
+  ask_order?: number;
 }
 
-interface CardQuestion {
+export interface CardQuestion {
   attribute: string;
   question: string;
   sequence?: number;

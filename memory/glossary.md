@@ -112,6 +112,11 @@ Shorthand and internal language for the Seller assistants project.
 | NI / National Industries | National Industries: v5 files received Oct 18; 13 categories without questions and 8 MCAT ids missing from its file |
 | Sewa | Sewa Enterprises: v5 files received Oct 18 (small: 5 MCATs) |
 | Unicorn | Unicorn Equipment: v5 files received Oct 18 |
+| must-ask spec | A product card attribute with role `ASK` (`required_for_lead: true`, `ask_order`); the bot's first source of spec questions since #35. RARE (answer if raised), DEFER and ON_REQUEST are not asked | `mustAskAttributes` in `src/cardQuestions.ts` |
+| card plan | The spec questions taken from the buyer's product card (`IsqPlan.source: "card"`); falls back to the MCAT file's plan, then the products' derived one | `planFor` in `src/cardQuestions.ts` |
+| open question | A must-ask spec with fewer than two options in any file: asked in words, no chips ("No buttons: ask in words" in `<spec_questions>`) | `cardQuestions` |
+| closing steps | Quantity (card's selling unit) → individual or business (chips) → firm name (business only) → time frame (chips Immediately / Within 15 days / Within a month / 1–3 months / Just exploring) → delivery city | `closingStep` in `src/tools.ts`; lead columns `buyer_type`, `firm_name`, `timeframe` |
+| file viewer / View | Seller page button that opens the KB JSON or an extra file as stored, in an overlay | `viewSource`, `VIEWER_SCRIPT` in `src/admin.ts` |
 | test cases / scenarios | Per seller in Nitin's zip: `*_Bot_Test_Cases.csv` (98 buyer inputs, English/Hinglish, by suite) and `*_Scenarios.json` (same cases with `focus_product`, `suite`, `must_not_happen`); written for the AI Assistant Auditor, reused as the retrieval eval's labels |
 | retrieval eval | `npm run retrieval:eval`: scores the catalogue search and the server's product pick on those test cases; baseline Oct 23 top-1 77%, product discovery 33% (memory/projects/seller-assistants.md) |
 | product discovery | Scenario suite where the buyer describes a need without naming the product; the retrieval's weak spot |

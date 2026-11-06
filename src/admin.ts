@@ -67,6 +67,8 @@ export function ago(value: string | Date | null | undefined): string {
 type Nav = "sellers" | "leads" | "prompts" | "";
 
 /** Inline icons from the design, on a 16px grid, stroked with the text colour. */
+type ViewKind = "kb" | SellerFileKind;
+
 const ICONS = {
   external: '<path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v8A1.5 1.5 0 0 0 3.5 14h8a1.5 1.5 0 0 0 1.5-1.5V10"/><path d="M9 2h5v5"/><path d="M14 2 7 9"/>',
   chevron: '<path d="m4 6 4 4 4-4"/>',
@@ -78,6 +80,8 @@ const ICONS = {
   key: '<circle cx="5.5" cy="10.5" r="3"/><path d="m7.5 8.5 6-6"/><path d="m11.5 4 1.5 1.5"/><path d="m9.5 6 1.5 1.5"/>',
   warning: '<path d="M8 2.5 2 13h12z"/><path d="M8 6.5v3"/><path d="M8 11.5h.01"/>',
   info: '<circle cx="8" cy="8" r="6"/><path d="M8 7v4"/><path d="M8 5h.01"/>',
+  close: '<path d="m4 4 8 8"/><path d="m12 4-8 8"/>',
+  eye: '<path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
 } as const;
 const icon = (name: keyof typeof ICONS, size = 16) =>
   `<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
@@ -155,6 +159,83 @@ const MENU_SCRIPT = `<script>
   }
 })();
 </script>`;
+
+/**
+ * The file viewer on the seller page: a View button ([data-view]) opens one shared dialog that
+ * fetches the stored file and shows it as text (never as HTML). JSON gets a Formatted / Raw toggle.
+ */
+const VIEWER_SCRIPT = `<script>
+(function () {
+  var dlg = document.getElementById("viewer");
+  if (!dlg || !dlg.showModal) return;
+  var body = dlg.querySelector(".viewer-body");
+  var title = dlg.querySelector("#viewer-title");
+  var meta = dlg.querySelector(".viewer-meta");
+  var seg = dlg.querySelector(".seg");
+  var dl = dlg.querySelector("[data-download]");
+  var copy = dlg.querySelector("[data-copy]");
+  var state = { raw: "", formatted: null, mode: "formatted", token: 0 };
+  function size(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " bytes"; }
+  function show(mode) {
+    state.mode = state.formatted === null ? "raw" : mode;
+    var text = state.mode === "formatted" ? state.formatted : state.raw;
+    body.textContent = text;
+    body.scrollTop = 0;
+    seg.querySelectorAll("button").forEach(function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-mode") === state.mode)); });
+    var lines = text ? text.split("\\n").length : 0;
+    meta.textContent = [size(new Blob([state.raw]).size), lines.toLocaleString("en-IN") + " lines", dlg.getAttribute("data-when")].filter(Boolean).join(" · ");
+  }
+  document.querySelectorAll("[data-view]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var url = btn.getAttribute("data-view");
+      var json = btn.getAttribute("data-format") === "json";
+      var token = ++state.token;
+      title.textContent = btn.getAttribute("data-title") || "File";
+      dlg.setAttribute("data-when", btn.getAttribute("data-when") || "");
+      meta.textContent = "Loading…";
+      body.textContent = "";
+      seg.hidden = !json;
+      copy.disabled = true;
+      dl.href = url + (url.indexOf("?") < 0 ? "?" : "&") + "download=1";
+      dlg.showModal();
+      fetch(url, { credentials: "same-origin", cache: "no-store" })
+        .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+        .then(function (text) {
+          if (token !== state.token) return;
+          state.raw = text;
+          state.formatted = null;
+          if (json) { try { state.formatted = JSON.stringify(JSON.parse(text.replace(/^\\uFEFF/, "")), null, 2); } catch (e) { state.formatted = null; } }
+          seg.hidden = state.formatted === null;
+          copy.disabled = false;
+          show("formatted");
+        })
+        .catch(function (e) { if (token === state.token) { meta.textContent = "Could not load the file (" + e.message + ")."; } });
+    });
+  });
+  seg.querySelectorAll("button").forEach(function (b) { b.addEventListener("click", function () { show(b.getAttribute("data-mode")); }); });
+  copy.addEventListener("click", function () {
+    var text = body.textContent;
+    navigator.clipboard.writeText(text).then(function () { copy.textContent = "Copied"; setTimeout(function () { copy.textContent = "Copy"; }, 1500); });
+  });
+  dlg.querySelector("[data-close]").addEventListener("click", function () { dlg.close(); });
+  dlg.addEventListener("click", function (e) { if (e.target === dlg) dlg.close(); });
+  dlg.addEventListener("close", function () { state.token++; body.textContent = ""; state.raw = ""; state.formatted = null; });
+})();
+</script>`;
+
+/** The dialog the View buttons open (one per seller page). */
+const VIEWER_DIALOG = `<dialog class="viewer" id="viewer" aria-labelledby="viewer-title">
+  <div class="viewer-head">
+    <div class="viewer-title"><h2 id="viewer-title">File</h2><p class="viewer-meta"></p></div>
+    <div class="btn-row">
+      <div class="seg" role="group" aria-label="View as"><button type="button" data-mode="formatted" aria-pressed="true">Formatted</button><button type="button" data-mode="raw" aria-pressed="false">Raw</button></div>
+      <button class="btn small" type="button" data-copy>Copy</button>
+      <a class="btn small" data-download href="#">${icon("download", 14)} Download</a>
+      <button class="btn ghost small" type="button" data-close aria-label="Close">${icon("close", 14)}</button>
+    </div>
+  </div>
+  <pre class="viewer-body" tabindex="0"></pre>
+</dialog>`;
 
 /** Upload script shared by the seller rows (replace a KB) and the Add seller page. */
 const DROPZONE_SCRIPT = `<script>
@@ -341,19 +422,48 @@ export function mountAdmin(app: Express, d: AdminDeps) {
   const FILE_KEY: Record<SellerFileKind, keyof SellerContext["files"]> = { "business-card": "businessCard", mcat: "mcat", "product-cards": "productCards" };
 
   /** The Extra files card: business card (.md), MCAT specifications and product cards, each optional, with Download / Replace / Remove. */
+  /**
+   * The stored file behind a View button: the uploaded KB JSON or extra file as it was saved, else
+   * (KB folder sellers) the folder's own seller_kb.json, product_cards.json or business_card.json.
+   */
+  function viewSource(s: SellerContext, kind: ViewKind): { file: string; format: "json" | "text"; title: string; from: "upload" | "folder"; when: string | null } | null {
+    const stamp = (file: string) => fs.statSync(file).mtime.toISOString();
+    if (kind === "kb") {
+      for (const [file, from] of [[s.uploadedKbFile, "upload"], [path.join(s.dir, "seller_kb.json"), "folder"]] as const) {
+        if (fs.existsSync(file)) return { file, format: "json", title: "Knowledge base JSON", from, when: s.uploaded?.uploadedAt ?? stamp(file) };
+      }
+      return null;
+    }
+    const meta = SELLER_FILES[kind];
+    const uploaded = path.join(s.filesDir, meta.file);
+    if (fs.existsSync(uploaded)) return { file: uploaded, format: meta.format === "json" ? "json" : "text", title: meta.label, from: "upload", when: s.files[FILE_KEY[kind]]?.uploadedAt ?? stamp(uploaded) };
+    if (s.source !== "repo") return null;
+    const folder = kind === "product-cards" ? "product_cards.json" : kind === "business-card" ? "business_card.json" : null;
+    const file = folder ? path.join(s.dir, folder) : "";
+    return file && fs.existsSync(file) ? { file, format: "json", title: `${meta.label.replace(/ \((JSON|Markdown)\)$/, "")} (KB folder)`, from: "folder", when: stamp(file) } : null;
+  }
+
+  function viewButton(s: SellerContext, kind: ViewKind): string {
+    const src = viewSource(s, kind);
+    if (!src) return "";
+    const when = src.from === "upload" ? `uploaded ${fmtIST(src.when)}` : `KB folder file`;
+    return `<button class="btn small" type="button" data-view="/admin/sellers/${esc(s.config.slug)}/view/${kind}" data-format="${src.format}" data-title="${esc(src.title)}" data-when="${esc(when)}">${icon("eye", 14)} View</button>`;
+  }
+
   function filesCard(s: SellerContext): string {
     const slug = esc(s.config.slug);
     const hints: Record<SellerFileKind, string> = {
       "business-card": "The seller's policy card. Every section becomes a handling rule for the bot; GST numbers, bank, turnover, staff and ratings are left out and amounts, percentages and payment or delivery terms are removed.",
-      mcat: "Spec questions per MCAT, generated for this seller. The bot asks the seller's own specs first, then the MCAT's specs the seller doesn't carry; see Knowledge mapping below.",
-      "product-cards": s.uploaded ? "Added to the products from the knowledge base JSON." : "Replaces the KB folder's product_cards.json.",
+      mcat: "Spec questions per MCAT, generated for this seller. Used when the buyer's product has no card with must-ask specs, and to fill a card spec that lists fewer than two values; see Knowledge mapping below.",
+      "product-cards": s.uploaded ? "The first source of spec questions: each card's must-ask (ASK) specs, in the seller's order, with the card's values as buttons. Also added to the products from the knowledge base JSON." : "Replaces the KB folder's product_cards.json.",
     };
     const items = (Object.keys(SELLER_FILES) as SellerFileKind[]).map((kind) => {
       const meta = SELLER_FILES[kind];
       const f = s.files[FILE_KEY[kind]];
       const base = `/admin/sellers/${slug}/files/${kind}`;
       const format = meta.format === "json" ? "JSON" : "Markdown";
-      const status = f ? `${format} · ${esc(f.summary)} · uploaded ${esc(ago(f.uploadedAt))}` : "Not uploaded";
+      const src = viewSource(s, kind);
+      const status = f ? `${format} · ${esc(f.summary)} · uploaded ${esc(ago(f.uploadedAt))}` : src ? `Not uploaded · the KB folder's <code>${esc(path.basename(src.file))}</code> is shown by View` : "Not uploaded";
       let use = "";
       if (kind === "mcat" && f) {
         const u = s.mcatUse;
@@ -365,7 +475,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
       return `<article class="xfile" id="file-${kind}">
   <div class="xfile-head">
     <div class="xfile-title"><span class="kind" aria-hidden="true">${meta.format === "json" ? "JSON" : "MD"}</span><div><h3>${esc(meta.label)}</h3><span class="xfile-meta">${status}</span></div></div>
-    <div class="btn-row">${
+    <div class="btn-row">${viewButton(s, kind)}${
       f
         ? `<a class="btn small" href="${base}">Download</a><button class="btn small" type="button" data-replace="dz-${kind}">Replace</button><form class="inline" method="post" action="${base}/delete" onsubmit="return confirm('Remove this file? The bot stops using it from the next message.')"><button class="btn ghost danger small" type="submit">Remove</button></form>`
         : ""
@@ -440,9 +550,14 @@ export function mountAdmin(app: Express, d: AdminDeps) {
       )
       .join("");
     const mapped = m.cards.filter((c) => c.how !== "none").length;
+    const asking = m.cards.filter((c) => c.questions.length).length;
+    const cardQs = (c: (typeof m.cards)[number]) =>
+      c.questions.length
+        ? `<br><span class="small">Must-ask: ${c.questions.map((q) => `${esc(q.question)}${q.options.length ? ` <span class="muted">(${esc(q.options.join(" / "))})</span>` : ' <span class="badge warn">in words</span>'}`).join("; ")}</span>`
+        : '<br><span class="small muted">No must-ask specs: the MCAT file\'s questions are used</span>';
     const cardRows = m.cards.length
-      ? `<details class="notes"><summary>${icon("right", 14)}<span>${plural(m.cards.length, "product card")}: ${mapped} mapped</span></summary><ul>${m.cards
-          .map((c) => `<li>${esc(c.name)} → ${c.how === "none" ? '<span class="badge warn">no match</span>' : `${esc(c.category ?? "no category")}${c.mcat ? ` · ${esc(c.mcat.name ?? `MCAT ${c.mcat.id}`)}` : ""} <span class="muted small">(by ${c.how})</span>`}</li>`)
+      ? `<details class="notes"><summary>${icon("right", 14)}<span>${plural(m.cards.length, "product card")}: ${mapped} mapped, ${asking} with must-ask specs</span></summary><ul>${m.cards
+          .map((c) => `<li>${esc(c.name)} → ${c.how === "none" ? '<span class="badge warn">no match</span>' : `${esc(c.category ?? "no category")}${c.mcat ? ` · ${esc(c.mcat.name ?? `MCAT ${c.mcat.id}`)}` : ""} <span class="muted small">(by ${c.how})</span>`}${cardQs(c)}</li>`)
           .join("")}</ul></details>`
       : "";
     const mf = m.mcatFile;
@@ -558,7 +673,7 @@ ${s.source === "admin" ? `<form method="post" action="/admin/sellers/${slug}/del
     const u = s.uploaded;
     return `<section class="card" id="kb">
   <div class="card-head"><div><h2>Knowledge base</h2><p class="card-desc">The seller export JSON the bot answers from. Replace it to refresh products, categories and FAQs.</p></div>
-  <div class="btn-row">${u ? `<a class="btn outline small" href="/admin/sellers/${slug}/kb.json">${icon("download", 14)} Download</a>` : ""}${
+  <div class="btn-row">${viewButton(s, "kb")}${u ? `<a class="btn outline small" href="/admin/sellers/${slug}/kb.json">${icon("download", 14)} Download</a>` : ""}${
     u && s.source === "repo"
       ? `<form class="inline" method="post" action="/admin/sellers/${slug}/kb/delete" onsubmit="return confirm('Remove the uploaded knowledge base? The bot goes back to the KB folder files.')"><button class="btn ghost danger small" type="submit">Remove</button></form>`
       : ""
@@ -640,7 +755,8 @@ ${summaryCard(s, st, persona)}
   <aside class="cols-aside">${keysCard(s, origin, st.keys)}${personaCard(s, persona)}${dangerCard(s)}</aside>
 </div>
 <p class="note">Bot slug <code>${slug}</code> · website <a href="/s/${slug}/" target="_blank" rel="noopener">/s/${slug}/</a></p>
-${DROPZONE_SCRIPT}${MENU_SCRIPT}`,
+${VIEWER_DIALOG}
+${DROPZONE_SCRIPT}${MENU_SCRIPT}${VIEWER_SCRIPT}`,
       "sellers",
     );
   }
@@ -864,6 +980,18 @@ ${DROPZONE_SCRIPT}
     let summary = r.summary;
     if (kind === "mcat") summary += s.mcatUse.matched.length ? `, ${s.mcatUse.matched.length} match${s.mcatUse.matched.length === 1 ? "es" : ""} this seller, ISQs added to ${plural(s.mcatUse.filled.length, "category or card", "categories or cards")}` : ", none match this seller";
     res.json({ ok: true, summary, warnings: r.warnings });
+  });
+
+  // The file viewer: the stored file as it was uploaded (or the KB folder's file), as plain text. Holds GST and bank data: never cached.
+  app.get("/admin/sellers/:seller/view/:kind", requireAdmin, (req, res) => {
+    const s = sellerParam(req);
+    const kind = String(req.params.kind);
+    const src = s && (kind === "kb" || isSellerFileKind(kind)) ? viewSource(s, kind as ViewKind) : null;
+    if (!s || !src) return void notFound(res);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    if (req.query.download === "1") res.setHeader("Content-Disposition", `attachment; filename="${s.config.slug}-${path.basename(src.file)}"`);
+    res.type(src.format === "json" ? "application/json; charset=utf-8" : "text/plain; charset=utf-8").send(fs.readFileSync(src.file));
   });
 
   app.get("/admin/sellers/:seller/files/:kind", requireAdmin, (req, res) => {
@@ -1334,7 +1462,7 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
   // ---- Leads and transcripts ----
 
   app.get("/admin/leads.csv", requireAdmin, (req, res) => {
-    const cols = ["createdAt", "seller", "name", "mobile", "product", "requirements", "quantity", "city", "pageUrl", "sessionId", "buyerId"] as const;
+    const cols = ["createdAt", "seller", "name", "mobile", "product", "requirements", "quantity", "buyerType", "firm", "timeframe", "city", "pageUrl", "sessionId", "buyerId"] as const;
     const lines = [[...cols, "langfuseSession", ...(req.query.test === "1" ? ["test"] : [])].join(",")];
     const withTest = req.query.test === "1";
     for (const lead of db.listLeads(10_000, sellerFilter(req), { includeTest: withTest })) {
@@ -1358,7 +1486,7 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
     const rows = leads
       .map(
         (l) =>
-          `<tr><td>${esc(fmtIST(l.createdAt))}</td><td>${esc(name(l.seller))}</td><td>${esc(l.name)}${l.test ? ' <span class="badge info">Test</span>' : ""}${l.buyerId ? `<br><span class="muted small">Buyer id ${esc(l.buyerId)}</span>` : ""}</td><td>${esc(l.mobile)}</td><td>${esc(l.product)}</td><td>${esc(l.requirements)}</td><td>${esc(l.quantity)}</td><td>${esc(l.city)}</td><td><a class="btn small" href="/admin/transcript/${encodeURIComponent(l.sessionId)}${l.chatId ? `?chat=${encodeURIComponent(l.chatId)}` : ""}">Chat</a>${sessionLink(l.chatId ? `${l.seller}:${l.chatId}` : null)}</td></tr>`,
+          `<tr><td>${esc(fmtIST(l.createdAt))}</td><td>${esc(name(l.seller))}</td><td>${esc(l.name)}${l.test ? ' <span class="badge info">Test</span>' : ""}${l.buyerId ? `<br><span class="muted small">Buyer id ${esc(l.buyerId)}</span>` : ""}</td><td>${esc(l.mobile)}</td><td>${esc(l.product)}</td><td>${esc(l.requirements)}</td><td>${esc(l.quantity)}</td><td>${esc(l.buyerType ? l.buyerType.charAt(0).toUpperCase() + l.buyerType.slice(1) : "")}${l.firm ? `<br><span class="muted small">${esc(l.firm)}</span>` : ""}</td><td>${esc(l.timeframe ?? "")}</td><td>${esc(l.city)}</td><td><a class="btn small" href="/admin/transcript/${encodeURIComponent(l.sessionId)}${l.chatId ? `?chat=${encodeURIComponent(l.chatId)}` : ""}">Chat</a>${sessionLink(l.chatId ? `${l.seller}:${l.chatId}` : null)}</td></tr>`,
       )
       .join("");
     const options = [`<option value="">All sellers</option>`, ...sellers.list().map((s) => `<option value="${esc(s.config.slug)}"${s.config.slug === filter ? " selected" : ""}>${esc(s.config.name)}</option>`)].join("");
@@ -1369,7 +1497,7 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
 <form method="get" class="toolbar"><select name="seller" aria-label="Seller" onchange="this.form.submit()">${options}</select><label class="check"><input type="checkbox" name="test" value="1"${withTest ? " checked" : ""} onchange="this.form.submit()"> Show test chats${tests ? ` (${tests})` : ""}</label><a class="btn" href="/admin/leads.csv${esc(qs({ seller: filter, test: withTest ? "1" : undefined }))}">Download CSV</a></form>
 <div class="table-wrap">${
           rows
-            ? `<table><thead><tr><th>When</th><th>Seller</th><th>Name</th><th>Mobile</th><th>Product</th><th>Requirement</th><th>Qty</th><th>City</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+            ? `<table><thead><tr><th>When</th><th>Seller</th><th>Name</th><th>Mobile</th><th>Product</th><th>Requirement</th><th>Qty</th><th>Buying as</th><th>Time frame</th><th>Delivery city</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
             : '<div class="empty">No leads yet.</div>'
         }</div>`,
         "leads",

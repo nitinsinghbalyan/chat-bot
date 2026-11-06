@@ -179,7 +179,7 @@ export async function runTurn(
   }
   const userContent = renderUserPrompt({
     currentPage: opts.pageEntry ? `${opts.pageEntry.title} (${opts.pageEntry.url})` : undefined,
-    leadStatus: describeLeadStatus(session.lead),
+    leadStatus: describeLeadStatus(session.lead, isqs),
     catalogue: formatCatalogueHits(hits),
     buyerMessage: buyerText,
     operatorNotes: session.pendingNotes,

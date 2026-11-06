@@ -45,17 +45,18 @@ flowchart LR
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Welcome: widget opens<br/>(fixed intro, no question, no chips)
-  Welcome --> AskMobile: buyer's first message<br/>(reply is only the mobile ask)
-  AskMobile --> OTP: send_otp (valid Indian mobile)
-  OTP --> AskName: verify_otp = 12345 (demo)
-  OTP --> AskMobile: 3 wrong tries / resend
-  AskName --> LeadSaved: save_lead (name)
-  LeadSaved --> AskMachine: machine still unclear
-  LeadSaved --> ISQs: machine known
-  AskMachine --> ISQs
-  ISQs --> ISQs: next spec question<br/>(show_options chips)
-  ISQs --> Summary: save_lead complete=true<br/>(summary card + feedback)
+  [*] --> Login: widget opens<br/>(fixed welcome asks the mobile)
+  Login --> OTP: send_otp (valid Indian mobile)
+  OTP --> GreetName: verify_otp = 12345 (demo)<br/>greeting + name ask
+  OTP --> Login: 3 wrong tries / resend
+  GreetName --> LeadSaved: save_lead (name)
+  LeadSaved --> AskProduct: product still unclear
+  LeadSaved --> ISQs: product known
+  AskProduct --> ISQs
+  ISQs --> ISQs: next spec question<br/>(card's must-ask, else MCAT file)
+  ISQs --> Closing: all asked or answered
+  Closing --> Closing: quantity → individual/business<br/>(+ firm) → time frame → delivery city
+  Closing --> Summary: save_lead complete=true<br/>(summary card + feedback)
   Summary --> Summary: correction → save_lead again
   Summary --> [*]
 ```
@@ -64,7 +65,8 @@ stateDiagram-v2
   - The OTP is checked on the server and never reaches the model.
   - `save_lead` is refused before verification.
   - Chips are refused while the buyer is typing the OTP or name.
-- **Buyer who won't share a number:** isn't blocked. The bot offers again once, when they ask about a price, quote or callback.
+- **Login first:** the enquiry can't go ahead without a verified number; the bot asks once more and explains why.
+- **Closing steps** (`closingStep`, `mergeDetails` in `src/tools.ts`): quantity (in the card's selling unit), individual or business (buttons), the firm name for a business, time frame (buttons Immediately · Within 15 days · Within a month · 1–3 months · Just exploring), delivery city. Any answer counts, "not sure" included. They are kept on the lead as `details` and in the `leads` columns `buyer_type`, `firm_name`, `timeframe`.
 - **Reply length:** 1–2 short sentences.
 - **Feedback:** "Was this helpful? 👍 👎" appears once per chat, under the latest summary card.
 
@@ -146,29 +148,24 @@ flowchart TD
 
 ### Spec questions (ISQs)
 
-A site category usually pools several MCATs (IndiaMART micro-categories): "GSP Triply Cookware" holds kadhais, topes and handis. Every product carries its MCAT in `taxonomy.glmcat_ids`, and the seller's MCAT specifications file is generated for those ids. So the questions are chosen per **MCAT within a category**, and checked against what the seller actually sells:
+The questions come from three files, in order (`planFor` in `src/cardQuestions.ts`, `KbView.isqPlan` in `src/sellerKb.ts`), up to 8 (`MAX_ISQS`), 6 options each:
 
 ```mermaid
 flowchart LR
-  P[Buyer's product known?] -->|yes| PM[Its own MCAT]
-  P -->|no| MM[Category's main MCAT<br/>most products]
-  PM --> F{MCAT file has<br/>that id?}
-  MM --> F
-  F -->|no| N{Entry with an<br/>equal name?}
-  F -->|yes| S[1. The seller's own specs: attributes whose<br/>values differ across the category's products,<br/>seller's values as options; MCAT options added<br/>where the name matches an MCAT spec]
-  N -->|yes| S
-  N -->|no| S
-  S --> T[2. The MCAT's specs the<br/>seller doesn't carry]
-  T --> Q[Up to 8 questions, by ISQ type when the file<br/>marks it, else by product coverage then file order;<br/>no repeats]
-  Q -->|none and not the main MCAT| MM
+  P[Buyer's product<br/>category + MCAT] --> C{Product card<br/>with must-ask specs?}
+  C -->|yes| CQ[1. The card's ASK attributes<br/>in ask_order; the card's values,<br/>else the MCAT file's, else the<br/>products'; under 2: in words]
+  C -->|no| F{MCAT file entry<br/>by id, else equal name?}
+  F -->|yes| FQ[2. The MCAT's specs, ISQ type<br/>order else file order; seller's<br/>values lead each spec's options]
+  F -->|no| DQ[3. The products' own spec<br/>values (derived)]
 ```
 
-- **The seller's own specs** (`orderedSpecs`, `specStats`): every attribute whose values differ across the category's products (a product may sit in several categories; each plans on its own), on at least 15% of them; brand, model, codes, usage and machine type skipped, spellings merged, bare numbers and long labels dropped. An attribute that matches an MCAT spec by name (`specNamesMatch`: equal once normalised, or one name's words all in the other, so "Size/Diameter" covers "Diameter") takes the MCAT's name and type and offers the MCAT's remaining options after the seller's values (`from: "products"`); the rest are `"derived"`. An MCAT spec with no such attribute but an option found among the products' values or names is also carried.
-- **The MCAT's remaining specs** (`from: "mcat"`): the file's specs no product carries, with the file's options; brand, model, item code and finance rows never (`parseMcatSpecs` keeps up to 8 specs per MCAT and an optional `type`).
-- **Order:** ISQ type key → config → regular when the file marks it; otherwise the first group puts MCAT-listed specs before seller-only attributes, each by how many products carry them, and the second follows file order. Up to 8 questions (`MAX_ISQS`), 6 options each. On the five real exports the mean per category is 4 to 8; the file-only rule gave 1 to 2.
-- **The server picks the product each turn** (`src/isqTracker.ts`): category **and MCAT** from, in order, the product or category page the buyer is on, the top catalogue match for the buyer's own words, or the product saved with the lead. A match from the buyer's words counts only when the message shares a distinctive word with it: a greeting or "price?" never picks a product (the search also skips prefix and fuzzy matching on words under 4 or 5 letters, so "hi" can't find "Hing"). It sends only that product's questions as `<spec_questions>` ("Product: <category> · <MCAT>"), marking which were asked and which comes next. An answer or a tapped chip never switches the product; naming another one does, and progress is kept when the questions stay the same.
-- **The server decides completion** (`notComplete` in `src/tools.ts`): `save_lead` with `complete: true` shows the summary card only when the product is known and every question of its plan was asked (buttons shown, `markAsked`) or answered (a `specs` label matching the question by name, `markAnswered`). Otherwise the lead is still saved and the tool result names the next question and its options, so the model asks it.
-- **Knowledge mapping report** (`src/mapping.ts`, the Knowledge mapping card on the seller's page, `/admin/sellers/:slug/mapping.json`): per category its main MCAT, other MCATs, question source and questions, with flags (MCAT id not in the file, no questions, derived); MCAT file entries used/unused/missing; product cards mapped to a category and MCAT (by product, category, MCAT name, containing name or a distinctive word) or unmatched; product FAQ counts; policy card sections kept.
+- **Product cards** (`from: "card"`): each card's attributes carry a role; `ASK` (with `required_for_lead`) marks a must-ask spec, asked in `ask_order`. Label = the attribute key in words ("material_grade" → "Material grade"); the card's qualification question, when it has one, goes along as a phrasing hint. Options are the card's values with spellings merged; a spec with fewer than two gets the MCAT file's options for the same spec (`specNamesMatch`), then the values the seller's products list for it; still under two, it is an open question ("no buttons: ask in words"). RARE, DEFER and ON_REQUEST attributes are only answered if raised. The card's `selling_unit` phrases the quantity question.
+- **MCAT file** (`from: "mcat"` / `"products"`): the product's MCAT entry (else one named like the category, else the category's main MCAT's), its specs in key → config → regular order when the file marks types, else the file's order; the seller's own values for a spec lead its options. Specs with fewer than two options are dropped.
+- **Products** (`from: "derived"`): only when the MCAT file has no entry: attributes whose values differ across the category's products (`specStats`), most widely carried first.
+- **Finding the card** (`CardIndex`, built per seller from the uploaded product cards with `mapCard`): the product the server picks is matched to the card naming its title, else the card mapped to the same category and MCAT, else the only card in that category. When the catalogue finds nothing, or the buyer's word names a different card the top hit's title lacks ("24 ghante ka cook chahiye" while the top hit is "24 Hours Maid Service"), the buyer's words pick the card: a word of its own name scores 3, of its categories 2, of a short alias 1; at least 2 wins and a tie picks none.
+- **The server picks the product each turn** (`src/isqTracker.ts`): category, MCAT **and card** from, in order, the product or category page the buyer is on, the top catalogue match for the buyer's own words (or the card they name), or the product saved with the lead. A match from the buyer's words counts only when the message shares a distinctive word with it: a greeting or "price?" never picks a product. It sends only that product's questions as `<spec_questions>` ("Product: <card or category · MCAT> (from the product card's must-ask specs | from the MCAT specifications)"), marking which were asked and which comes next. An answer or a tapped chip never switches the product; naming another one does, and progress is kept when the questions stay the same. While the bot collects the firm name, time frame and city, only a message sharing two distinctive words with a product switches.
+- **The server decides completion** (`notComplete` in `src/tools.ts`): `save_lead` with `complete: true` shows the summary card only when the product is known, every question of its plan was asked (buttons shown, `markAsked`) or answered (a `specs` label matching the question by name, `markAnswered`), and the closing steps are in. Otherwise the lead is still saved and the tool result names the next step (with its buttons), so the model asks it.
+- **Knowledge mapping report** (`src/mapping.ts`, the Knowledge mapping card on the seller's page, `/admin/sellers/:slug/mapping.json`): per category its main MCAT, other MCATs, fallback question source and questions, with flags (MCAT id not in the file, no questions, derived); each product card's must-ask questions, with flags for cards without any and specs asked in words; MCAT file entries used/unused/missing; product cards mapped to a category and MCAT (by product, category, MCAT name, containing name or a distinctive word) or unmatched; product FAQ counts; policy card sections kept.
 
 ### FAQs
 
@@ -234,7 +231,7 @@ The seller's policy card (sections such as Business, Dispatch, Freight, GST, Pac
 |---|---|---|
 | `sessions` | Live chat state | `id` (`<seller>:<browserId>`), `chat_id`, messages, lead (JSON: stage, mobile, name, category, asked ISQs), seen catalogue, usage (tokens, cost) |
 | `transcript` | What buyers typed (redacted) and what they saw | `session_id`, `chat_id`, role, text, guardrails, `trace_id` |
-| `leads` | Verified enquiries | seller, `session_id`, `chat_id`, mobile, name, product, requirements, quantity, city, page_url, `test` (1 = from a Test key of the bot API, hidden on the Leads page by default), `buyer_id` (the buyer's id on the platform that opened the chat) |
+| `leads` | Verified enquiries | seller, `session_id`, `chat_id`, mobile, name, product, requirements, quantity, `buyer_type`, `firm_name`, `timeframe`, city (delivery), page_url, `test` (1 = from a Test key of the bot API, hidden on the Leads page by default), `buyer_id` (the buyer's id on the platform that opened the chat) |
 | `guardrail_events` | Output-filter replacements | seller, session, rule, original |
 | `platform_prompts` | Admin edits of the common system prompt and guardrails | key, value, updated_at |
 | `seller_prompts` | Admin-saved brand personas | seller, system, user |
@@ -258,7 +255,7 @@ Files on the data disk:
 | Chat API | `GET /api/sellers/:seller` (widget settings, fixed intro) · `POST /api/chat` (SSE) · `POST /api/feedback` |
 | Bot API (`X-Bot-Key`, any origin; see [BOT_API.md](BOT_API.md), Auditor notes in [SIMULATOR_API.md](SIMULATOR_API.md)) | `GET /api/v1/bots/:slug` (name, welcome, seller id, demo OTP, key kind) · `POST /api/v1/bots/:slug/conversations` (opens a chat with the buyer's name, mobile, `mobileVerified`, `buyerId`, `sellerId` check; the bot skips what it is given) · `POST /api/v1/bots/:slug/chat` (one JSON reply per message; a Live key saves real leads and tags traces `api`, a Test key saves test leads and tags `eval`) |
 | Website | `GET /` (directory, visit-only) · `/s/:seller/` · `/about` · `/products` · `/contact` · `/c/:slug` · `/p/:slug` · `/search` |
-| Admin (Basic auth, same-origin POSTs) | `/admin` (sellers list, tracing status) · `/admin/sellers/new` · `/admin/sellers/:seller` (one seller's page: knowledge base, extra files, mapping, catalogue, keys, persona, delete) · `/admin/sellers/:seller/kb` (+ `.json`, delete) · `/admin/sellers/:seller/files/:kind` (+ delete) · `/admin/sellers/:seller/recrawl` · `/admin/sellers/:seller/prompts` · `/admin/sellers/:seller/keys` (+ `/:id/revoke`) · `/admin/prompts` · `/admin/prompts/versions/:id` (+ restore) · `/admin/faq` (+ download, delete) · `/admin/tracing/test` · `/admin/leads` (+ `.csv`) · `/admin/transcript/:sessionId` |
+| Admin (Basic auth, same-origin POSTs) | `/admin` (sellers list, tracing status) · `/admin/sellers/new` · `/admin/sellers/:seller` (one seller's page: knowledge base, extra files, mapping, catalogue, keys, persona, delete) · `/admin/sellers/:seller/kb` (+ `.json`, delete) · `/admin/sellers/:seller/files/:kind` (+ delete) · `/admin/sellers/:seller/view/:kind` (`kb`, `business-card`, `mcat`, `product-cards`: the stored file inline, `no-store`, `?download=1`) · `/admin/sellers/:seller/recrawl` · `/admin/sellers/:seller/prompts` · `/admin/sellers/:seller/keys` (+ `/:id/revoke`) · `/admin/prompts` · `/admin/prompts/versions/:id` (+ restore) · `/admin/faq` (+ download, delete) · `/admin/tracing/test` · `/admin/leads` (+ `.csv`) · `/admin/transcript/:sessionId` |
 | Static | `public/` (widget.js, site.css, admin.css, demo.html) |
 
 ---
@@ -291,6 +288,6 @@ Files on the data disk:
 | Add a tool | Its definition and zod schema in `src/tools.ts`, its handling in `runTurn` (`src/claude.ts`), any UI in `public/widget.js`. |
 | Change the journey or style | `prompts/system.md` (it applies itself on deploy). |
 | Add a seller | Upload its KB JSON with **+ Add seller** on `/admin`, or commit a KB folder under `kb/sellers/<slug>/`. |
-| Tune ISQs | `isqPlan` / `presentSpecs` / `deriveIsqs` (`src/sellerKb.ts`); fix the MCAT file or product specs the mapping report flags. |
+| Tune ISQs | `cardQuestions` / `CardIndex` / `planFor` (`src/cardQuestions.ts`) for card questions; `isqPlan` / `fileQuestions` / `deriveIsqs` (`src/sellerKb.ts`) for the fallbacks; fix the product cards, MCAT file or product specs the mapping report flags. |
 | Change the catalogue search or the product pick | `Catalogue.search` (`src/catalogue.ts`), `updateCategory` (`src/isqTracker.ts`); then `npm run retrieval:eval` against the sellers' test cases and compare with the recorded baseline. |
 | Add a guardrail check | `OutputFilter` rules in `src/guardrails.ts`, plus the text in `prompts/guardrails.md`. |
