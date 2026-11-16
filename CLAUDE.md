@@ -73,6 +73,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 - The agent proxy **blocks** jayshreemachinetools.in, imimg.com images and the Render URL (likely the Oracle server too), so production and live crawls can't be checked from here.
 - There is no `ANTHROPIC_API_KEY` here. Run the local server with `env -u ANTHROPIC_BASE_URL` and test chat with a scripted fake client.
 - Never `pkill -f src/server.ts`: it kills the shell. Find PIDs with `ps -eo pid,args | grep -E "node.*src/server\.ts"`.
+- Node `fetch` ignores the agent proxy: run scripts that call an allowed host with `NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt`. The Jev key is a proxy-injected secret on the `chat-bot` environment (`JEV_API_KEY=proxy-injected`).
 - Playwright: `$(npm root -g)/playwright/index.mjs` with `executablePath: "/opt/pw-browsers/chromium"`.
 → More: memory/context/stack.md
 → Architecture and flows: docs/ARCHITECTURE.md; file tree: docs/REPO_STRUCTURE.md

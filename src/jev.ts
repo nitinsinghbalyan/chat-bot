@@ -206,11 +206,11 @@ export function productRequest(model: string, input: PickInput, rng: () => numbe
     },
     about_product: {
       type: "noul",
-      instructions: "Does `buyer_message` ask about, name or describe a product or service the buyer wants?",
+      instructions: "Does `buyer_message` ask about, name or describe one of the products in `seller_products` (or the same kind of product)?",
       criteria: {
-        true: "The buyer names, describes or asks about something they want to buy, in any language (English, Hindi or Hinglish).",
+        true: "The buyer names, describes or asks about something they want to buy that is one of `seller_products` or the same kind of product, in any language (English, Hindi or Hinglish).",
         false:
-          "A greeting or thanks; a name, phone number, firm or city; an answer to `bot_previous_message` such as a size, material, quantity or time frame; a question about price, delivery, payment or the company with no product in it; or something unrelated to buying.",
+          "A greeting or thanks; a name, phone number, firm or city; an answer to `bot_previous_message` such as a size, material, quantity or time frame; a question about price, delivery, payment or the company with no product in it; a product of a different kind that is not in `seller_products`, even if a word in it looks alike; or something unrelated to buying.",
       },
     },
   };
