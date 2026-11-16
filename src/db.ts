@@ -550,6 +550,11 @@ export class ChatDb {
     return chats.flatMap((chat) => this.chatTurns(chat.chatId).map((turn) => ({ chat, turn })));
   }
 
+  /** Whether a run already has a logged chat for this scenario (a run that was logged live is not imported again). */
+  hasRunScenario(runId: string, seller: string, scenarioId: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM chats WHERE run_id = ? AND seller = ? AND scenario_id = ? LIMIT 1").get(runId, seller, scenarioId);
+  }
+
   /** Whether a chat is already in the log (imports skip those). */
   hasChat(chatId: string): boolean {
     return !!this.db.prepare("SELECT 1 FROM chats WHERE chat_id = ?").get(chatId);

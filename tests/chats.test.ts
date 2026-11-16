@@ -153,5 +153,9 @@ describe("chats log", () => {
     const viaKey = await fetch(`${base}/api/v1/bots/${ALPHA}/runs/import`, { method: "POST", headers: { "X-Bot-Key": keys.test.key, "Content-Type": "text/plain" }, body: text });
     expect(await viaKey.json()).toEqual({ chats: 0, turns: 0, skipped: 1, ignored: 1 });
     expect((await fetch(`${base}/api/v1/bots/${ALPHA}/runs/import`, { method: "POST", headers: { "X-Bot-Key": keys.live.key, "Content-Type": "text/plain" }, body: text })).status).toBe(403);
+    // A run's scenario that was already logged live (run-9 / alpha_tc_01) is not imported again.
+    const live = [turn(1, { runId: "run-9", scenarioId: "alpha_tc_01" }), { seller: ALPHA, scenarioId: "alpha_tc_01", attempt: 1, stop: "summary", turns: 1 }].map((x) => JSON.stringify(x)).join("\n");
+    const again = await fetch(`${base}/api/v1/bots/${ALPHA}/runs/import`, { method: "POST", headers: { "X-Bot-Key": keys.test.key, "Content-Type": "text/plain" }, body: live });
+    expect(await again.json()).toEqual({ chats: 0, turns: 0, skipped: 1, ignored: 0 });
   });
 });
