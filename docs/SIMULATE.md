@@ -85,4 +85,9 @@ Rerunning with the same `--run-id` continues a cut-off run. Finished scenarios a
   - **What it reports:** right, wrong and no product, plus the first product each picker would set per chat. It also gives the false picks in scenarios with no product, and the agreement between Jev and Haiku. Each is split by language, suite and seller, with examples where only one of them was right.
 - **A note on Shadow:** with Jev in Shadow, the bot follows the word rules, so later turns build on their choice. For single messages scored the same way, run the retrieval eval with `--jev --haiku`; it uses the same files.
 
+**In the admin:** every chat, simulated or real, is logged on **Chats** (`/admin/chats`).
+- **Filtering:** pick **Test runs** and choose a run to see the same comparison tables as `sim:report`, with `calls.csv` and `accuracy.csv` downloads.
+- **One chat:** open a chat to see its transcript with buttons and the summary card. Under each reply are its model calls (tokens, latency, cost) and each picker's product, marked right or wrong.
+- **Earlier runs:** runs made before the log existed can be imported there ("Import a run from files"), or with the seller's Test key (`POST /api/v1/bots/<slug>/runs/import`, see BOT_API.md).
+
 Every turn is also a Langfuse trace, filterable by tag `simulator` and `runId`. Each trace holds the `claude round N` generations, `jev-product-pick` and `haiku-product-pick`, all with tokens, latency and cost.

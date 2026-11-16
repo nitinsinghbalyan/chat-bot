@@ -12,6 +12,7 @@ import { chatSessionId, type Session, type SessionStore } from "./session.js";
 import { mountAdmin } from "./admin.js";
 import { isJevMode, JevClient, JevService, JEV_MODE_SETTING } from "./jev.js";
 import { ClaudeProductPicker } from "./productPick.js";
+import { importRun } from "./chatImport.js";
 import { validateSystemTemplate } from "./prompts.js";
 import { activeVersionId, applyNewerBuiltIn, applyNewerBuiltInPersonas, COMMON_SCOPE, recordStartupVersions, sellerScope } from "./promptVersions.js";
 import { maskMobile, noTracing, OTP_MASK, type Tracing } from "./tracing.js";
@@ -313,6 +314,36 @@ export function createApp(deps: AppDeps) {
       return { result, traceId: root.traceId };
     });
     sessions.save(session);
+    // The chats log (admin Chats page): every turn with its model calls and each picker's product. Never breaks a chat.
+    try {
+      const lead = session.lead;
+      db.recordTurn({
+        chatId: session.chatId,
+        seller: slug,
+        sessionId: session.id,
+        source: t.api ? (t.test ? "test" : "api") : onPlatform ? "website" : "embedded",
+        meta: t.api,
+        buyerName: lead.name ?? null,
+        buyerMobile: lead.mobile && lead.stage !== "otp_sent" ? maskMobile(lead.mobile) : null,
+        leadStage: lead.stage,
+        product: result.product?.used ?? result.isq?.category ?? null,
+        traceId: traceId || null,
+        // Mobile numbers are shown masked in the admin, like everywhere else outside the lead itself.
+        buyer: stageBefore === "otp_sent" ? OTP_MASK : text.replace(/(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}\b/g, (m) => maskMobile(m)),
+        reply: result.text,
+        chips: result.chips,
+        cards: result.cards.map((c) => ({ type: c.type, title: c.title, url: c.url })),
+        summary: result.summary,
+        calls: result.calls ?? [],
+        picks: result.product ?? {},
+        costUsd: result.costUsd,
+        inputTokens: result.usage.input + result.usage.cacheRead + result.usage.cacheWrite,
+        outputTokens: result.usage.output,
+        fallback: !!result.fallbackReply,
+      });
+    } catch (err) {
+      console.error("[chats] could not record the turn", err);
+    }
     const sharedNote = result.cards.length ? `\n[Shared: ${result.cards.map((c) => `${c.type} "${c.title}"`).join(", ")}]` : "";
     const summaryNote = result.summary ? `\n[Summary: ${summaryLine(result.summary)}]` : "";
     db.appendTranscript({ seller: slug, sessionId: session.id, role: "bot", text: result.text + sharedNote + summaryNote, guardrails: result.interventions.map((i) => i.rule), traceId: traceId || undefined, chatId: session.chatId });
@@ -496,6 +527,25 @@ export function createApp(deps: AppDeps) {
     });
   });
 
+  /**
+   * Imports a simulator run made before the chats log existed (turns.jsonl, then conversations.jsonl,
+   * sent together as plain text). Test keys only, and only that bot's chats.
+   */
+  app.post("/api/v1/bots/:slug/runs/import", express.text({ type: "text/plain", limit: "25mb" }), (req, res) => {
+    const caller = apiCaller(req, res);
+    if (!caller) return;
+    const { seller, key } = caller;
+    if (key.kind === "live") {
+      res.status(403).json({ error: "Importing runs needs a Test key." });
+      return;
+    }
+    if (typeof req.body !== "string" || !req.body.trim()) {
+      res.status(400).json({ error: "Send turns.jsonl (and conversations.jsonl) as text/plain." });
+      return;
+    }
+    res.json(importRun(db, req.body, { onlySeller: seller.config.slug, knownSeller: (s) => !!sellers.get(s) }));
+  });
+
   app.post("/api/v1/bots/:slug/chat", async (req, res) => {
     const caller = apiCaller(req, res);
     if (!caller) return;
@@ -520,7 +570,7 @@ export function createApp(deps: AppDeps) {
     }
     const meta = req.body?.meta && typeof req.body.meta === "object" ? req.body.meta : {};
     const api: Record<string, string> = {};
-    for (const k of ["runId", "scenarioId", "label", "expectedProduct"]) if (typeof meta[k] === "string" && meta[k]) api[k] = meta[k].slice(0, 120);
+    for (const k of ["runId", "scenarioId", "label", "language", "expectedProduct"]) if (typeof meta[k] === "string" && meta[k]) api[k] = meta[k].slice(0, 120);
     const pageUrl = typeof req.body?.pageUrl === "string" ? req.body.pageUrl.slice(0, 300) : undefined;
     const test = key.kind !== "live";
     busy.add(sessionKey);

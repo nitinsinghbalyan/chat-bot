@@ -17,6 +17,7 @@ import { FAQ_LIMIT_BYTES, parseFaq, unknownSellerNames, type FaqStore } from "./
 import { isSellerFileKind, SELLER_FILES, type SellerFileKind } from "./sellerFiles.js";
 import { parseSellerFile, sellerConfigSchema, SLUG_RE, type SellerContext, type SellerRegistry } from "./sellers.js";
 import { esc } from "./site/html.js";
+import { mountChats } from "./adminChats.js";
 import { backupName, RESTORE_LIMIT_BYTES, stageRestore, writeBackup } from "./backup.js";
 import { buildCommit, paths } from "./config.js";
 import { isJevMode, JEV_MODE_SETTING, type JevMode, type JevService } from "./jev.js";
@@ -73,7 +74,7 @@ export function ago(value: string | Date | null | undefined): string {
   return `${Math.round(h / 24)} days ago`;
 }
 
-type Nav = "sellers" | "leads" | "prompts" | "";
+type Nav = "sellers" | "leads" | "chats" | "prompts" | "";
 
 /** Inline icons from the design, on a 16px grid, stroked with the text colour. */
 type ViewKind = "kb" | SellerFileKind;
@@ -103,7 +104,7 @@ function shell(title: string, body: string, active: Nav = ""): string {
   const link = (key: Nav, href: string, label: string) => `<a href="${href}"${active === key ? ' aria-current="page"' : ""}>${label}</a>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><link rel="icon" href="data:,"><title>${esc(title)} · Admin</title><link rel="stylesheet" href="/admin.css"></head>
 <body>
-<header class="bar"><div class="wrap bar-row"><a class="logo" href="/admin">Seller assistants <span class="pill">Admin</span></a><nav aria-label="Primary">${link("sellers", "/admin", "Sellers")}${link("leads", "/admin/leads", "Leads")}${link("prompts", "/admin/prompts", "Common prompts")}</nav><a class="btn ghost small" href="/" target="_blank" rel="noopener">Public site ${icon("external", 14)}</a></div></header>
+<header class="bar"><div class="wrap bar-row"><a class="logo" href="/admin">Seller assistants <span class="pill">Admin</span></a><nav aria-label="Primary">${link("sellers", "/admin", "Sellers")}${link("leads", "/admin/leads", "Leads")}${link("chats", "/admin/chats", "Chats")}${link("prompts", "/admin/prompts", "Common prompts")}</nav><a class="btn ghost small" href="/" target="_blank" rel="noopener">Public site ${icon("external", 14)}</a></div></header>
 <main class="wrap">${body}</main>
 </body></html>`;
 }
@@ -655,6 +656,7 @@ export function mountAdmin(app: Express, d: AdminDeps) {
     return `<details class="menu"><summary class="btn" aria-haspopup="menu">Manage ${icon("chevron", 14)}</summary><div class="menu-list" role="menu">
 ${s.uploaded ? `<a role="menuitem" href="/admin/sellers/${slug}/kb.json">Download KB JSON</a>` : ""}
 <a role="menuitem" href="/admin/sellers/${slug}/prompts">Edit persona</a>
+<a role="menuitem" href="/admin/chats?seller=${slug}">Chats</a>
 <form method="post" action="/admin/sellers/${slug}/recrawl"><button role="menuitem" type="submit"${canCrawl ? "" : " disabled"}>Re-crawl</button></form>
 ${s.source === "admin" ? `<form method="post" action="/admin/sellers/${slug}/delete" onsubmit="return confirm('Delete ${esc(s.config.name).replace(/'/g, "\\'")}? Its website and bot stop working. Leads and chats are kept.')"><button role="menuitem" class="danger" type="submit">Delete seller</button></form>` : ""}
 </div></details>`;
@@ -1580,7 +1582,7 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
     const rows = leads
       .map(
         (l) =>
-          `<tr><td>${esc(fmtIST(l.createdAt))}</td><td>${esc(name(l.seller))}</td><td>${esc(l.name)}${l.test ? ' <span class="badge info">Test</span>' : ""}${l.buyerId ? `<br><span class="muted small">Buyer id ${esc(l.buyerId)}</span>` : ""}</td><td>${esc(l.mobile)}</td><td>${esc(l.product)}</td><td>${esc(l.requirements)}</td><td>${esc(l.quantity)}</td><td>${esc(l.buyerType ? l.buyerType.charAt(0).toUpperCase() + l.buyerType.slice(1) : "")}${l.firm ? `<br><span class="muted small">${esc(l.firm)}</span>` : ""}</td><td>${esc(l.timeframe ?? "")}</td><td>${esc(l.city)}</td><td><a class="btn small" href="/admin/transcript/${encodeURIComponent(l.sessionId)}${l.chatId ? `?chat=${encodeURIComponent(l.chatId)}` : ""}">Chat</a>${sessionLink(l.chatId ? `${l.seller}:${l.chatId}` : null)}</td></tr>`,
+          `<tr><td>${esc(fmtIST(l.createdAt))}</td><td>${esc(name(l.seller))}</td><td>${esc(l.name)}${l.test ? ' <span class="badge info">Test</span>' : ""}${l.buyerId ? `<br><span class="muted small">Buyer id ${esc(l.buyerId)}</span>` : ""}</td><td>${esc(l.mobile)}</td><td>${esc(l.product)}</td><td>${esc(l.requirements)}</td><td>${esc(l.quantity)}</td><td>${esc(l.buyerType ? l.buyerType.charAt(0).toUpperCase() + l.buyerType.slice(1) : "")}${l.firm ? `<br><span class="muted small">${esc(l.firm)}</span>` : ""}</td><td>${esc(l.timeframe ?? "")}</td><td>${esc(l.city)}</td><td><a class="btn small" href="${l.chatId && db.hasChat(l.chatId) ? `/admin/chats/${encodeURIComponent(l.chatId)}` : `/admin/transcript/${encodeURIComponent(l.sessionId)}${l.chatId ? `?chat=${encodeURIComponent(l.chatId)}` : ""}`}">Chat</a>${sessionLink(l.chatId ? `${l.seller}:${l.chatId}` : null)}</td></tr>`,
       )
       .join("");
     const options = [`<option value="">All sellers</option>`, ...sellers.list().map((s) => `<option value="${esc(s.config.slug)}"${s.config.slug === filter ? " selected" : ""}>${esc(s.config.name)}</option>`)].join("");
@@ -1604,6 +1606,8 @@ ${preview ? `<details class="panel preview"><summary>Preview: full system prompt
     const url = langfuseSession && d.tracing ? langfuseSessionUrl(d.tracing, langfuseSession) : null;
     return url ? ` <a class="btn small" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(langfuseSession!)}">Langfuse ↗</a>` : "";
   }
+
+  mountChats(app, { db, sellers, requireAdmin, sameOriginPost, shell: (title, body, active) => shell(title, body, active), fmtIST: (v) => fmtIST(v), sessionLink: (lf) => sessionLink(lf) });
 
   app.get("/admin/transcript/:sessionId", requireAdmin, (req, res) => {
     const id = String(req.params.sessionId);

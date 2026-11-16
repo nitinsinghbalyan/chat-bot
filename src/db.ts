@@ -50,6 +50,93 @@ export interface SellerPersona {
   user: string;
 }
 
+/** Where a chat came from: the platform's seller site, the widget on the seller's own site, the bot API (Live key) or a test (Test key). */
+export type ChatSource = "website" | "embedded" | "api" | "test";
+export const CHAT_SOURCES: ChatSource[] = ["website", "embedded", "api", "test"];
+
+/** Test-run details a simulator sends in the Bot API's `meta`. */
+export interface ChatRunMeta {
+  runId?: string;
+  scenarioId?: string;
+  label?: string;
+  language?: string;
+  expectedProduct?: string;
+}
+
+/** One buyer message and the bot's reply, with every model call and each picker's product (see runTurn). */
+export interface ChatTurnInput {
+  chatId: string;
+  seller: string;
+  sessionId: string;
+  source: ChatSource;
+  meta?: ChatRunMeta;
+  /** The buyer's name and masked mobile as known after the turn. */
+  buyerName?: string | null;
+  buyerMobile?: string | null;
+  leadStage?: string | null;
+  /** The chat's product after the turn (its spec questions' label). */
+  product?: string | null;
+  at?: string;
+  traceId?: string | null;
+  buyer: string;
+  reply: string;
+  chips?: string[];
+  cards?: Array<{ type: string; title: string; url?: string }>;
+  summary?: unknown;
+  calls?: unknown[];
+  picks?: object;
+  costUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  fallback?: boolean;
+}
+
+export interface ChatRow {
+  chatId: string;
+  seller: string;
+  sessionId: string;
+  source: ChatSource;
+  runId: string | null;
+  scenarioId: string | null;
+  label: string | null;
+  language: string | null;
+  expectedProduct: string | null;
+  buyerName: string | null;
+  buyerMobile: string | null;
+  startedAt: string;
+  lastAt: string;
+  turns: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  leadStage: string | null;
+  product: string | null;
+  summaryShown: boolean;
+}
+
+export interface ChatTurnRow {
+  turn: number;
+  at: string;
+  traceId: string | null;
+  buyer: string;
+  reply: string;
+  chips: string[];
+  cards: Array<{ type: string; title: string; url?: string }>;
+  summary: { rows: Array<{ label: string; value: string }>; note?: string } | null;
+  calls: any[];
+  product: Record<string, any>;
+  costUsd: number;
+  fallback: boolean;
+}
+
+export interface ChatFilter {
+  seller?: string;
+  source?: ChatSource;
+  runId?: string;
+  /** Matches the scenario id, buyer name, product or run id. */
+  q?: string;
+}
+
 export interface TranscriptLine {
   seller: string;
   sessionId: string;
@@ -140,6 +227,48 @@ CREATE TABLE IF NOT EXISTS settings (
   value         TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS chats (
+  chat_id           TEXT PRIMARY KEY,
+  seller            TEXT NOT NULL,
+  session_id        TEXT NOT NULL,
+  source            TEXT NOT NULL,
+  run_id            TEXT,
+  scenario_id       TEXT,
+  label             TEXT,
+  language          TEXT,
+  expected_product  TEXT,
+  buyer_name        TEXT,
+  buyer_mobile      TEXT,
+  started_at        TEXT NOT NULL,
+  last_at           TEXT NOT NULL,
+  turns             INTEGER NOT NULL DEFAULT 0,
+  cost_usd          REAL NOT NULL DEFAULT 0,
+  input_tokens      INTEGER NOT NULL DEFAULT 0,
+  output_tokens     INTEGER NOT NULL DEFAULT 0,
+  lead_stage        TEXT,
+  product           TEXT,
+  summary_shown     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS chats_seller ON chats(seller, last_at);
+CREATE INDEX IF NOT EXISTS chats_last ON chats(last_at);
+CREATE INDEX IF NOT EXISTS chats_run ON chats(run_id) WHERE run_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS chat_turns (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id   TEXT NOT NULL,
+  turn      INTEGER NOT NULL,
+  at        TEXT NOT NULL,
+  trace_id  TEXT,
+  buyer     TEXT NOT NULL,
+  reply     TEXT NOT NULL,
+  chips     TEXT NOT NULL DEFAULT '[]',
+  cards     TEXT NOT NULL DEFAULT '[]',
+  summary   TEXT,
+  calls     TEXT NOT NULL DEFAULT '[]',
+  product   TEXT NOT NULL DEFAULT '{}',
+  cost_usd  REAL NOT NULL DEFAULT 0,
+  fallback  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS chat_turns_chat ON chat_turns(chat_id, turn);
 CREATE TABLE IF NOT EXISTS bot_keys (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   seller        TEXT NOT NULL,
@@ -266,6 +395,164 @@ export class ChatDb {
     this.db
       .prepare("INSERT INTO transcript (seller, session_id, role, text, guardrails, at, trace_id, chat_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .run(line.seller, line.sessionId, line.role, line.text, line.guardrails?.length ? line.guardrails.join(",") : null, new Date().toISOString(), line.traceId ?? null, line.chatId ?? null);
+  }
+
+  // ---- the chats log (every conversation, with each turn's model calls and product picks) ----
+
+  /** Records one turn: creates or updates the chat's row and appends the turn (one transaction). Returns the turn number. */
+  recordTurn(t: ChatTurnInput): number {
+    const at = t.at ?? new Date().toISOString();
+    return this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO chats (chat_id, seller, session_id, source, run_id, scenario_id, label, language, expected_product, buyer_name, buyer_mobile, started_at, last_at, turns, cost_usd, input_tokens, output_tokens, lead_stage, product, summary_shown)
+           VALUES (@chatId, @seller, @sessionId, @source, @runId, @scenarioId, @label, @language, @expectedProduct, @buyerName, @buyerMobile, @at, @at, 1, @cost, @inTok, @outTok, @leadStage, @product, @summary)
+           ON CONFLICT(chat_id) DO UPDATE SET last_at = excluded.last_at, turns = turns + 1, cost_usd = cost_usd + excluded.cost_usd,
+             input_tokens = input_tokens + excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens,
+             lead_stage = excluded.lead_stage, product = COALESCE(excluded.product, product), summary_shown = MAX(summary_shown, excluded.summary_shown),
+             buyer_name = COALESCE(excluded.buyer_name, buyer_name), buyer_mobile = COALESCE(excluded.buyer_mobile, buyer_mobile),
+             run_id = COALESCE(run_id, excluded.run_id), scenario_id = COALESCE(scenario_id, excluded.scenario_id), label = COALESCE(label, excluded.label),
+             language = COALESCE(language, excluded.language), expected_product = COALESCE(expected_product, excluded.expected_product)`,
+        )
+        .run({
+          chatId: t.chatId,
+          seller: t.seller,
+          sessionId: t.sessionId,
+          source: t.source,
+          runId: t.meta?.runId ?? null,
+          scenarioId: t.meta?.scenarioId ?? null,
+          label: t.meta?.label ?? null,
+          language: t.meta?.language ?? null,
+          expectedProduct: t.meta?.expectedProduct ?? null,
+          buyerName: t.buyerName || null,
+          buyerMobile: t.buyerMobile || null,
+          at,
+          cost: t.costUsd ?? 0,
+          inTok: t.inputTokens ?? 0,
+          outTok: t.outputTokens ?? 0,
+          leadStage: t.leadStage ?? null,
+          product: t.product ?? null,
+          summary: t.summary ? 1 : 0,
+        });
+      const turn = (this.db.prepare("SELECT turns FROM chats WHERE chat_id = ?").get(t.chatId) as { turns: number }).turns;
+      this.db
+        .prepare("INSERT INTO chat_turns (chat_id, turn, at, trace_id, buyer, reply, chips, cards, summary, calls, product, cost_usd, fallback) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(
+          t.chatId,
+          turn,
+          at,
+          t.traceId || null,
+          t.buyer,
+          t.reply,
+          JSON.stringify(t.chips ?? []),
+          JSON.stringify(t.cards ?? []),
+          t.summary ? JSON.stringify(t.summary) : null,
+          JSON.stringify(t.calls ?? []),
+          JSON.stringify(t.picks ?? {}),
+          t.costUsd ?? 0,
+          t.fallback ? 1 : 0,
+        );
+      return turn;
+    })();
+  }
+
+  private chatWhere(f: ChatFilter): { sql: string; args: unknown[] } {
+    const parts: string[] = [];
+    const args: unknown[] = [];
+    if (f.seller) parts.push("seller = ?"), args.push(f.seller);
+    if (f.source) parts.push("source = ?"), args.push(f.source);
+    if (f.runId) parts.push("run_id = ?"), args.push(f.runId);
+    if (f.q?.trim()) {
+      const like = `%${f.q.trim().replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+      parts.push("(scenario_id LIKE ? ESCAPE '\\' OR buyer_name LIKE ? ESCAPE '\\' OR product LIKE ? ESCAPE '\\' OR run_id LIKE ? ESCAPE '\\' OR expected_product LIKE ? ESCAPE '\\')");
+      args.push(like, like, like, like, like);
+    }
+    return { sql: parts.length ? `WHERE ${parts.join(" AND ")}` : "", args };
+  }
+
+  private static chatRow(r: Record<string, any>): ChatRow {
+    return {
+      chatId: r.chat_id,
+      seller: r.seller,
+      sessionId: r.session_id,
+      source: r.source,
+      runId: r.run_id,
+      scenarioId: r.scenario_id,
+      label: r.label,
+      language: r.language,
+      expectedProduct: r.expected_product,
+      buyerName: r.buyer_name,
+      buyerMobile: r.buyer_mobile,
+      startedAt: r.started_at,
+      lastAt: r.last_at,
+      turns: r.turns,
+      costUsd: r.cost_usd,
+      inputTokens: r.input_tokens,
+      outputTokens: r.output_tokens,
+      leadStage: r.lead_stage,
+      product: r.product,
+      summaryShown: !!r.summary_shown,
+    };
+  }
+
+  /** Chats, newest first. */
+  listChats(f: ChatFilter = {}, opts: { limit?: number; offset?: number } = {}): { rows: ChatRow[]; total: number } {
+    const w = this.chatWhere(f);
+    const total = (this.db.prepare(`SELECT COUNT(*) AS n FROM chats ${w.sql}`).get(...w.args) as { n: number }).n;
+    const rows = this.db.prepare(`SELECT * FROM chats ${w.sql} ORDER BY last_at DESC LIMIT ? OFFSET ?`).all(...w.args, opts.limit ?? 50, opts.offset ?? 0) as Record<string, any>[];
+    return { rows: rows.map(ChatDb.chatRow), total };
+  }
+
+  /** How many chats per source (for the filter chips), optionally for one seller. */
+  chatCounts(seller?: string): Record<ChatSource, number> {
+    const rows = this.db.prepare(`SELECT source, COUNT(*) AS n FROM chats ${seller ? "WHERE seller = ?" : ""} GROUP BY source`).all(...(seller ? [seller] : [])) as Array<{ source: ChatSource; n: number }>;
+    const out = { website: 0, embedded: 0, api: 0, test: 0 } as Record<ChatSource, number>;
+    for (const r of rows) out[r.source] = r.n;
+    return out;
+  }
+
+  /** Test runs (simulator run ids), newest first, optionally for one seller. */
+  chatRuns(seller?: string): Array<{ runId: string; sellers: string; chats: number; turns: number; costUsd: number; startedAt: string; lastAt: string }> {
+    return this.db
+      .prepare(
+        `SELECT run_id AS runId, GROUP_CONCAT(DISTINCT seller) AS sellers, COUNT(*) AS chats, SUM(turns) AS turns, SUM(cost_usd) AS costUsd, MIN(started_at) AS startedAt, MAX(last_at) AS lastAt
+         FROM chats WHERE run_id IS NOT NULL ${seller ? "AND seller = ?" : ""} GROUP BY run_id ORDER BY MAX(last_at) DESC`,
+      )
+      .all(...(seller ? [seller] : [])) as any[];
+  }
+
+  chat(chatId: string): ChatRow | null {
+    const r = this.db.prepare("SELECT * FROM chats WHERE chat_id = ?").get(chatId) as Record<string, any> | undefined;
+    return r ? ChatDb.chatRow(r) : null;
+  }
+
+  chatTurns(chatId: string): ChatTurnRow[] {
+    return (this.db.prepare("SELECT * FROM chat_turns WHERE chat_id = ? ORDER BY turn, id").all(chatId) as Record<string, any>[]).map((r) => ({
+      turn: r.turn,
+      at: r.at,
+      traceId: r.trace_id,
+      buyer: r.buyer,
+      reply: r.reply,
+      chips: JSON.parse(r.chips),
+      cards: JSON.parse(r.cards),
+      summary: r.summary ? JSON.parse(r.summary) : null,
+      calls: JSON.parse(r.calls),
+      product: JSON.parse(r.product),
+      costUsd: r.cost_usd,
+      fallback: !!r.fallback,
+    }));
+  }
+
+  /** Every turn of a set of chats (a run's report), with its chat. */
+  chatTurnsFor(f: ChatFilter): Array<{ chat: ChatRow; turn: ChatTurnRow }> {
+    const w = this.chatWhere(f);
+    const chats = (this.db.prepare(`SELECT * FROM chats ${w.sql}`).all(...w.args) as Record<string, any>[]).map(ChatDb.chatRow);
+    return chats.flatMap((chat) => this.chatTurns(chat.chatId).map((turn) => ({ chat, turn })));
+  }
+
+  /** Whether a chat is already in the log (imports skip those). */
+  hasChat(chatId: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM chats WHERE chat_id = ?").get(chatId);
   }
 
   /** Whether this session has a bot reply with this trace id (buyers may only rate their own replies). */

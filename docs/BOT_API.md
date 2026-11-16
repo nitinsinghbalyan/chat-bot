@@ -193,6 +193,17 @@ Send one message at a time per `sessionId` and wait for the reply. Different con
 
 The lead is saved on the seller's Leads page with the name, mobile, product, specs, quantity, buyer type, firm, time frame, delivery city and your `buyerId`. Without call 2 the same conversation starts with "Please share your 10-digit mobile number" (`askFor: "mobile"`), then the OTP (`demoOtp`), then the name.
 
+## Importing a simulator run (Test keys)
+
+`POST /api/v1/bots/<slug>/runs/import` with `Content-Type: text/plain`. The body is a simulator run folder's `turns.jsonl`, followed by its `conversations.jsonl`.
+- It adds that bot's simulated chats to the admin Chats log, tagged as a test run.
+- With `conversations.jsonl` included, only finished chats are imported.
+- Chats already imported are skipped.
+- It answers `{ chats, turns, skipped, ignored }`.
+- Live keys get 403.
+
+Runs made after the chats log exists don't need this: every chat is logged as it happens.
+
 ## Errors
 
 | Status | When |
