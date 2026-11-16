@@ -7,6 +7,11 @@
  *   ANTHROPIC_API_KEY=… KEY_JAYSHREE=sa_live_… npm run simulate -- --config sim.config.json \
  *     [--seller jayshree-machinetools] [--scenario price] [--limit 10] [--concurrency 4] \
  *     [--max-turns 14] [--out runs] [--run-id 2026-11-17-a] [--buyer-model claude-haiku-5-5]
+ *     [--buyer scripted]
+ *
+ * --buyer scripted: no model plays the buyer (no Anthropic key needed, no cost): it logs in, sends the
+ * scenario's own test messages from the seller's *_Bot_Test_Cases.csv ("testCases" in the config),
+ * then taps the first button and answers the closing steps.
  *
  * The config (see scripts/sim.config.example.json) names the bot's base URL and, per seller, its slug,
  * the environment variable holding its Test key and its *_Scenarios.json. Results go to
@@ -16,7 +21,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
-import { appendJsonl, buyerBrief, claudeBuyer, httpBotApi, loadConfig, loadScenarios, mobileFor, resumeState, runConversation, type ConversationRow, type Scenario } from "./lib/sim.js";
+import { numberOf } from "./lib/csv.js";
+import { appendJsonl, buyerBrief, claudeBuyer, httpBotApi, loadConfig, loadScenarios, loadTestMessages, mobileFor, resumeState, runConversation, scriptedBuyer, type ConversationRow, type Scenario } from "./lib/sim.js";
 
 async function pool<T>(items: T[], size: number, fn: (item: T) => Promise<void>) {
   let next = 0;
@@ -35,8 +41,9 @@ async function main() {
     console.error("Usage: npm run simulate -- --config sim.config.json [--seller slug] [--scenario text] [--limit N] [--concurrency 4] [--max-turns 14] [--out runs] [--run-id id] [--buyer-model claude-haiku-5-5]");
     process.exit(1);
   }
-  if (!(process.env.ANTHROPIC_API_KEY ?? "").trim()) {
-    console.error("The simulated buyer needs an Anthropic API key in ANTHROPIC_API_KEY.");
+  const scripted = valueOf("--buyer") === "scripted";
+  if (!scripted && !(process.env.ANTHROPIC_API_KEY ?? "").trim()) {
+    console.error("The simulated buyer needs an Anthropic API key in ANTHROPIC_API_KEY (or use --buyer scripted).");
     process.exit(1);
   }
   const config = loadConfig(configFile);
@@ -45,7 +52,7 @@ async function main() {
   const limit = Number(valueOf("--limit") ?? Infinity);
   const concurrency = Number(valueOf("--concurrency") ?? 4);
   const maxTurns = Number(valueOf("--max-turns") ?? 14);
-  const buyerModel = valueOf("--buyer-model") ?? "claude-haiku-5-5";
+  const buyerModel = scripted ? "scripted" : (valueOf("--buyer-model") ?? "claude-haiku-5-5");
   const onlySeller = valueOf("--seller");
   const scenarioFilter = valueOf("--scenario")?.toLowerCase();
   fs.mkdirSync(outDir, { recursive: true });
@@ -60,7 +67,7 @@ async function main() {
   if (health) console.log(`Bot: build ${health.build?.commit ?? "?"}, model ${health.model}, Jev ${health.jev?.mode ?? "?"}`);
   if (health?.jev?.mode === "off") console.log("Note: Jev is Off on this bot, so neither Jev nor the Haiku comparison pick will run. Set it to Shadow on /admin.");
 
-  const client = new Anthropic();
+  const client = scripted ? null : new Anthropic();
   const turnsFile = path.join(outDir, "turns.jsonl");
   const convFile = path.join(outDir, "conversations.jsonl");
   const resume = resumeState(outDir);
@@ -74,12 +81,18 @@ async function main() {
       continue;
     }
     const bot = await api.details(seller.slug, key);
+    if (scripted && !seller.testCases) {
+      console.error(`${seller.slug}: --buyer scripted needs "testCases" (the *_Bot_Test_Cases.csv) in the config, skipped`);
+      continue;
+    }
+    const messages = scripted ? loadTestMessages(seller.testCases!) : null;
     let scenarios: Scenario[] = loadScenarios(seller.scenarios).filter((s) => !resume.done.has(`${seller.slug}|${s.scenario_id}`));
     if (scenarioFilter) scenarios = scenarios.filter((s) => s.scenario_id.toLowerCase().includes(scenarioFilter));
     scenarios = scenarios.slice(0, limit);
     console.log(`\n${seller.slug}: ${scenarios.length} scenario(s) to run`);
     await pool(scenarios, concurrency, async (s) => {
-      const buyer = claudeBuyer(client, buyerModel, buyerBrief(s, { mobile: mobileFor(s.scenario_id), otp: bot.demoOtp }));
+      const ids = { mobile: mobileFor(s.scenario_id), otp: bot.demoOtp };
+      const buyer = messages ? scriptedBuyer(s, ids, messages.get(numberOf(s.scenario_id)) ?? []) : claudeBuyer(client!, buyerModel, buyerBrief(s, ids));
       let row: ConversationRow;
       try {
         row = await runConversation({

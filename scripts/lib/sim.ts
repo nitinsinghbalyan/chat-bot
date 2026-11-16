@@ -8,6 +8,7 @@ import path from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { CallRecord, ProductPicks } from "../../src/productPick.js";
 import { costDetails } from "../../src/tracing.js";
+import { buyerTurns, numberOf, readCsv } from "./csv.js";
 
 /** One persona brief from a seller's *_Scenarios.json. */
 export interface Scenario {
@@ -28,6 +29,8 @@ export interface SellerRun {
   keyEnv: string;
   /** Path to the seller's *_Scenarios.json (relative to the config file). */
   scenarios: string;
+  /** Path to the seller's *_Bot_Test_Cases.csv (relative to the config file): the scripted buyer's messages. */
+  testCases?: string;
 }
 
 export interface SimConfig {
@@ -43,9 +46,16 @@ export function loadConfig(file: string): SimConfig {
     baseUrl: raw.baseUrl.replace(/\/+$/, ""),
     sellers: raw.sellers.map((s, i) => {
       if (!s?.slug || !s.keyEnv || !s.scenarios) throw new Error(`${file}: sellers[${i}] needs "slug", "keyEnv" and "scenarios"`);
-      return { slug: s.slug, keyEnv: s.keyEnv, scenarios: path.resolve(dir, s.scenarios) };
+      return { slug: s.slug, keyEnv: s.keyEnv, scenarios: path.resolve(dir, s.scenarios), ...(s.testCases ? { testCases: path.resolve(dir, s.testCases) } : {}) };
     }),
   };
+}
+
+/** The scripted buyer's messages per scenario number, from the test cases' Buyer_Input (multi-turn scripts split into turns). */
+export function loadTestMessages(file: string): Map<number, string[]> {
+  const out = new Map<number, string[]>();
+  for (const r of readCsv(fs.readFileSync(file, "utf8"))) if (r.Buyer_Input?.trim()) out.set(numberOf(r.Test_ID ?? ""), buyerTurns(r.Buyer_Input));
+  return out;
 }
 
 export function loadScenarios(file: string): Scenario[] {
@@ -115,9 +125,38 @@ export interface BuyerTurn {
   costUsd: number;
 }
 
-/** Writes the buyer's next message from the conversation so far (bot and buyer messages, oldest first). */
+/** Writes the buyer's next message from the conversation so far (bot and buyer messages, oldest first) and the bot's last reply. */
 export interface Buyer {
-  next(history: Array<{ from: "bot" | "buyer"; text: string }>): Promise<BuyerTurn>;
+  next(history: Array<{ from: "bot" | "buyer"; text: string }>, last?: BotReply | null): Promise<BuyerTurn>;
+}
+
+/**
+ * A rule-based buyer (no model, no cost): logs in with the test identity, sends the scenario's own
+ * test messages in order, then taps the first button the bot shows and answers the closing steps
+ * (quantity, firm, city) until the summary card or nothing more to say.
+ */
+export function scriptedBuyer(s: Scenario, ids: { mobile: string; otp: string }, lines: string[]): Buyer {
+  const queue = lines.length ? [...lines] : s.opening_message?.trim() ? [s.opening_message.trim()] : [];
+  let sentMobile = false;
+  let taps = 0;
+  let filler = 0;
+  const say = (text: string): BuyerTurn => ({ text, ms: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 });
+  return {
+    async next(history, last) {
+      if (last?.summary) return say(END);
+      const bot = last?.reply ?? history.at(-1)?.text ?? "";
+      if (last?.askFor === "otp") return say(ids.otp);
+      if (last?.askFor === "name") return say(s.buyer_name?.trim() || "Ramesh");
+      if (last?.askFor === "mobile" || !sentMobile) return (sentMobile = true), say(ids.mobile);
+      if (queue.length) return say(queue.shift()!);
+      if (last?.chips?.length && taps < 10) return taps++, say(last.chips[0]!);
+      if (/quantity|how many|kitn[eia]|pieces|units|\bqty\b|kitna chahiye/i.test(bot)) return say("2");
+      if (/firm|company( name)?|business name|firm ka naam/i.test(bot)) return say("Test Traders");
+      if (/city|deliver|location|shahar|kahan/i.test(bot)) return say(s.buyer_city?.trim() || "Pune");
+      if (/individual|business/i.test(bot)) return say("Business");
+      return ++filler > 2 ? say(END) : say(filler === 1 ? "Yes, please go ahead." : "That's all I need for now.");
+    },
+  };
 }
 
 export const END = "[END]";
@@ -235,8 +274,9 @@ export async function runConversation(o: ConversationOptions): Promise<Conversat
   let finalProduct: string | null = null;
   let summary = false;
   let stop: ConversationRow["stop"] = "max_turns";
+  let last: BotReply | null = null;
   while (turns < o.maxTurns) {
-    const b = await o.buyer.next(history);
+    const b = await o.buyer.next(history, last);
     if (!b.text || b.text.includes(END)) {
       stop = "buyer_end";
       break;
@@ -257,6 +297,7 @@ export async function runConversation(o: ConversationOptions): Promise<Conversat
     }
     errors = 0;
     turns++;
+    last = r;
     const wallMs = Date.now() - started;
     if (r.debug?.product?.used) finalProduct = r.debug.product.used;
     o.onTurn?.({

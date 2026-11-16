@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { namesFocus } from "../scripts/lib/productMatch.js";
-import { appendJsonl, botText, buyerBrief, END, loadConfig, mobileFor, resumeState, runConversation, sessionIdFor, type BotApi, type BotReply, type Buyer, type TurnRow } from "../scripts/lib/sim.js";
+import { buyerTurns, numberOf } from "../scripts/lib/csv.js";
+import { appendJsonl, botText, buyerBrief, END, loadConfig, mobileFor, resumeState, runConversation, scriptedBuyer as ruleBuyer, sessionIdFor, type BotApi, type BotReply, type Buyer, type TurnRow } from "../scripts/lib/sim.js";
 import { accuracy, callStats, effective, finishedTurns, percentile, renderReport, accuracyCsv, callsCsv } from "../scripts/lib/simReport.js";
 
 const scenario = { scenario_id: "jsm_tc_07_discovery", scenario: "Buyer wants to bend sheets.", language: "hinglish", focus_product: "Press Brakes", suite: "product_discovery", buyer_city: "Raipur" };
@@ -67,6 +68,25 @@ describe("simulator: one conversation", () => {
     expect(mobileFor(scenario.scenario_id)).toBe(mobileFor(scenario.scenario_id));
     expect(sessionIdFor("2026-11-17-10-00", "jayshree-machinetools", "jsm_tc_01_price", 2)).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
     expect(botText(reply({ reply: "Here.", cards: [{ type: "product", title: "Press Brake", url: "u" }], summary: { rows: [{ label: "City", value: "Raipur" }] } }))).toBe('Here.\n[Shared: product "Press Brake"]\n[Enquiry summary: City: Raipur]');
+  });
+
+  it("scripted buyer: logs in, sends the scenario's own messages, taps buttons, answers the closing steps, stops at the summary", async () => {
+    expect(buyerTurns("Turn 1: Panch khane wali thaal chahiye. -> Turn 2 (when asked shape): Rectangular chahiye")).toEqual(["Panch khane wali thaal chahiye.", "Rectangular chahiye"]);
+    expect(numberOf("TC-07")).toBe(7);
+    expect(numberOf("esi_tc_07_price")).toBe(7);
+    const b = ruleBuyer(scenario, { mobile: "9000000001", otp: "12345" }, ["sheet bending machine chahiye", "3 meter"]);
+    const h = [{ from: "bot" as const, text: "Welcome! Your mobile?" }];
+    const next = async (last: Partial<BotReply> | null) => (await b.next(h, last ? reply(last) : null)).text;
+    expect(await next(null)).toBe("9000000001");
+    expect(await next({ askFor: "otp", leadStage: "otp_sent" })).toBe("12345");
+    expect(await next({ askFor: "name", leadStage: "verified" })).toBe("Ramesh");
+    expect(await next({ reply: "What are you looking for?" })).toBe("sheet bending machine chahiye");
+    expect(await next({ reply: "Which length?", chips: ["2.5 m", "3 m"] })).toBe("3 meter");
+    expect(await next({ reply: "Which tonnage?", chips: ["60 T", "100 T"] })).toBe("60 T");
+    expect(await next({ reply: "How many pieces do you need?" })).toBe("2");
+    expect(await next({ reply: "Which city should we deliver to?" })).toBe("Raipur");
+    expect(await next({ reply: "Done.", summary: { rows: [] } })).toBe(END);
+    expect((await b.next(h, reply({ reply: "Anything else?" }))).costUsd).toBe(0);
   });
 
   it("reads the config (paths relative to it) and resumes a run", () => {
