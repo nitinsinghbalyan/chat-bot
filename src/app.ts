@@ -10,6 +10,7 @@ import { checkInput, RateLimiter } from "./guardrails.js";
 import type { SellerContext, SellerRegistry } from "./sellers.js";
 import { chatSessionId, type Session, type SessionStore } from "./session.js";
 import { mountAdmin } from "./admin.js";
+import { isJevMode, JevClient, JevService, JEV_MODE_SETTING } from "./jev.js";
 import { validateSystemTemplate } from "./prompts.js";
 import { activeVersionId, applyNewerBuiltIn, applyNewerBuiltInPersonas, COMMON_SCOPE, recordStartupVersions, sellerScope } from "./promptVersions.js";
 import { maskMobile, noTracing, OTP_MASK, type Tracing } from "./tracing.js";
@@ -38,6 +39,8 @@ export interface AppDeps {
   dataDir?: string;
   /** Restarts the server (after a restore is staged). */
   restart?: () => void;
+  /** Jev product pick (tests inject a fake); default: built from JEV_* settings, mode stored in the db. */
+  jev?: JevService;
 }
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
@@ -73,6 +76,17 @@ export function createApp(deps: AppDeps) {
   const replaced = applyNewerBuiltIn(db, sellers);
   if (replaced.length) console.log(`[prompts] new built-in ${replaced.join(" and ")} applied over the saved edit (restore it from /admin/prompts if needed)`);
   for (const slug of applyNewerBuiltInPersonas(db, sellers)) console.log(`[prompts] new built-in persona applied for ${slug} over the saved one (restore it from its persona page if needed)`);
+
+  const jev =
+    deps.jev ??
+    new JevService({
+      caller: config.JEV_API_KEY ? new JevClient({ apiKey: config.JEV_API_KEY, model: config.JEV_MODEL, baseUrl: config.JEV_BASE_URL, timeoutMs: config.JEV_TIMEOUT_MS }) : null,
+      mode: () => {
+        const m = db.getSetting(JEV_MODE_SETTING);
+        return isJevMode(m) ? m : "off";
+      },
+      minConfidence: config.JEV_MIN_CONFIDENCE,
+    });
 
   const app = express();
   app.disable("x-powered-by");
@@ -135,6 +149,7 @@ export function createApp(deps: AppDeps) {
       ok: true,
       build,
       model: config.BOT_MODEL,
+      jev: { mode: jev.mode(), key: jev.hasKey, model: jev.model },
       tracing: (({ state, host, version, exports, spansExported, exportErrors, lastExportAt, lastExportOk }) => ({
         state,
         host,
@@ -250,6 +265,7 @@ export function createApp(deps: AppDeps) {
           trace: tracing,
           isqs: seller.uploaded ? isqSourceFor(seller) : null,
           faq: faqFor(seller),
+          jev,
         },
         { onText: t.onText ?? (() => {}) },
         { pageUrl, pageEntry: pageEntryFor(seller, pageUrl) },
@@ -604,7 +620,7 @@ export function createApp(deps: AppDeps) {
   );
 
   // ---- Admin (team only) ----
-  mountAdmin(app, { sellers, db, adminPassword, recrawl: deps.recrawl, sameHost, tracing: tracing.status, testTracing: () => tracing.testConnection(), faq: deps.faq, dataDir: deps.dataDir, restart: deps.restart });
+  mountAdmin(app, { sellers, db, adminPassword, recrawl: deps.recrawl, sameHost, tracing: tracing.status, testTracing: () => tracing.testConnection(), faq: deps.faq, dataDir: deps.dataDir, restart: deps.restart, jev });
 
   app.use(
     express.static(paths.public, {
@@ -651,7 +667,30 @@ function isqSourceFor(seller: SellerContext): IsqSource {
       return (hit ? locate(hit) : null) ?? locateCard(text);
     },
     locateCard,
+    places: () => sellerPlaces(view, cards, locate),
   };
+}
+
+/** Every distinct product place of a seller (category, MCAT, card), with one product title each; cached per KB. */
+const placesCache = new WeakMap<object, Array<{ place: Place; title: string }>>();
+function sellerPlaces(view: { catalogueEntries(): CatalogueEntry[] }, cards: object | null, locate: (e: CatalogueEntry) => Place | null): Array<{ place: Place; title: string }> {
+  // The card index is rebuilt whenever the KB or the cards change (sellers.ts compose), so it keys the cache; else the KB view.
+  const key = cards ?? view;
+  const cached = placesCache.get(key);
+  if (cached) return cached;
+  const seen = new Set<string>();
+  const out: Array<{ place: Place; title: string }> = [];
+  for (const e of view.catalogueEntries()) {
+    if (e.kind !== "product") continue;
+    const p = locate(e);
+    if (!p) continue;
+    const k = `${p.category}|${p.mcatId ?? ""}|${p.cardId ?? ""}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ place: p, title: e.title });
+  }
+  placesCache.set(key, out);
+  return out;
 }
 
 /** Adds one turn's tokens and cost to the chat's running totals. */

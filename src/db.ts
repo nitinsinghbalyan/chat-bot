@@ -135,6 +135,11 @@ CREATE TABLE IF NOT EXISTS seller_prompts (
   updated_at      TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+  key           TEXT PRIMARY KEY,
+  value         TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS bot_keys (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   seller        TEXT NOT NULL,
@@ -468,6 +473,15 @@ export class ChatDb {
         : this.db.prepare("SELECT id FROM prompt_versions WHERE scope = ? ORDER BY id DESC LIMIT 1").get(scope)
     ) as { id: number } | undefined;
     return r ? this.getPromptVersion(r.id) : null;
+  }
+
+  /** A platform setting (e.g. the Jev product pick mode), or undefined when never set. */
+  getSetting(key: string): string | undefined {
+    return (this.db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined)?.value;
+  }
+
+  setSetting(key: string, value: string) {
+    this.db.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").run(key, value, new Date().toISOString());
   }
 
   /** A consistent copy of the whole database in `file` (SQLite's online backup; chats can go on meanwhile). */

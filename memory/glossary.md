@@ -123,5 +123,8 @@ Shorthand and internal language for the Seller assistants project.
 | NIVA, Maxi | Other vendors' bots in the AI Assistant Auditor; not ours. Their keys sit in the FAQ sheet's second tab: never use or copy them |
 | jayshree-chatbot | The Render service name (`jayshree-chatbot.onrender.com`); paid, being replaced by the Oracle server (#36) |
 | Oracle server | The free production host (Oracle Cloud Always Free, Ubuntu ARM): app in `/opt/seller-assistants/current`, data in `/var/data`, settings in `/etc/seller-assistants.env`, address `<ip-with-dashes>.sslip.io`; set up with `deploy/oracle/setup.sh` | `docs/DEPLOY_ORACLE.md` |
+| Jev | TypeSafe AI's System One decision model (answers typed questions with probabilities, writes no text); here it picks the buyer's product. Docs: docs.typesafe.ai. Nitin's learning sheet: "Jev (TypeSafe AI) – Learning Resources" on Drive | `src/jev.ts` |
+| shadow mode | Jev product pick mode: Jev is asked and logged (Langfuse `jev-product-pick`, agreement rate on the `/admin` card) but the word rules decide | `JevService` |
+| Choice / Noul | Jev question types: pick one option (with confidence) / probability of yes. A "companion Noul" checks that any option fits at all | `productRequest` |
 | backup / restore | `/admin` Backup card: **Download backup** (zip of everything on the data disk) and **Restore from a backup** (replaces it all, restarts; old data in `DATA_DIR/.before-restore-*`); nightly copies in `/var/data/backups` on the Oracle server | `src/backup.ts` |
 | pull deploy | The Oracle server's timer: every 2 min checks `main`, builds the new commit in `releases/<commit>`, switches `current`, checks `/health`, rolls back on failure | `deploy/oracle/deploy.sh` |

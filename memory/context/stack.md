@@ -14,6 +14,7 @@
 | Render | Hosting until the move: Blueprint `render.yaml`, auto-deploy `main`, disk `/var/data` (paid starter plan) |
 | Oracle Cloud Always Free | New free host (#36): Ubuntu 24.04 ARM VM, Node 22 + Caddy (HTTPS on `<ip>.sslip.io`), systemd units and timers from `deploy/oracle/`; guide `docs/DEPLOY_ORACLE.md` |
 | fflate | Backup zips (`src/backup.ts`) |
+| Jev (TypeSafe AI) | Product pick, off by default: plain `fetch` to `POST https://api.typesafe.ai/v1/systemone` (no SDK), model pinned `jev-1.14.0`, $0.042 per M input tokens, output free |
 | GitHub MCP tools | PRs and merges (no `gh` CLI in cloud sessions) |
 | Langfuse JS v6 (`@langfuse/tracing`, `@langfuse/otel`, `@langfuse/client`) + OpenTelemetry `NodeTracerProvider` | Tracing, scores |
 
@@ -34,7 +35,7 @@
 | `npm run dev` | Local server, port 3000 |
 
 ## Environment variables
-`TRUST_PROXY` (`true` on Render, `loopback` on the Oracle server), `GIT_COMMIT` (build id override), `ANTHROPIC_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_ENVIRONMENT`, `ADMIN_PASSWORD` (8+ characters; enables `/admin`), `BOT_MODEL`, `BOT_EFFORT`, `BOT_FALLBACKS`, `DATA_DIR`, `SELLERS_DIR`, `ALLOWED_ORIGINS`, `CRAWL_ON_START`, `CRAWL_INTERVAL_HOURS`, `DEMO_OTP`, `PORT`.
+`JEV_API_KEY` (or `TYPESAFE_API_KEY`), `JEV_MODEL`, `JEV_BASE_URL`, `JEV_TIMEOUT_MS`, `JEV_MIN_CONFIDENCE`, `TRUST_PROXY` (`true` on Render, `loopback` on the Oracle server), `GIT_COMMIT` (build id override), `ANTHROPIC_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_ENVIRONMENT`, `ADMIN_PASSWORD` (8+ characters; enables `/admin`), `BOT_MODEL`, `BOT_EFFORT`, `BOT_FALLBACKS`, `DATA_DIR`, `SELLERS_DIR`, `ALLOWED_ORIGINS`, `CRAWL_ON_START`, `CRAWL_INTERVAL_HOURS`, `DEMO_OTP`, `PORT`.
 Don't call them `CLAUDE_*`: the harness sets `CLAUDE_EFFORT`, which once clashed.
 
 ## Data on the data disk (`/var/data` on Render and on the Oracle server)

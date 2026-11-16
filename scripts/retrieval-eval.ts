@@ -13,7 +13,14 @@
  * catalogue.search(text) → updateCategory(...). A case with a focus product counts as correct
  * when the top hit is that product: its MCAT has that name, or the focus words appear in the hit's
  * title, category or MCAT name. A case without one (out of scope, greeting) must not pick a product.
+ *
+ *   --jev                       also run each case with Jev deciding the product (src/jev.ts, mode "on"),
+ *                               and print both results. Needs JEV_API_KEY (or TYPESAFE_API_KEY); costs
+ *                               ~$0.04 per million input tokens. JEV_MODEL / JEV_BASE_URL as on the server.
+ *   --jev-min-confidence 0.7    the confidence Jev's choice needs to be used
+ *   --jev-cache <file>          where Jev's answers are kept, so reruns are free (default <dir>/.jev-cache.json)
  */
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { Catalogue } from "../src/catalogue.js";
@@ -24,6 +31,43 @@ import { CardIndex, planFor } from "../src/cardQuestions.js";
 import { mapCard } from "../src/mapping.js";
 import { KbView, validateSellerKb } from "../src/sellerKb.js";
 import type { LeadState } from "../src/session.js";
+import { JevClient, pickProduct, productCandidates, type JevPick, type SystemOneCaller, type SystemOneRequest, type SystemOneResult } from "../src/jev.js";
+
+/** Jev for the eval: the caller (cached) and the confidence its choice needs. */
+interface JevRun {
+  caller: SystemOneCaller;
+  minConfidence: number;
+  picks: JevPick[];
+}
+
+/** Keeps Jev's answers on disk by request, so a rerun (or a threshold sweep) costs nothing. */
+class CachedCaller implements SystemOneCaller {
+  readonly model: string;
+  private cache: Record<string, SystemOneResult>;
+  constructor(private readonly inner: SystemOneCaller, private readonly file: string) {
+    this.model = inner.model;
+    this.cache = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+  }
+  async systemOne(req: SystemOneRequest): Promise<SystemOneResult> {
+    const key = crypto.createHash("sha256").update(JSON.stringify(req)).digest("hex");
+    const hit = this.cache[key];
+    if (hit?.ok) return hit;
+    const r = await this.inner.systemOne(req);
+    if (r.ok) (this.cache[key] = r), fs.writeFileSync(this.file, JSON.stringify(this.cache));
+    return r;
+  }
+}
+
+/** A repeatable shuffle per case (Jev leans to the first option, so the order must not favour the right one). */
+function seeded(text: string): () => number {
+  let a = crypto.createHash("md5").update(text).digest().readUInt32LE(0);
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 interface Case {
   id: string;
@@ -136,7 +180,7 @@ function loadCases(dir: string): Case[] | null {
     });
 }
 
-function evaluateSeller(dir: string, maxMisses: number): SellerReport | string {
+async function evaluateSeller(dir: string, maxMisses: number, jev?: JevRun): Promise<SellerReport | string> {
   const seller = path.basename(dir);
   const kbFile = find(dir, /_v5\.json$/i)[0] ?? find(dir, /botpress.*\.json$/i)[0];
   if (!kbFile) return `${seller}: no export JSON`;
@@ -176,6 +220,20 @@ function evaluateSeller(dir: string, maxMisses: number): SellerReport | string {
       return (hit ? locate(hit) : null) ?? locateCard(text);
     },
     locateCard,
+    places: (() => {
+      let all: Array<{ place: Place; title: string }> | null = null;
+      return () => {
+        if (all) return all;
+        const seen = new Set<string>();
+        all = [];
+        for (const e of view.catalogueEntries()) {
+          const p = e.kind === "product" ? locate(e) : null;
+          const k = p ? `${p.category}|${p.mcatId ?? ""}|${p.cardId ?? ""}` : "";
+          if (p && !seen.has(k)) seen.add(k), all.push({ place: p, title: e.title });
+        }
+        return all;
+      };
+    })(),
   };
 
   const describe = (h: CatalogueEntry) => {
@@ -184,22 +242,33 @@ function evaluateSeller(dir: string, maxMisses: number): SellerReport | string {
   };
   // The top hit is the focus product when its MCAT has that name, or when at least half of one
   // alternative's distinctive words (one of them 4+ letters) appear in its title, category or MCAT name.
-  const correct = (focus: string, h: CatalogueEntry): boolean => {
-    const { mcat } = describe(h);
+  const correct = (focus: string, h: CatalogueEntry): boolean => namesFocus(focus, `${h.title} ${h.category}`, describe(h).mcat);
+  /** The focus product is named by this text (a hit's title and category, or a picked category) or its MCAT. */
+  function namesFocus(focus: string, text: string, mcat: string | null): boolean {
     if (mcat && norm(mcat) === norm(focus)) return true;
-    const have = new Set(words(`${h.title} ${h.category} ${mcat ?? ""}`));
+    const have = new Set(words(`${text} ${mcat ?? ""}`));
     return alternatives(focus).some((alt) => {
       const want = keyWords(alt);
       const shared = want.filter((w) => have.has(stem(w)));
       return want.length > 0 && shared.length >= Math.ceil(want.length / 2) && shared.some((w) => w.length >= 4);
     });
-  };
+  }
 
   const report: SellerReport = { seller, cases: cases.length, product: emptyTally(), byLanguage: {}, bySuite: {}, other: { cases: 0, falsePicks: 0, boundaryPicks: 0, withHits: 0 }, misses: [], falsePicks: [], boundaryPicks: [] };
   for (const c of cases) {
     const hits = catalogue.search(c.input);
     const lead: LeadState = { stage: "captured", otpAttempts: 0, otpSends: 1 };
-    updateCategory(lead, src, { buyerText: c.input, hits, ownHits: hits.length > 0 });
+    let decided: Place | "keep" | undefined;
+    if (jev) {
+      // As runTurn does on a chat's first product message: the same candidates, Jev's decision when it is sure.
+      const candidates = productCandidates(hits, src, c.input);
+      if (candidates.length) {
+        const pick = await pickProduct(jev.caller, { buyerText: c.input, candidates }, { minConfidence: jev.minConfidence, rng: seeded(`${seller}:${c.id}:${c.input}`) });
+        jev.picks.push(pick);
+        decided = pick.decision ?? undefined;
+      }
+    }
+    updateCategory(lead, src, { buyerText: c.input, hits, ownHits: hits.length > 0, decided });
     const top = hits[0];
     const r: CaseResult = {
       ...c,
@@ -211,6 +280,8 @@ function evaluateSeller(dir: string, maxMisses: number): SellerReport | string {
       picked: lead.category || lead.cardId ? `${lead.category ?? ""}${lead.mcatId ? ` · ${mcatName.get(lead.mcatId) ?? lead.mcatId}` : ""}${lead.cardId ? ` [card ${cards?.get(lead.cardId)?.canonical_name}]` : ""}` : null,
     };
     const pickedCard = cards?.get(lead.cardId);
+    const topPlace = top ? locate(top) : null;
+    const pickIsTop = !!topPlace && topPlace.category === (lead.category ?? "") && (topPlace.mcatId ?? null) === (lead.mcatId ?? null);
     // A card counts as right when its name or aliases name the focus product.
     const cardRight = !!pickedCard && !!c.focus && alternatives(c.focus).some((alt) => {
       const want = keyWords(alt);
@@ -230,8 +301,9 @@ function evaluateSeller(dir: string, maxMisses: number): SellerReport | string {
       if (r.topCorrect) t.topCorrect++;
       if (r.anyCorrect) t.anyCorrect++;
       if (pickedCard) t.card++;
-      // With a card, the questions are the card's: judge the card. Without one, the catalogue's pick.
-      if (r.picked && (pickedCard ? cardRight || r.topCorrect && cards?.forProduct(top?.title ?? "", null, null) === lead.cardId : r.topCorrect)) t.pickedCorrect++;
+      // With a card, the questions are the card's: judge the card. Without one, the catalogue's pick: the top
+      // hit when the pick is its place; else (Jev chose another of the seller's products) the picked category's name.
+      if (r.picked && (pickedCard ? cardRight || r.topCorrect && cards?.forProduct(top?.title ?? "", null, null) === lead.cardId : pickIsTop ? r.topCorrect : namesFocus(c.focus, lead.category ?? "", lead.mcatId ? (mcatName.get(lead.mcatId) ?? null) : null))) t.pickedCorrect++;
       else if (r.picked) t.pickedWrong++;
       else t.notPicked++;
     }
@@ -250,68 +322,108 @@ function printTally(label: string, t: Tally) {
   );
 }
 
-function main() {
+interface Totals {
+  total: Tally;
+  byLanguage: Record<string, Tally>;
+  bySuite: Record<string, Tally>;
+  otherCases: number;
+  otherFalse: number;
+  otherBoundary: number;
+  reports: SellerReport[];
+}
+const emptyTotals = (): Totals => ({ total: emptyTally(), byLanguage: {}, bySuite: {}, otherCases: 0, otherFalse: 0, otherBoundary: 0, reports: [] });
+const HEAD = () => `  ${cell("", 18)} ${cell("cases", 6)} ${cell("hits", 7)} ${cell("top1", 7)} ${cell("top4", 7)} ${cell("picked✓", 8)} ${cell("picked✗", 8)} ${cell("no pick", 8)} card`;
+
+function printSeller(r: SellerReport, label: string) {
+  console.log(`\n${r.seller}${label}: ${r.cases} cases (${r.product.cases} name a product, ${r.other.cases} don't)`);
+  console.log(HEAD());
+  printTally("all", r.product);
+  for (const [lang, t] of Object.entries(r.byLanguage).sort()) printTally(lang, t);
+  for (const [suite, t] of Object.entries(r.bySuite).sort()) printTally(suite, t);
+  console.log(`  no product named: ${r.other.cases} cases, ${r.other.withHits} with hits, ${r.other.falsePicks} false picks (${pct(r.other.falsePicks, r.other.cases - r.other.boundaryPicks)} of the non-boundary ones), ${r.other.boundaryPicks} boundary picks`);
+  for (const m of r.misses) console.log(`  ✗ [${m.language}] "${m.input}" → wanted ${m.focus}; got ${m.top ? `"${m.top}"${m.topMcat ? ` (${m.topMcat})` : ""}` : "no hit"}${m.picked ? `; picked ${m.picked}` : ""}`);
+  for (const f of r.falsePicks) console.log(`  ! [${f.language}] "${f.input}" (${f.suite}) picked ${f.picked}`);
+  for (const f of r.boundaryPicks) console.log(`  ? [${f.language}] "${f.input}" (${f.suite}) picked ${f.picked}`);
+}
+
+function addTo(t: Totals, r: SellerReport) {
+  t.reports.push(r);
+  for (const k of Object.keys(t.total) as Array<keyof Tally>) {
+    t.total[k] += r.product[k];
+    for (const [lang, x] of Object.entries(r.byLanguage)) (t.byLanguage[lang] ??= emptyTally())[k] += x[k];
+    for (const [suite, x] of Object.entries(r.bySuite)) (t.bySuite[suite] ??= emptyTally())[k] += x[k];
+  }
+  t.otherCases += r.other.cases;
+  t.otherFalse += r.other.falsePicks;
+  t.otherBoundary += r.other.boundaryPicks;
+}
+
+function printTotals(t: Totals, label: string) {
+  console.log(`\nAll ${t.reports.length} sellers${label}`);
+  console.log(HEAD());
+  printTally("product", t.total);
+  for (const [lang, x] of Object.entries(t.byLanguage).sort()) printTally(lang, x);
+  for (const [suite, x] of Object.entries(t.bySuite).sort()) printTally(suite, x);
+  console.log(`  no product named: ${t.otherCases} cases, ${t.otherFalse} false picks, ${t.otherBoundary} boundary picks`);
+}
+
+async function main() {
   const args = process.argv.slice(2);
-  const outIdx = args.indexOf("--out");
-  const out = outIdx >= 0 ? args[outIdx + 1] : null;
-  const missIdx = args.indexOf("--misses");
-  const maxMisses = missIdx >= 0 ? Number(args[missIdx + 1]) : 12;
-  const dir = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--out" && args[i - 1] !== "--misses");
+  const valueOf = (flag: string) => (args.indexOf(flag) >= 0 ? args[args.indexOf(flag) + 1] : undefined);
+  const out = valueOf("--out") ?? null;
+  const maxMisses = Number(valueOf("--misses") ?? 12);
+  const withJev = args.includes("--jev");
+  const valued = new Set(["--out", "--misses", "--jev-min-confidence", "--jev-cache"]);
+  const dir = args.find((a, i) => !a.startsWith("--") && !valued.has(args[i - 1] ?? ""));
   if (!dir || !fs.existsSync(dir)) {
-    console.error('Usage: npm run retrieval:eval -- "<dir with one folder per seller>" [--out report.json] [--misses N]');
+    console.error('Usage: npm run retrieval:eval -- "<dir with one folder per seller>" [--out report.json] [--misses N] [--jev [--jev-min-confidence 0.7] [--jev-cache file]]');
     process.exit(1);
+  }
+  let jev: JevRun | undefined;
+  if (withJev) {
+    const apiKey = (process.env.JEV_API_KEY ?? process.env.TYPESAFE_API_KEY ?? "").trim();
+    if (!apiKey) {
+      console.error("--jev needs a Jev API key in JEV_API_KEY (or TYPESAFE_API_KEY), from console.typesafe.ai.");
+      process.exit(1);
+    }
+    const client = new JevClient({ apiKey, model: process.env.JEV_MODEL || "jev-1.14.0", baseUrl: process.env.JEV_BASE_URL || "https://api.typesafe.ai", timeoutMs: 10_000 });
+    jev = { caller: new CachedCaller(client, valueOf("--jev-cache") ?? path.join(dir, ".jev-cache.json")), minConfidence: Number(valueOf("--jev-min-confidence") ?? 0.7), picks: [] };
   }
   const sellerDirs = fs
     .readdirSync(dir)
     .map((f) => path.join(dir, f))
     .filter((p) => fs.statSync(p).isDirectory())
     .sort();
-  const reports: SellerReport[] = [];
-  const total = emptyTally();
-  const byLanguage: Record<string, Tally> = {};
-  const bySuite: Record<string, Tally> = {};
-  let otherCases = 0;
-  let otherFalse = 0;
-  let otherBoundary = 0;
+  const base = emptyTotals();
+  const jevTotals = emptyTotals();
   for (const sd of sellerDirs) {
-    const r = evaluateSeller(sd, maxMisses);
+    const r = await evaluateSeller(sd, maxMisses);
     if (typeof r === "string") {
       console.log(`\n${r}`);
       continue;
     }
-    reports.push(r);
-    console.log(`\n${r.seller}: ${r.cases} cases (${r.product.cases} name a product, ${r.other.cases} don't)`);
-    console.log(`  ${cell("", 18)} ${cell("cases", 6)} ${cell("hits", 7)} ${cell("top1", 7)} ${cell("top4", 7)} ${cell("picked✓", 8)} ${cell("picked✗", 8)} ${cell("no pick", 8)} card`);
-    printTally("all", r.product);
-    for (const [lang, t] of Object.entries(r.byLanguage).sort()) printTally(lang, t);
-    for (const [suite, t] of Object.entries(r.bySuite).sort()) printTally(suite, t);
-    console.log(
-      `  no product named: ${r.other.cases} cases, ${r.other.withHits} with hits, ${r.other.falsePicks} false picks (${pct(r.other.falsePicks, r.other.cases - r.other.boundaryPicks)} of the non-boundary ones), ${r.other.boundaryPicks} boundary picks`,
-    );
-    for (const m of r.misses) console.log(`  ✗ [${m.language}] "${m.input}" → wanted ${m.focus}; got ${m.top ? `"${m.top}"${m.topMcat ? ` (${m.topMcat})` : ""}` : "no hit"}${m.picked ? `; picked ${m.picked}` : ""}`);
-    for (const f of r.falsePicks) console.log(`  ! [${f.language}] "${f.input}" (${f.suite}) picked ${f.picked}`);
-    for (const f of r.boundaryPicks) console.log(`  ? [${f.language}] "${f.input}" (${f.suite}) picked ${f.picked}`);
-    for (const k of Object.keys(total) as Array<keyof Tally>) {
-      total[k] += r.product[k];
-      for (const [lang, t] of Object.entries(r.byLanguage)) (byLanguage[lang] ??= emptyTally())[k] += t[k];
-      for (const [suite, t] of Object.entries(r.bySuite)) (bySuite[suite] ??= emptyTally())[k] += t[k];
+    printSeller(r, jev ? " (word matching)" : "");
+    addTo(base, r);
+    if (jev) {
+      const rj = await evaluateSeller(sd, maxMisses, jev);
+      if (typeof rj !== "string") printSeller(rj, ` (Jev at confidence ≥ ${jev.minConfidence})`), addTo(jevTotals, rj);
     }
-    otherCases += r.other.cases;
-    otherFalse += r.other.falsePicks;
-    otherBoundary += r.other.boundaryPicks;
   }
-  if (reports.length > 1) {
-    console.log(`\nAll ${reports.length} sellers`);
-    console.log(`  ${cell("", 18)} ${cell("cases", 6)} ${cell("hits", 7)} ${cell("top1", 7)} ${cell("top4", 7)} ${cell("picked✓", 8)} ${cell("picked✗", 8)} ${cell("no pick", 8)} card`);
-    printTally("product", total);
-    for (const [lang, t] of Object.entries(byLanguage).sort()) printTally(lang, t);
-    for (const [suite, t] of Object.entries(bySuite).sort()) printTally(suite, t);
-    console.log(`  no product named: ${otherCases} cases, ${otherFalse} false picks, ${otherBoundary} boundary picks`);
+  if (base.reports.length > 1 || jev) printTotals(base, jev ? " (word matching)" : "");
+  if (jev) {
+    printTotals(jevTotals, ` (Jev at confidence ≥ ${jev.minConfidence})`);
+    const ok = jev.picks.filter((p) => !p.error);
+    const ms = ok.map((p) => p.ms).sort((a, b) => a - b);
+    const tokens = ok.reduce((n, p) => n + (p.inputTokens ?? 0), 0);
+    const by = (reason: string) => jev!.picks.filter((p) => p.reason === reason).length;
+    console.log(`\nJev (${jev.caller.model}): ${jev.picks.length} calls, ${jev.picks.length - ok.length} errors; decided a product ${by("pick")}, no product ${by("not about a product")}, unsure ${by("unsure")}`);
+    if (ms.length) console.log(`  latency mean ${Math.round(ms.reduce((a, b) => a + b, 0) / ms.length)} ms, p95 ${ms[Math.floor(ms.length * 0.95)] ?? ms.at(-1)} ms (cached answers count as their first call)`);
+    console.log(`  ${tokens.toLocaleString("en-IN")} input tokens ≈ $${((tokens / 1e6) * 0.042).toFixed(4)}`);
   }
   if (out) {
-    fs.writeFileSync(out, JSON.stringify({ generatedAt: new Date().toISOString(), sellers: reports }, null, 2));
+    fs.writeFileSync(out, JSON.stringify({ generatedAt: new Date().toISOString(), sellers: base.reports, ...(jev ? { jev: { minConfidence: jev.minConfidence, sellers: jevTotals.reports } } : {}) }, null, 2));
     console.log(`\nReport written to ${out}`);
   }
 }
 
-main();
+void main();

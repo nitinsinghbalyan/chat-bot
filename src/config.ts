@@ -53,6 +53,18 @@ const schema = z.object({
   TRUST_PROXY: optional(z.string())
     .default("true")
     .transform((v): boolean | number | string => (v === "true" ? true : v === "false" ? false : /^\d+$/.test(v) ? Number(v) : v)),
+  /**
+   * Jev (TypeSafe AI) for the product pick: off until a key is set and the mode is switched on in
+   * /admin. TYPESAFE_API_KEY (the name TypeSafe's docs use) is read too.
+   */
+  JEV_API_KEY: optional(z.string()),
+  /** A pinned model version (see https://docs.typesafe.ai/models), so a new release can't change answers unseen. */
+  JEV_MODEL: z.string().default("jev-1.14.0"),
+  JEV_BASE_URL: z.string().url().default("https://api.typesafe.ai"),
+  /** A chat turn waits at most this long for Jev; then the word rules decide. */
+  JEV_TIMEOUT_MS: z.coerce.number().int().min(100).max(10_000).default(1500),
+  /** Jev's choice is used only at this confidence or above. */
+  JEV_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.7),
   LANGFUSE_ENVIRONMENT: optional(z.string().regex(/^[a-z0-9_-]{1,40}$/, "use lowercase letters, digits, - or _")),
 });
 
@@ -62,6 +74,7 @@ const trimmed = (v: string | undefined) => v?.trim() || undefined;
 export const config = schema.parse({
   ...process.env,
   LANGFUSE_PUBLIC_KEY: trimmed(process.env.LANGFUSE_PUBLIC_KEY),
+  JEV_API_KEY: trimmed(process.env.JEV_API_KEY) ?? trimmed(process.env.TYPESAFE_API_KEY),
   LANGFUSE_SECRET_KEY: trimmed(process.env.LANGFUSE_SECRET_KEY),
   // Langfuse's own docs also use LANGFUSE_HOST and LANGFUSE_BASEURL for this.
   LANGFUSE_BASE_URL: trimmed(process.env.LANGFUSE_BASE_URL) ?? trimmed(process.env.LANGFUSE_HOST) ?? trimmed(process.env.LANGFUSE_BASEURL),

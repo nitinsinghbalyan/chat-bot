@@ -30,6 +30,8 @@ export interface IsqSource {
   locateText(text: string): Place | null;
   /** The place of the product card the buyer's own words name, when the catalogue finds nothing (none for a greeting). */
   locateCard?(text: string): Place | null;
+  /** Every distinct product place the seller has, with one product title each (Jev's options beyond the search hits). */
+  places?(): Array<{ place: Place; title: string }>;
 }
 
 /** Words too generic to tell machines apart ("mild steel", "automatic"). */
@@ -47,7 +49,7 @@ export const currentPlan = (lead: LeadState, src: IsqSource) => (lead.category |
  * quantity and buyer type given): a reply such as "Awadh Canteen Services" or "Lucknow" is an
  * answer, so only a message sharing two distinctive words with a product names another one.
  */
-function askingNames(lead: LeadState, src: IsqSource): boolean {
+export function askingNames(lead: LeadState, src: IsqSource): boolean {
   const d = lead.details ?? {};
   const plan = currentPlan(lead, src);
   return !!plan && pendingQuestions(lead, plan).length === 0 && !!d.quantity && !!d.buyerType;
@@ -77,11 +79,24 @@ export function setPlace(lead: LeadState, src: IsqSource, next: Place | null): b
 export function updateCategory(
   lead: LeadState,
   src: IsqSource,
-  turn: { buyerText: string; page?: CatalogueEntry | null; hits: CatalogueEntry[]; ownHits: boolean },
+  turn: {
+    buyerText: string;
+    page?: CatalogueEntry | null;
+    hits: CatalogueEntry[];
+    ownHits: boolean;
+    /**
+     * Jev's decision (src/jev.ts), when it is on and sure: a product, or "keep" (no product change).
+     * The page the buyer is on still wins, and during the closing steps it may only keep the product.
+     */
+    decided?: Place | "keep";
+  },
 ): boolean {
   if (lead.stage === "otp_sent" || lead.stage === "verified") return false;
   let next: Place | null = null;
+  const decided = turn.decided !== undefined && (turn.decided === "keep" || !askingNames(lead, src)) ? turn.decided : undefined;
   if (turn.page) next = src.locate(turn.page);
+  else if (decided === "keep") return false;
+  else if (decided) next = decided;
   else if (turn.ownHits && turn.hits[0]) {
     const top = turn.hits[0];
     const tapped = lead.lastOptions?.some((o) => o.toLowerCase() === turn.buyerText.trim().toLowerCase());
@@ -102,7 +117,7 @@ export function updateCategory(
     }
   }
   // Nothing in the catalogue, but the buyer's words name one of the product cards ("bachcha samhalne wali maid").
-  if (!next && !turn.page && src.locateCard && !lead.lastOptions?.some((o) => o.toLowerCase() === turn.buyerText.trim().toLowerCase())) {
+  if (!next && !turn.page && !decided && src.locateCard && !lead.lastOptions?.some((o) => o.toLowerCase() === turn.buyerText.trim().toLowerCase())) {
     const byCard = src.locateCard(turn.buyerText);
     if (byCard && byCard.cardId !== lead.cardId && !askingNames(lead, src)) {
       const current = currentPlan(lead, src);

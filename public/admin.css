@@ -412,3 +412,10 @@ table.faq-preview th, table.faq-preview td { text-align: left; vertical-align: t
   .tiles { grid-template-columns: 1fr; }
   .summary-top .btn-row .btn { flex: 1 1 auto; }
 }
+
+/* Jev product pick card (Sellers page) */
+.jev-form { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.jev-form .kind-choice { display: flex; flex-direction: column; gap: 6px; }
+.jev-form .kind-choice .muted { font-weight: 400; }
+.jev-mode { color: var(--primary); }
+.warn-text { color: var(--warn); }
