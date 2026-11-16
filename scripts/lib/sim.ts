@@ -285,7 +285,7 @@ export async function runConversation(o: ConversationOptions): Promise<Conversat
     const started = Date.now();
     let r: BotReply;
     try {
-      r = await o.api.chat(o.slug, o.key, { sessionId, message: b.text.slice(0, 2000), meta: { runId: o.runId, scenarioId: s.scenario_id, label: s.suite ?? "", expectedProduct: base.focus } });
+      r = await o.api.chat(o.slug, o.key, { sessionId, message: b.text.slice(0, 2000), meta: { runId: o.runId, scenarioId: s.scenario_id, label: s.suite ?? "", language: s.language ?? "", expectedProduct: base.focus } });
     } catch (err) {
       lastError = (err as Error).message;
       history.pop();

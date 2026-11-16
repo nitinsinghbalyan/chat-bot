@@ -59,7 +59,7 @@ chat-bot/
 │   ├── simulate.ts      ~120  CLI (`npm run simulate`): one Bot API conversation per test scenario, Haiku playing the buyer (docs/SIMULATE.md)
 │   ├── sim-report.ts     ~30  CLI (`npm run sim:report -- runs/<id>`): per-call tokens/latency/cost + Jev vs Haiku vs word rules accuracy
 │   ├── sim.config.example.json  The simulator's config shape (copy to sim.config.json, git-ignored)
-│   └── lib/             productMatch.ts (focus-product matching), sim.ts (conversation loop, Bot API client, buyer), simReport.ts (report maths)
+│   └── lib/             csv.ts (CSV reader, test-message turns), productMatch.ts (re-exports src/), sim.ts (conversation loop, Bot API client, buyer), simReport.ts (report maths)
 │
 ├── src/
 │   ├── server.ts         ~85  Entry point: applies a staged restore, then config, DB, registry, tracing, crawl schedule, graceful shutdown (flushes traces)
@@ -94,6 +94,10 @@ chat-bot/
 │   │
 │   ├── tracing.ts       ~580  Langfuse (OTLP): one trace per buyer message, session <seller>:<chatId>, cost score, test button
 │   ├── admin.ts        ~1540  /admin pages: sellers list, seller page (KB, extra files, mapping, catalogue, keys, persona), add seller, crawls, common prompts, FAQ, leads, versions
+│   ├── adminChats.ts   ~260  /admin/chats: every chat (tags website / embedded / Bot API / test run), a run's comparison tables + CSV, one chat with its calls and picks, run import
+│   ├── chatImport.ts    ~110  Imports a simulator run folder (turns.jsonl + conversations.jsonl) into the chats log
+│   ├── runReport.ts     ~250  Per-call tokens/latency/cost and word rules vs Jev vs Haiku accuracy (admin Chats page + sim:report)
+│   ├── productMatch.ts   ~35  Does a product label name the expected (focus) product?
 │   └── site/
 │       ├── html.ts       ~60  Escaping helpers and safe URL checks
 │       └── pages.ts     ~635  Server-rendered directory (/) and seller websites (/s/<slug>/…)

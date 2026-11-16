@@ -419,3 +419,36 @@ table.faq-preview th, table.faq-preview td { text-align: left; vertical-align: t
 .jev-form .kind-choice .muted { font-weight: 400; }
 .jev-mode { color: var(--primary); }
 .warn-text { color: var(--warn); }
+
+/* Chats log (/admin/chats and one chat) */
+.filters-bar input[type="search"] { flex: 1 1 260px; max-width: 380px; width: auto; }
+.run-summary h3 { font-size: 14px; font-weight: 700; margin-top: 4px; }
+.run-summary .grid-2 { grid-template-columns: 1fr; }
+a.chip { text-decoration: none; }
+table.compact code { white-space: nowrap; }
+table.compact { font-size: 13px; }
+table.compact th, table.compact td { padding: 6px 10px; }
+table.calls tr.err td { background: var(--error-bg); }
+.vmark { display: inline-block; min-width: 1em; margin-left: 4px; font-weight: 700; text-align: center; }
+.vmark.ok { color: var(--success); }
+.vmark.err { color: var(--error); }
+.vmark.none { color: var(--muted-2); }
+.pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px; }
+.import-run summary { cursor: pointer; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.import-run .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.chat-log .msg.bot { white-space: pre-wrap; }
+.reply-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; white-space: normal; }
+.reply-chips span { font-size: 12px; padding: 3px 10px; border: 1px solid var(--primary); color: var(--primary-active); border-radius: var(--radius-full); background: var(--surface-card); }
+.chat-summary { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--neutral-200); border-radius: 8px; background: var(--neutral-100); white-space: normal; }
+.chat-summary dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 6px 0 0; font-size: 13px; }
+.chat-summary dt { color: var(--muted); }
+.chat-summary dd { margin: 0; overflow-wrap: anywhere; }
+.turn-details { align-self: stretch; margin: -4px 0 6px; font-size: 13px; }
+.turn-details > summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 2px 0; }
+.turn-details[open] > summary { margin-bottom: 6px; }
+.turn-details .table-wrap { box-shadow: none; }
+.picks { display: flex; gap: 6px 14px; flex-wrap: wrap; margin: 8px 0 0; }
+.picks span { white-space: nowrap; }
+@media (max-width: 720px) {
+  .filters-bar input[type="search"] { max-width: none; }
+}

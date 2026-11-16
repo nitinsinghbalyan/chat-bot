@@ -42,7 +42,7 @@ describe("simulator: one conversation", () => {
 
     expect(conv).toMatchObject({ turns: 3, summary: true, stop: "summary", finalProduct: "Press Brakes", focus: "Press Brakes", sessionId: sessionIdFor("run-1", "jsm", scenario.scenario_id, 1) });
     expect(sent.map((b) => b.message)).toEqual(["9876543210", "sheet bending machine chahiye", "Up to 6 mm"]);
-    expect(sent[0].meta).toEqual({ runId: "run-1", scenarioId: scenario.scenario_id, label: "product_discovery", expectedProduct: "Press Brakes" });
+    expect(sent[0].meta).toEqual({ runId: "run-1", scenarioId: scenario.scenario_id, label: "product_discovery", language: "hinglish", expectedProduct: "Press Brakes" });
     expect(new Set(sent.map((b) => b.sessionId)).size).toBe(1);
     expect(rows[1]).toMatchObject({ turn: 2, traceId: "t2", calls: [expect.objectContaining({ kind: "jev-pick" })], product: { jev: "Press Brakes" }, buyerCall: { inputTokens: 100 } });
     // The buyer sees the buttons the bot showed.
