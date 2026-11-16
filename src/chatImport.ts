@@ -83,7 +83,8 @@ export function importRun(db: ChatDb, text: string, opts: { onlySeller?: string;
   for (const turns of byChat.values()) {
     const first = turns[0]!;
     const chatId = importedChatId(first);
-    if (db.hasChat(chatId)) {
+    // Skipped when already imported, or when this run's scenario was logged live (chats after the log existed).
+    if (db.hasChat(chatId) || db.hasRunScenario(first.runId, first.seller, first.scenarioId)) {
       result.skipped++;
       continue;
     }
