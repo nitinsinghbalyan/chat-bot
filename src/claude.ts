@@ -8,6 +8,7 @@ import type { CatalogueEntry } from "./crawler.js";
 import { OutputFilter, REPLACEMENTS, type Intervention } from "./guardrails.js";
 import type { KnowledgeBase } from "./kb.js";
 import { renderUserPrompt } from "./prompts.js";
+import type { JevService } from "./jev.js";
 import type { Session } from "./session.js";
 import type { MediaCard } from "./media.js";
 import { describeLeadStatus, executeTool, toolDefinitions, type EnquirySummary, type LeadSink, type MediaSharer } from "./tools.js";
@@ -35,6 +36,8 @@ export interface ChatDeps {
   faq?: FaqIndex | null;
   /** The seller's ISQs per category (KB JSON sellers): the server picks the chat's category each turn. */
   isqs?: IsqSource | null;
+  /** Jev product pick (src/jev.ts): when on and sure, it decides the chat's product; off by default. */
+  jev?: JevService | null;
 }
 
 export interface TurnCallbacks {
@@ -146,6 +149,17 @@ function correctionNote(interventions: Intervention[]): string {
  * Runs one buyer turn: retrieve catalogue context, call Claude with streaming, run any tool calls,
  * and stream guardrail-filtered text back through `onText`.
  */
+/** The text of the bot's last reply in the history (for Jev: an answer to it isn't a product). */
+function lastBotText(messages: Session["messages"]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.role !== "assistant") continue;
+    const text = typeof m.content === "string" ? m.content : m.content.map((b) => (b.type === "text" ? b.text : "")).join(" ");
+    if (text.trim()) return text.trim();
+  }
+  return undefined;
+}
+
 export async function runTurn(
   session: Session,
   buyerText: string,
@@ -167,7 +181,8 @@ export async function runTurn(
   const { hits, ownHits } = retrieve(session, deps.catalogue, buyerText, opts.pageEntry, trace, traceText);
   // The chat's machine category, and only its spec questions for the bot.
   const isqs = deps.isqs ?? null;
-  if (isqs) updateCategory(session.lead, isqs, { buyerText, page: opts.pageEntry, hits, ownHits });
+  const decided = isqs && deps.jev && !opts.pageEntry ? await deps.jev.decide({ lead: session.lead, src: isqs, buyerText, hits, ownHits, lastBotText: lastBotText(session.messages), trace }) : undefined;
+  if (isqs) updateCategory(session.lead, isqs, { buyerText, page: opts.pageEntry, hits, ownHits, decided });
   const plan = () => (isqs ? currentPlan(session.lead, isqs) : null);
   const turnPlan = plan();
   let faqHits: ReturnType<FaqIndex["search"]> = [];

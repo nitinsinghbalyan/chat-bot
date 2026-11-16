@@ -19,6 +19,7 @@ import { parseSellerFile, sellerConfigSchema, SLUG_RE, type SellerContext, type 
 import { esc } from "./site/html.js";
 import { backupName, RESTORE_LIMIT_BYTES, stageRestore, writeBackup } from "./backup.js";
 import { buildCommit, paths } from "./config.js";
+import { isJevMode, JEV_MODE_SETTING, type JevMode, type JevService } from "./jev.js";
 import { langfuseSessionUrl, type ConnectionTest, type TracingStatus } from "./tracing.js";
 
 /** Maximum characters for each brand persona prompt. */
@@ -39,6 +40,8 @@ export interface AdminDeps {
   faq?: FaqStore;
   /** DATA_DIR: what Download backup zips and Restore replaces. Default: paths.data. */
   dataDir?: string;
+  /** Jev product pick (src/jev.ts): the mode switch and its status card on the Sellers page. */
+  jev?: JevService;
   /** Restarts the server after a restore is staged (server.ts exits; Render or systemd starts it again). Unset: the restore waits for the next restart. */
   restart?: () => void;
 }
@@ -794,6 +797,7 @@ ${DROPZONE_SCRIPT}${MENU_SCRIPT}${VIEWER_SCRIPT}`,
   ${list.map((s) => sellerListRow(s, counts[s.config.slug] ?? 0)).join("")}
   <p class="empty-filter" hidden>No seller matches that filter.</p>
 </div></div>`;
+    const jevNote = q("jev") === "saved" ? `<div class="flash ok">✓ Jev product pick saved: <b>${esc(d.jev?.mode() ?? "off")}</b>. It applies from the next chat message.</div>` : "";
     const restoredNote = q("restored") === "1" ? `<div class="flash ok">✓ Restored from the backup. Check the sellers, leads and prompts below; the replaced data is kept on the disk in a <code>.before-restore-…</code> folder.</div>` : "";
     const info = `<div class="info-cards">
   <div class="card"><span class="overline">What the bot reads</span>
@@ -802,6 +806,7 @@ ${DROPZONE_SCRIPT}${MENU_SCRIPT}${VIEWER_SCRIPT}`,
   <div class="card"><span class="overline">Deployment</span>
     <p class="card-desc">Build <code>${esc(BUILD_COMMIT)}</code> · running since ${esc(fmtIST(STARTED_AT))}</p>
     <p class="card-desc">Bot API keys (for integrations and chat simulators): open a seller and use <b>API key</b>. A Live key's chats save real leads; a Test key's are saved as test leads.</p></div>
+  ${jevCard()}
   <div class="card backup-card" id="backup"><span class="overline">Backup</span>
     <p class="card-desc">Everything on the data disk in one zip: leads, chats, prompts and their versions, bot API keys, uploaded knowledge bases and extra files, crawls and the common FAQ. It holds GST, bank and buyer details: keep it private.</p>
     <div class="btn-row"><a class="btn small" href="/admin/backup" download>${icon("download", 14)} Download backup</a></div>
@@ -823,6 +828,7 @@ ${flash}
 ${tracingNote(d.tracing, !!d.testTracing)}
 ${list.length ? `${filters}\n${table}` : `<div class="card empty">No sellers yet. <a href="/admin/sellers/new">Add the first one</a> by uploading its JSON.</div>`}
 ${restoredNote}
+${jevNote}
 ${info}
 ${LIST_SCRIPT}${DROPZONE_SCRIPT}`,
         "sellers",
@@ -1064,6 +1070,43 @@ ${DROPZONE_SCRIPT}
     for (const f of ["xlsx", "csv"] as const) fs.rmSync(faq.pathFor(f), { force: true });
     faq.set(null);
     res.redirect(303, "/admin/prompts#faq");
+  });
+
+  // ---- Jev product pick (src/jev.ts) ----
+
+  /** The Jev card on the Sellers page: the Off / Shadow / On switch and what Jev has done since the start. */
+  function jevCard(): string {
+    const j = d.jev;
+    if (!j) return "";
+    const mode = j.mode();
+    const stored = db.getSetting(JEV_MODE_SETTING);
+    const chosen: JevMode = isJevMode(stored) ? stored : "off";
+    const s = j.stats;
+    const status = !j.hasKey
+      ? `<p class="card-desc warn-text">No Jev key on this server. Add <code>JEV_API_KEY</code> in Render → Environment (from console.typesafe.ai), then choose a mode here.</p>`
+      : `<p class="card-desc muted small">Model <code>${esc(j.model ?? "")}</code> · used at confidence ≥ ${j.minConfidence} · since ${esc(fmtIST(STARTED_AT))}: ${plural(s.calls, "call")}${s.errors ? `, ${plural(s.errors, "error")} (last: ${esc(s.lastError ?? "")})` : ""}${s.calls ? `, ${Math.round(s.totalMs / s.calls)} ms on average` : ""}${s.compared ? `; agreed with word matching on ${s.agreed} of ${s.compared} turns (${Math.round((100 * s.agreed) / s.compared)}%)` : ""}.</p>`;
+    const option = (value: JevMode, label: string, desc: string) =>
+      `<label class="check"><input type="radio" name="mode" value="${value}"${chosen === value ? " checked" : ""}${!j.hasKey && value !== "off" ? " disabled" : ""}> ${label} <span class="muted">· ${desc}</span></label>`;
+    return `<div class="card jev-card" id="jev"><span class="overline">Jev product pick${mode !== "off" ? ` · <span class="jev-mode">${esc(mode)}</span>` : ""}</span>
+    <p class="card-desc">Jev (TypeSafe AI) decides which of the seller's products the buyer means; Claude still writes every reply. When Jev is unsure, slow or down, today's word matching decides.</p>
+    <form method="post" action="/admin/jev" class="jev-form">
+      <div class="kind-choice" role="radiogroup" aria-label="Jev mode">
+        ${option("off", "Off", "word matching only")}
+        ${option("shadow", "Shadow", "Jev is asked and logged in Langfuse; word matching decides")}
+        ${option("on", "On", "Jev decides when it is sure")}
+      </div>
+      <button class="btn small primary" type="submit">Save</button>
+    </form>
+    ${status}</div>`;
+  }
+
+  app.post("/admin/jev", requireAdmin, sameOriginPost, express.urlencoded({ extended: false, limit: "1kb" }), (req, res) => {
+    const mode = String((req.body as Record<string, unknown>)?.mode ?? "");
+    if (!d.jev || !isJevMode(mode)) return void res.status(400).send(shell("Jev", `<div class="panel empty">Choose Off, Shadow or On. <a href="/admin#jev">Back</a></div>`));
+    if (mode !== "off" && !d.jev.hasKey) return void res.status(400).send(shell("Jev", `<div class="panel empty">Add <code>JEV_API_KEY</code> on the server first. <a href="/admin#jev">Back</a></div>`));
+    db.setSetting(JEV_MODE_SETTING, mode);
+    console.log(`[jev] product pick set to ${mode}`);
+    res.redirect(303, "/admin?jev=saved#jev");
   });
 
   // ---- Backup and restore (the whole data disk; see src/backup.ts) ----
