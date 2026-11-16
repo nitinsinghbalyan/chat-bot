@@ -36,6 +36,13 @@ Options:
 - `--concurrency 4` sets how many chats run at once per seller.
 - `--max-turns 14` sets the bot turns per chat.
 - `--buyer-model claude-haiku-5-5` sets the model that plays the buyer.
+- `--buyer scripted` uses a rule-based buyer instead of a model, so it needs no Anthropic key and costs nothing extra. It:
+  - logs in with the test identity;
+  - sends the scenario's own messages from the seller's `*_Bot_Test_Cases.csv` (`Buyer_Input`; "Turn 1: … -> Turn 2: …" scripts are split into turns), which you add as `testCases` per seller in the config;
+  - taps the first button the bot shows;
+  - answers the closing steps: quantity 2, firm "Test Traders", the scenario's city.
+
+  It is less natural than a model buyer, but the product signal comes from the real test messages.
 - `--out runs` sets where results go.
 
 Rerunning with the same `--run-id` continues a cut-off run. Finished scenarios are skipped, and an unfinished one starts again as a new chat.

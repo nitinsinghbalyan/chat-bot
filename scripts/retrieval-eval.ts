@@ -34,6 +34,7 @@ import { CardIndex, planFor } from "../src/cardQuestions.js";
 import { mapCard } from "../src/mapping.js";
 import { KbView, validateSellerKb } from "../src/sellerKb.js";
 import type { LeadState } from "../src/session.js";
+import { numberOf, readCsv } from "./lib/csv.js";
 import { alternatives, keyWords, namesFocus, stem, words } from "./lib/productMatch.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { JevClient, pickProduct, productCandidates, type PickInput, type SystemOneCaller, type SystemOneRequest, type SystemOneResult } from "../src/jev.js";
@@ -174,36 +175,7 @@ const firstTurn = (t: string) => t.split(/\s*->\s*/)[0].replace(/^Turn\s*1\s*(?:
 /** Suites whose cases name a product the seller may sell, so a pick there is often right, not a false pick. */
 const BOUNDARY = new Set(["catalogue_boundary"]);
 
-/** Minimal RFC 4180 reader: quoted fields may hold commas, quotes ("") and newlines. */
-function readCsv(text: string): Record<string, string>[] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = "";
-  let quoted = false;
-  const src = text.replace(/^﻿/, "");
-  for (let i = 0; i < src.length; i++) {
-    const ch = src[i];
-    if (quoted) {
-      if (ch === '"' && src[i + 1] === '"') (field += '"'), i++;
-      else if (ch === '"') quoted = false;
-      else field += ch;
-    } else if (ch === '"') quoted = true;
-    else if (ch === ",") row.push(field), (field = "");
-    else if (ch === "\n" || ch === "\r") {
-      if (ch === "\r" && src[i + 1] === "\n") i++;
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = "";
-    } else field += ch;
-  }
-  if (field || row.length) row.push(field), rows.push(row);
-  const [head, ...body] = rows.filter((r) => r.some((c) => c.trim()));
-  return body.map((r) => Object.fromEntries(head.map((h, i) => [h.trim(), r[i] ?? ""])));
-}
-
 const find = (dir: string, re: RegExp) => fs.readdirSync(dir).filter((f) => re.test(f)).map((f) => path.join(dir, f));
-const numberOf = (id: string) => Number(/(\d+)/.exec(id)?.[1] ?? NaN);
 
 function loadCases(dir: string): Case[] | null {
   const csv = find(dir, /_Bot_Test_Cases\.csv$/i)[0];
