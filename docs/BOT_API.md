@@ -124,7 +124,7 @@ curl --location 'https://<base>/api/v1/bots/jayshree-machinetools/chat' \
 | `message` | yes | What the buyer typed (up to 1,000 characters). To tap a reply button, send that chip's text. |
 | `sessionId` | no | The conversation id from call 2, or your own id (same rules). Left out on a first message, use the id that comes back. |
 | `pageUrl` | no | The product or category page the buyer is on, e.g. a product page URL. The bot uses it as context ("is this available in 3 m?"). |
-| `meta` | no | `{ runId?, scenarioId?, label? }`, stored on the chat's trace so a test run can be found in Langfuse. |
+| `meta` | no | `{ runId?, scenarioId?, label?, expectedProduct? }`, stored on the chat's trace so a test run can be found (and scored) in Langfuse. |
 
 Response:
 
@@ -151,6 +151,32 @@ Response:
 | `leadStage` | `none` → `otp_sent` → `verified` → `captured` (lead saved) → `locked` (too many wrong OTPs) |
 | `traceId` | The Langfuse trace id of this reply, when tracing is on |
 | `test` | `true` for a Test key: the chat's lead is a test lead |
+| `debug` | **Test keys only.** Every model call of this turn and each product pick, for measuring the bot (see below). |
+
+### `debug` (Test keys only)
+
+```json
+"debug": {
+  "traceId": "4f0c…",
+  "calls": [
+    { "kind": "jev-pick", "model": "jev-1.14.0", "inputTokens": 1210, "outputTokens": 46, "latencyMs": 241, "costUsd": 0.0000508, "decision": "Press Brakes", "reason": "pick", "confidence": 0.93 },
+    { "kind": "haiku-pick", "model": "claude-haiku-5-5", "inputTokens": 1530, "outputTokens": 41, "latencyMs": 1180, "costUsd": 0.000174, "decision": "Press Brakes", "reason": "pick", "confidence": "high" },
+    { "kind": "reply", "model": "claude-haiku-5-5", "round": 1, "inputTokens": 2104, "outputTokens": 96, "cacheRead": 44210, "cacheWrite": 0, "latencyMs": 2310, "firstTokenMs": 1620, "costUsd": 0.00099 }
+  ],
+  "product": { "current": null, "wordRules": "Press Brakes", "jev": "Press Brakes", "haiku": "Press Brakes", "used": "Press Brakes" }
+}
+```
+
+- `calls`: one row per model call, in order.
+  - `reply` is a Claude call that writes the answer; a turn with tool calls has several rounds.
+  - `jev-pick` is Jev's product pick.
+  - `haiku-pick` is the same product question asked to Claude for comparison: test chats only, never used.
+  - `costUsd` is `null` for a model without a known price.
+- `product`: the chat's product before the turn (`current`), and what each picker chose this turn.
+  - `wordRules` is what the word rules alone would choose.
+  - `jev` and `haiku` are a product, `"keep"` (no change) or `null` (unsure).
+  - `used` is the product the bot asks about after the turn.
+  - Jev and the comparison pick run only when Jev is on or in Shadow, after login, and not for a tapped button or a closing-step answer.
 
 Send one message at a time per `sessionId` and wait for the reply. Different conversations can run in parallel.
 

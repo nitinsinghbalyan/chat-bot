@@ -340,6 +340,7 @@ Without a crawled catalogue, a seller's site shows the business card and product
 | `CRAWL_ON_START` / `CRAWL_INTERVAL_HOURS` | `false` / `24` | Re-crawls every seller, one after another. A crawl that fetches fewer than 80% of the pages already in the catalogue (the site blocking or rate-limiting part-way) doesn't replace it, and shows as **Crawl partial** on `/admin` |
 | `DEMO_OTP` | `12345` | Demo OTP |
 | `JEV_API_KEY` (or `TYPESAFE_API_KEY`) | (none) | Jev (TypeSafe AI) for the product pick. With a key, `/admin` → Jev product pick switches it Off / Shadow / On (off by default). `JEV_MODEL` (`jev-1.14.0`), `JEV_TIMEOUT_MS` (1500), `JEV_MIN_CONFIDENCE` (0.5), `JEV_BASE_URL` |
+| `PICK_COMPARE_MODEL` | `claude-haiku-5-5` | On test chats (Bot API Test keys), also asks this model Jev's product question, logged for comparison and never used. Empty turns it off. `PICK_COMPARE_TIMEOUT_MS` (8000) |
 | `TRUST_PROXY` | `true` | Express `trust proxy`: `true` behind Render, `loopback` behind Caddy on the same server (so buyers can't fake their IP for the rate limits), a hop count, or `false` |
 | `GIT_COMMIT` | (none) | The build id shown on `/admin` and `/health`; else Render's `RENDER_GIT_COMMIT` or the deploy script's `.build-commit` file |
 
