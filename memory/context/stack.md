@@ -19,8 +19,8 @@
 | Langfuse JS v6 (`@langfuse/tracing`, `@langfuse/otel`, `@langfuse/client`) + OpenTelemetry `NodeTracerProvider` | Tracing, scores |
 
 ## Model and capacity
-- `BOT_MODEL` is `claude-sonnet-5-5` (set in `render.yaml`; can be overridden in Render's Environment), effort `low`, server-side fallbacks on.
-- Sonnet 5.5: 1M-token context, $2 / $10 per M tokens, cache reads $0.20, cache writes $2.50 (5-minute TTL). Prices for traces live in `src/tracing.ts` (`PRICES`).
+- `BOT_MODEL` is `claude-haiku-5-5` since Nov 16 (set in `render.yaml`; can be overridden in Render's Environment), effort `low`. Server-side fallbacks only for models that have them (not Haiku).
+- Haiku 5.5: 1M-token context, $0.10 / $0.50 per M tokens up to a 100K-token prompt ($0.50 / $2.50 above), cache reads 0.1x, writes 1.25x; minimum cacheable prompt 512 tokens; refusals have no server-side fallback. Sonnet 5.5: $2 / $10, cache reads $0.10, writes $2.50. Prices for traces live in `src/tracing.ts` (`PRICES`, `LONG_PROMPT_PRICES`).
 - Jayshree system prompt ~43k tokens; large-catalogue cap ~75–85k; worst case ~200k tokens per request. Cost and capacity questions: check current numbers with the claude-api skill, don't answer from memory.
 
 ## Commands

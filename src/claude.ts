@@ -120,6 +120,9 @@ function maskOtpBlocks(content: unknown[]): unknown[] {
   return content.map((b: any) => (b?.type === "tool_use" && b.name === "verify_otp" ? { ...b, input: { otp: OTP_MASK } } : b));
 }
 
+/** Haiku models have no server-side refusal fallback: with `fallbacks` a declined turn stays declined, so it isn't sent. */
+export const hasServerFallback = (model: string): boolean => !model.startsWith("claude-haiku");
+
 /** Claude's content for the trace: text and tool calls; empty thinking blocks (the default display) left out. */
 const traceOutput = (content: Anthropic.Beta.BetaContentBlock[]) =>
   maskOtpBlocks(content.filter((b) => !(b.type === "thinking" && !b.thinking) && b.type !== "redacted_thinking"));
@@ -246,7 +249,7 @@ export async function runTurn(
         tools: toolDefinitions,
         tool_choice: { type: "auto" },
         output_config: { effort: config.BOT_EFFORT },
-        ...(config.BOT_FALLBACKS ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
+        ...(config.BOT_FALLBACKS && hasServerFallback(model) ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
       });
 
       let blockIsText = false;

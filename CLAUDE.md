@@ -37,7 +37,7 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 | **Knowledge mapping** | Card on the seller page + `/admin/sellers/<slug>/mapping.json`: categories → MCATs → questions, MCAT file use, cards matched, FAQs, policy card, with flags. `src/mapping.ts` |
 | **common FAQ** | One Excel for all sellers (Question, Answer, optional Seller and Category) on /admin/prompts; merged with the seller's own product FAQs (v5 JSON); searched per message as `<faq>` |
 | **sellers list / seller page** | `/admin` is a table of sellers (search + status chips); name or **Manage** opens `/admin/sellers/<slug>`, the seller's page with its cards and a **Manage ▾** menu |
-| **model** | `claude-sonnet-5-5`, effort low, 1M context; system prompt ~43k tokens (Jayshree), cached |
+| **model** | `claude-haiku-5-5` (since Nov 16; was Sonnet 5.5), effort low, 1M context; system prompt ~43k tokens (Jayshree), cached. `BOT_MODEL` on Render switches it |
 | **demo OTP** | `12345`; no SMS gateway yet |
 | **retrieval eval** | `npm run retrieval:eval -- <dir>`: catalogue search + server product pick scored on the sellers' test cases (local zip, never committed). Baseline Oct 23: top-1 77%, product discovery 33%. Re-run after search or product-pick changes. memory/projects/seller-assistants.md |
 | **backup / restore** | `/admin` Backup card: **Download backup** zips the whole data disk (consistent DB copy + files); **Restore from a backup** stages it and restarts, old data kept in `.before-restore-*`. How data moves between hosts. `src/backup.ts` |

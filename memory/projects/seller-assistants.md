@@ -42,11 +42,11 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | Widget | `public/widget.js` |
 
 **Claude call:**
-- `client.beta.messages.stream`, model `BOT_MODEL` (default `claude-sonnet-5-5`), effort `BOT_EFFORT=low`
-- server-side fallback `server-side-fallback-2026-07-01` with `fallbacks: "default"`
+- `client.beta.messages.stream`, model `BOT_MODEL` (default `claude-haiku-5-5` since Nov 16; was `claude-sonnet-5-5`), effort `BOT_EFFORT=low`
+- server-side fallback `server-side-fallback-2026-07-01` with `fallbacks: "default"`, only for models that have one (`hasServerFallback`: not Haiku)
 - strict tools with `eager_input_streaming`; `tool_choice` auto (forced tool use is a 400 on 5.5 models)
 - the system prompt is cached; with Jayshree's JSON it is about 43k tokens
-- capacity (estimates from the code's limits, not measured): Sonnet 5.5 has a 1M-token context; a large catalogue is capped at ~75–85k tokens; the worst case (large catalogue + 40-turn chat cap) is ~200k tokens per request
+- capacity (estimates from the code's limits, not measured): Haiku 5.5 and Sonnet 5.5 have a 1M-token context; a large catalogue is capped at ~75–85k tokens; the worst case (large catalogue + 40-turn chat cap) is ~200k tokens per request
 - rough cost per message: under 1¢ for Jayshree once cached, ~2¢ for a large catalogue, ~11¢ for the first message after 5 idle minutes (cache rewrite)
 - each Claude round is one `generation` in Langfuse, with the served model, tokens and cost
 
@@ -56,6 +56,7 @@ Full design with diagrams: `docs/ARCHITECTURE.md`. Every file with its job: `doc
 | Decision | Reason / who decided |
 |----------|---------------------|
 | Claude via Anthropic SDK, Node/TypeScript | Nitin's choice at the start |
+| **Bot model Haiku 5.5** (Nov 16; was Sonnet 5.5): about 20x cheaper per token ($0.10 / $0.50 per M up to a 100K-token prompt, $0.50 / $2.50 above). No server-side refusal fallback, so `fallbacks` isn't sent. Back to Sonnet any time with `BOT_MODEL=claude-sonnet-5-5` on Render | Nitin |
 | Handoff = mobile, then OTP `12345`, then name | Nitin |
 | Lead first: ask mobile as soon as the machine is named, then OTP, name (lead saved), then ISQ chips; lead updated after the last ISQ. Buyer who declines isn't blocked (superseded by #35: login first) | Nitin (Oct 2026) |
 | **Login first, then greet** (#35, Nov 6): the opening asks for the mobile; after the OTP the bot greets by the seller's name and asks the name; no enquiry without a verified number | Nitin: "log in the user using the current process … then greet … ask for its name"; chose "Login first" |
