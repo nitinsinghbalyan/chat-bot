@@ -77,4 +77,4 @@ Project memory for **Seller assistants**: an AI chat assistant and generated web
 - Node `fetch` ignores the agent proxy: run scripts that call an allowed host with `NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt`. The Jev key is a proxy-injected secret on the `chat-bot` environment (`JEV_API_KEY=proxy-injected`).
 - Playwright: `$(npm root -g)/playwright/index.mjs` with `executablePath: "/opt/pw-browsers/chromium"`.
 → More: memory/context/stack.md
-→ Architecture and flows: docs/ARCHITECTURE.md; file tree: docs/REPO_STRUCTURE.md
+→ Architecture and flows: docs/ARCHITECTURE.md; file tree: docs/REPO_STRUCTURE.md; Jev: docs/JEV.md

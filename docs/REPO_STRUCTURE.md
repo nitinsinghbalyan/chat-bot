@@ -20,6 +20,8 @@ chat-bot/
 │   ├── ARCHITECTURE.md        System design: context, buyer journey, chat turn, knowledge, prompts, guardrails, data, routes
 │   ├── BOT_API.md             Bot API reference for integrators: keys (Live/Test), bot details, conversation start with buyer context, chat, errors, leads
 │   ├── SIMULATOR_API.md       Auditor setup notes (Test key, the two calls a simulator makes); points to BOT_API.md
+│   ├── SIMULATE.md            Conversation simulator + comparison report: setup, run, output files, how to read the tables
+│   ├── JEV.md                 How Jev picks the product: the request, the answer, the decision rules, weak spots, where to see it
 │   └── REPO_STRUCTURE.md      This file
 │
 ├── memory/                    Long-term project memory (CLAUDE.md is the short version)
