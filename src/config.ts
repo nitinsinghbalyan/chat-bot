@@ -64,7 +64,8 @@ const schema = z.object({
   /** A chat turn waits at most this long for Jev; then the word rules decide. */
   JEV_TIMEOUT_MS: z.coerce.number().int().min(100).max(10_000).default(1500),
   /** Jev's choice is used only at this confidence or above. */
-  JEV_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.7),
+  // 0.5 won the threshold sweep on the sellers' test cases (Nov 16): more right picks, no more wrong ones.
+  JEV_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.5),
   LANGFUSE_ENVIRONMENT: optional(z.string().regex(/^[a-z0-9_-]{1,40}$/, "use lowercase letters, digits, - or _")),
 });
 
