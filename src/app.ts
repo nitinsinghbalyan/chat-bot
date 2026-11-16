@@ -11,6 +11,7 @@ import type { SellerContext, SellerRegistry } from "./sellers.js";
 import { chatSessionId, type Session, type SessionStore } from "./session.js";
 import { mountAdmin } from "./admin.js";
 import { isJevMode, JevClient, JevService, JEV_MODE_SETTING } from "./jev.js";
+import { ClaudeProductPicker } from "./productPick.js";
 import { validateSystemTemplate } from "./prompts.js";
 import { activeVersionId, applyNewerBuiltIn, applyNewerBuiltInPersonas, COMMON_SCOPE, recordStartupVersions, sellerScope } from "./promptVersions.js";
 import { maskMobile, noTracing, OTP_MASK, type Tracing } from "./tracing.js";
@@ -86,6 +87,7 @@ export function createApp(deps: AppDeps) {
         return isJevMode(m) ? m : "off";
       },
       minConfidence: config.JEV_MIN_CONFIDENCE,
+      comparer: config.PICK_COMPARE_MODEL ? new ClaudeProductPicker(deps.client, config.PICK_COMPARE_MODEL, config.PICK_COMPARE_TIMEOUT_MS) : null,
     });
 
   const app = express();
@@ -268,7 +270,7 @@ export function createApp(deps: AppDeps) {
           jev,
         },
         { onText: t.onText ?? (() => {}) },
-        { pageUrl, pageEntry: pageEntryFor(seller, pageUrl) },
+        { pageUrl, pageEntry: pageEntryFor(seller, pageUrl), compare: !!t.test },
       );
       const chat = addChatUsage(session, result);
       root.update({
@@ -518,7 +520,7 @@ export function createApp(deps: AppDeps) {
     }
     const meta = req.body?.meta && typeof req.body.meta === "object" ? req.body.meta : {};
     const api: Record<string, string> = {};
-    for (const k of ["runId", "scenarioId", "label"]) if (typeof meta[k] === "string" && meta[k]) api[k] = meta[k].slice(0, 120);
+    for (const k of ["runId", "scenarioId", "label", "expectedProduct"]) if (typeof meta[k] === "string" && meta[k]) api[k] = meta[k].slice(0, 120);
     const pageUrl = typeof req.body?.pageUrl === "string" ? req.body.pageUrl.slice(0, 300) : undefined;
     const test = key.kind !== "live";
     busy.add(sessionKey);
@@ -534,6 +536,8 @@ export function createApp(deps: AppDeps) {
         leadStage: session.lead.stage,
         ...(traceId ? { traceId } : {}),
         test,
+        // Test keys only: every model call this turn (tokens, latency, cost) and each picker's product.
+        ...(test ? { debug: { traceId: traceId || null, calls: result.calls ?? [], product: result.product ?? {} } } : {}),
       });
     } catch (err) {
       console.error(err);

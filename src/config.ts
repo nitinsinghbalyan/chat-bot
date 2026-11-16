@@ -17,6 +17,9 @@ const optional = <T extends z.ZodTypeAny>(t: T) => z.preprocess((v) => (v === ""
 const schema = z.object({
   BOT_MODEL: z.string().default("claude-haiku-5-5"),
   BOT_EFFORT: z.enum(["low", "medium", "high"]).default("low"),
+  /** Test chats (Bot API Test keys) also ask this model Jev's product question, to compare them. Empty turns it off. */
+  PICK_COMPARE_MODEL: z.string().default("claude-haiku-5-5"),
+  PICK_COMPARE_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
   BOT_FALLBACKS: z
     .string()
     .optional()

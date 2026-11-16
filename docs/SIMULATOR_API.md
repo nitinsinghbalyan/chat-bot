@@ -18,7 +18,7 @@ For the Auditor, add **Seller assistants** as a vendor with Base URL, bot slug, 
 ## The two calls a simulator makes
 
 1. `GET /api/v1/bots/<slug>`: show `greeting` as the bot's first message; `demoOtp` is the code to send when the bot asks for the OTP (no SMS gateway yet).
-2. `POST /api/v1/bots/<slug>/chat` with `{ sessionId, message, meta? }` for every buyer turn. `meta: { runId, scenarioId, label }` is stored on the Langfuse trace, so a run can be found there. To tap a reply button, send the chip's text. Keep one `sessionId` per scripted conversation and send one turn at a time; different conversations can run in parallel.
+2. `POST /api/v1/bots/<slug>/chat` with `{ sessionId, message, meta? }` for every buyer turn. `meta: { runId, scenarioId, label, expectedProduct }` is stored on the Langfuse trace, so a run can be found there. Each reply carries a `debug` block (Test keys only): every model call of the turn with tokens, latency and cost, and the product each picker chose (word rules, Jev, and Haiku asked the same question); see BOT_API.md. To tap a reply button, send the chip's text. Keep one `sessionId` per scripted conversation and send one turn at a time; different conversations can run in parallel.
 
 A simulator that wants to start a scenario with the buyer already identified (name, mobile, buyer id) can call `POST /api/v1/bots/<slug>/conversations` first; see BOT_API.md.
 

@@ -15,7 +15,8 @@
 import type { CatalogueEntry } from "./crawler.js";
 import { askingNames, currentPlan, updateCategory, type IsqSource, type Place } from "./isqTracker.js";
 import type { LeadState } from "./session.js";
-import type { TraceSink } from "./tracing.js";
+import type { CallRecord, ModelPick, ProductPicker, ProductPicks } from "./productPick.js";
+import { costDetails, usageDetails, type TraceSink } from "./tracing.js";
 
 export type JevMode = "off" | "shadow" | "on";
 export const JEV_MODES: JevMode[] = ["off", "shadow", "on"];
@@ -112,7 +113,7 @@ export interface ProductCandidate {
   place: Place;
 }
 
-const placeKey = (p: { category: string; mcatId?: string | null; cardId?: string | null }) => `${p.category}|${p.mcatId ?? ""}|${p.cardId ?? ""}`;
+export const placeKey = (p: { category: string; mcatId?: string | null; cardId?: string | null }) => `${p.category}|${p.mcatId ?? ""}|${p.cardId ?? ""}`;
 const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || "product";
 
 /**
@@ -177,6 +178,7 @@ export interface JevPick {
   otherProduct?: number;
   ms: number;
   inputTokens?: number;
+  outputTokens?: number;
   error?: string;
 }
 
@@ -235,7 +237,7 @@ export async function pickProduct(caller: SystemOneCaller, input: PickInput, opt
   const product = a.product?.type === "choice" ? a.product : null;
   const about = a.about_product?.type === "noul" ? a.about_product.noul : undefined;
   const other = a.other_product?.type === "noul" ? a.other_product.noul : undefined;
-  const base = { choice: product?.choice, confidence: product?.confidence, aboutProduct: about, otherProduct: other, ms: r.ms, inputTokens: r.res.usage?.input_tokens };
+  const base = { choice: product?.choice, confidence: product?.confidence, aboutProduct: about, otherProduct: other, ms: r.ms, inputTokens: r.res.usage?.input_tokens, outputTokens: r.res.usage?.output_tokens };
   if (!product || about === undefined) return { ...base, decision: null, reason: "incomplete answer" };
   if (about < NO) return { ...base, decision: "keep", reason: "not about a product" };
   const picked = input.candidates.find((c) => c.key === product.choice);
@@ -270,6 +272,12 @@ export interface JevDecideInput {
   ownHits: boolean;
   lastBotText?: string;
   trace?: TraceSink;
+  /** Test chats: also ask the comparison model (Haiku) the same question, for measurement only. */
+  compare?: boolean;
+  /** Per-call records for the Bot API's debug block (test chats). */
+  calls?: CallRecord[];
+  /** Filled with each picker's product for this turn (test chats). */
+  picks?: ProductPicks;
 }
 
 export class JevService {
@@ -280,6 +288,8 @@ export class JevService {
       mode: () => JevMode;
       minConfidence: number;
       rng?: () => number;
+      /** Asked the same question on test chats (compare), never used for the decision. */
+      comparer?: ProductPicker | null;
     },
   ) {}
 
@@ -316,11 +326,19 @@ export class JevService {
     const plan = currentPlan(lead, src);
     const current = plan ? { label: plan.label, place: { category: lead.category ?? "", mcatId: lead.mcatId ?? null, cardId: lead.cardId ?? null } } : null;
 
-    const obs = t.trace?.start("jev-product-pick", "span", {
-      input: { buyerMessage: maskDigits(t.buyerText), current: current?.label ?? null, candidates: candidates.map((c) => c.label) },
-      metadata: { mode, model: this.model, minConfidence: this.opts.minConfidence },
-    });
-    const pick = await pickProduct(this.opts.caller!, { buyerText: t.buyerText, lastBotText: t.lastBotText, buttons: lead.lastOptions, current, candidates }, { minConfidence: this.opts.minConfidence, rng: this.opts.rng });
+    const input: PickInput = { buyerText: t.buyerText, lastBotText: t.lastBotText, buttons: lead.lastOptions, current, candidates };
+    const traceInput = { buyerMessage: maskDigits(t.buyerText), current: current?.label ?? null, candidates: candidates.map((c) => c.label) };
+    const model = this.model!;
+    const obs = t.trace?.start("jev-product-pick", "generation", { model, input: traceInput, metadata: { mode, minConfidence: this.opts.minConfidence } });
+    const comparer = t.compare ? this.opts.comparer : null;
+    const cmpObs = comparer ? t.trace?.start("haiku-product-pick", "generation", { model: comparer.model, input: traceInput, metadata: { purpose: "comparison with Jev, never used for the decision" } }) : undefined;
+    // Same question, same options, same order: both shuffle with the same seed.
+    const seed = (this.opts.rng ?? Math.random)();
+    const rngFor = () => seeded(seed);
+    const [pick, cmp] = await Promise.all([
+      pickProduct(this.opts.caller!, input, { minConfidence: this.opts.minConfidence, rng: rngFor() }),
+      comparer ? comparer.pick(input, rngFor()) : Promise.resolve(null),
+    ]);
     this.stats.calls++;
     this.stats.lastAt = new Date().toISOString();
     this.stats.lastMs = pick.ms;
@@ -330,6 +348,7 @@ export class JevService {
     // What the word rules alone would do, to compare (both modes).
     const words = structuredClone(lead);
     updateCategory(words, src, { buyerText: t.buyerText, hits: t.hits, ownHits: t.ownHits });
+    const wordsPlace = words.category ? { category: words.category, mcatId: words.mcatId ?? null, cardId: words.cardId ?? null } : null;
     let agrees: boolean | null = null;
     if (pick.decision !== null) {
       const withJev = structuredClone(lead);
@@ -339,13 +358,53 @@ export class JevService {
       if (agrees) this.stats.agreed++;
     }
     const used = mode === "on" && pick.decision !== null;
-    const label = (d: JevPick["decision"]) => (d === null ? null : d === "keep" ? "keep" : (candidates.find((c) => placeKey(c.place) === placeKey(d))?.label ?? d.category));
+    const labelOf = (p: Place) => candidates.find((c) => placeKey(c.place) === placeKey(p))?.label ?? src.plan(p.category, p.mcatId, p.cardId ?? null)?.label ?? p.category;
+    const label = (d: JevPick["decision"]) => (d === null ? null : d === "keep" ? "keep" : labelOf(d));
+
+    const jevUsage = { input: pick.inputTokens ?? 0, output: pick.outputTokens ?? 0, cacheRead: 0, cacheWrite: 0 };
+    const jevCost = pick.error ? undefined : costDetails(model, jevUsage);
     obs?.update({
       output: { decision: label(pick.decision), reason: pick.reason, choice: pick.choice ?? null, confidence: pick.confidence ?? null, aboutProduct: pick.aboutProduct ?? null, otherProduct: pick.otherProduct ?? null },
-      metadata: { outcome: pick.error ? "error" : mode === "shadow" ? "shadow" : used ? "used" : "fallback", agreesWithWordRules: agrees, ms: pick.ms, inputTokens: pick.inputTokens ?? null },
+      metadata: { outcome: pick.error ? "error" : mode === "shadow" ? "shadow" : used ? "used" : "fallback", agreesWithWordRules: agrees, latencyMs: pick.ms },
+      ...(pick.error ? {} : { usageDetails: usageDetails(jevUsage), ...(jevCost ? { costDetails: jevCost } : {}) }),
       ...(pick.error ? { level: "WARNING" as const, statusMessage: pick.error } : {}),
     });
     obs?.end();
+    t.calls?.push({ kind: "jev-pick", model, inputTokens: jevUsage.input, outputTokens: jevUsage.output, latencyMs: pick.ms, costUsd: jevCost?.total ?? (pick.error ? 0 : null), decision: label(pick.decision), reason: pick.reason, confidence: pick.confidence ?? null, ...(pick.error ? { error: pick.error } : {}) });
+
+    if (cmp) recordComparison(cmp, cmpObs, t.calls, label);
+    if (t.picks) {
+      t.picks.current = current?.label ?? null;
+      t.picks.wordRules = wordsPlace ? labelOf(wordsPlace) : null;
+      t.picks.jev = label(pick.decision);
+      if (cmp) t.picks.haiku = label(cmp.decision);
+    }
     return used ? (pick.decision ?? undefined) : undefined;
   }
+}
+
+/** A small seeded random generator, so Jev and the comparison model see the options in the same order. */
+function seeded(seed: number): () => number {
+  let a = Math.floor(seed * 2 ** 32) >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function recordComparison(cmp: ModelPick, obs: ReturnType<TraceSink["start"]> | undefined, calls: CallRecord[] | undefined, label: (d: ModelPick["decision"]) => string | null) {
+  const u = cmp.usage ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const cost = cmp.usage ? costDetails(cmp.model, u) : undefined;
+  obs?.update({
+    model: cmp.model,
+    output: { decision: label(cmp.decision), reason: cmp.reason, choice: cmp.choice ?? null, confidence: cmp.confidence ?? null, aboutProduct: cmp.aboutProduct ?? null, otherProduct: cmp.otherProduct ?? null },
+    metadata: { latencyMs: cmp.ms },
+    ...(cmp.usage ? { usageDetails: usageDetails(u), ...(cost ? { costDetails: cost } : {}) } : {}),
+    ...(cmp.error ? { level: "WARNING" as const, statusMessage: cmp.error } : {}),
+  });
+  obs?.end();
+  calls?.push({ kind: "haiku-pick", model: cmp.model, inputTokens: u.input + u.cacheRead + u.cacheWrite, outputTokens: u.output, latencyMs: cmp.ms, costUsd: cost?.total ?? (cmp.usage ? null : 0), decision: label(cmp.decision), reason: cmp.reason, confidence: cmp.confidence ?? null, ...(cmp.error ? { error: cmp.error } : {}) });
 }

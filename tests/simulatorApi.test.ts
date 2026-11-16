@@ -122,10 +122,13 @@ describe("simulator API", () => {
 
   it("runs the journey as JSON turns and saves the lead as a test lead", async () => {
     const key = keys.alpha.key;
-    const first = await say(ALPHA, "do you make press brakes?", { key, meta: { runId: "run-7", scenarioId: "lead_capture-3" } });
+    const first = await say(ALPHA, "do you make press brakes?", { key, meta: { runId: "run-7", scenarioId: "lead_capture-3", expectedProduct: "Press Brake" } });
     expect(first).toMatchObject({ status: 200, body: { sessionId: "sim-run-0001", reply: "Please share your 10-digit mobile number.", leadStage: "none", test: true, chips: [], cards: [] } });
+    // Test keys get every model call of the turn back (tokens, latency, cost).
+    expect(first.body.debug.calls).toEqual([expect.objectContaining({ kind: "reply", round: 1, inputTokens: 1, outputTokens: 1, latencyMs: expect.any(Number), firstTokenMs: expect.any(Number) })]);
+    expect(first.body.debug.product).toEqual({ used: null });
     // Traced like any chat, tagged so simulated chats can be filtered out in Langfuse.
-    expect(traces.at(-1)).toMatchObject({ tags: [ALPHA, "eval", "simulator"], metadata: { source: "simulator", runId: "run-7", scenarioId: "lead_capture-3" } });
+    expect(traces.at(-1)).toMatchObject({ tags: [ALPHA, "eval", "simulator"], metadata: { source: "simulator", runId: "run-7", scenarioId: "lead_capture-3", expectedProduct: "Press Brake" } });
     expect(traces.at(-1).sessionId).toMatch(new RegExp(`^${ALPHA}:[0-9a-f-]{36}$`));
     expect((await say(ALPHA, "9876543210", { key })).body).toMatchObject({ askFor: "otp", leadStage: "otp_sent" });
     expect((await say(ALPHA, "12345", { key })).body).toMatchObject({ askFor: "name", leadStage: "verified" });
@@ -211,6 +214,8 @@ describe("simulator API", () => {
     script.push(tool("d", "save_lead", { name: "", product: "Press Brake", requirements: "", quantity: "", city: "", specs: [], complete: false }), text("Which capacity do you need?"));
     const first = await say(ALPHA, "I need a press brake", { key: live, sessionId: "im-buyer-0001" });
     expect(first).toMatchObject({ status: 200, body: { reply: "Which capacity do you need?", leadStage: "captured", askFor: null, test: false } });
+    // Real (live) chats never get the debug block.
+    expect(first.body).not.toHaveProperty("debug");
     expect(traces.at(-1)).toMatchObject({ tags: [ALPHA, "api"], metadata: { source: "api", buyerId: "65857057" } });
     expect(traces.at(-1).metadata).not.toHaveProperty("runId");
     expect((await start(ALPHA, { sessionId: "im-buyer-0001" }, live)).status).toBe(409);

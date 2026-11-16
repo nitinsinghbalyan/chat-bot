@@ -9,6 +9,7 @@ import { OutputFilter, REPLACEMENTS, type Intervention } from "./guardrails.js";
 import type { KnowledgeBase } from "./kb.js";
 import { renderUserPrompt } from "./prompts.js";
 import type { JevService } from "./jev.js";
+import type { CallRecord, ProductPicks } from "./productPick.js";
 import type { Session } from "./session.js";
 import type { MediaCard } from "./media.js";
 import { describeLeadStatus, executeTool, toolDefinitions, type EnquirySummary, type LeadSink, type MediaSharer } from "./tools.js";
@@ -65,6 +66,10 @@ export interface TurnResult {
   leadEvents?: Array<"captured" | "updated">;
   /** True when the buyer got a canned reply (API error, refusal or empty answer). */
   fallbackReply?: boolean;
+  /** Every model call in this turn (Claude rounds, Jev, the comparison pick), for test chats' debug block. */
+  calls?: CallRecord[];
+  /** The product each picker chose this turn (test chats compare them). */
+  product?: ProductPicks;
 }
 
 const MAX_TOOL_ROUNDS = 4;
@@ -168,10 +173,13 @@ export async function runTurn(
   buyerText: string,
   deps: ChatDeps,
   cb: TurnCallbacks = {},
-  opts: { pageUrl?: string; pageEntry?: CatalogueEntry | null } = {},
+  opts: { pageUrl?: string; pageEntry?: CatalogueEntry | null; compare?: boolean } = {},
 ): Promise<TurnResult> {
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-  const cost = { costUsd: 0, costKnown: true };
+  const calls: CallRecord[] = [];
+  const product: ProductPicks = {};
+  // `calls` and `product` go with every result, so a failed or refused turn still shows what ran.
+  const cost = { costUsd: 0, costKnown: true, calls, product };
   if (session.turns >= MAX_HISTORY_TURNS) {
     cb.onText?.(LIMIT_REPLY);
     return { text: LIMIT_REPLY, askFor: "mobile", chips: [], cards: [], interventions: [], usage, ...cost };
@@ -184,10 +192,14 @@ export async function runTurn(
   const { hits, ownHits } = retrieve(session, deps.catalogue, buyerText, opts.pageEntry, trace, traceText);
   // The chat's machine category, and only its spec questions for the bot.
   const isqs = deps.isqs ?? null;
-  const decided = isqs && deps.jev && !opts.pageEntry ? await deps.jev.decide({ lead: session.lead, src: isqs, buyerText, hits, ownHits, lastBotText: lastBotText(session.messages), trace }) : undefined;
+  const decided =
+    isqs && deps.jev && !opts.pageEntry
+      ? await deps.jev.decide({ lead: session.lead, src: isqs, buyerText, hits, ownHits, lastBotText: lastBotText(session.messages), trace, compare: opts.compare, calls, picks: product })
+      : undefined;
   if (isqs) updateCategory(session.lead, isqs, { buyerText, page: opts.pageEntry, hits, ownHits, decided });
   const plan = () => (isqs ? currentPlan(session.lead, isqs) : null);
   const turnPlan = plan();
+  product.used = turnPlan?.label ?? null;
   let faqHits: ReturnType<FaqIndex["search"]> = [];
   if (deps.faq?.size && leadStageBefore !== "otp_sent") {
     const obs = trace.start("faq-search", "retriever", { input: { query: buyerText }, metadata: { faqRows: deps.faq.size } });
@@ -239,6 +251,8 @@ export async function runTurn(
         input: roundInput,
         metadata: { round: round + 1, historyMessages: messages.length - 1 },
       });
+      const started = Date.now();
+      let firstTokenAt: number | null = null;
       const stream = deps.client.beta.messages.stream({
         model,
         max_tokens: 2048,
@@ -258,6 +272,7 @@ export async function runTurn(
           blockIsText = event.content_block.type === "text";
           if (blockIsText && shown && !/\s$/.test(shown)) emit("\n");
         } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+          firstTokenAt ??= Date.now();
           emit(filter.push(event.delta.text));
         } else if (event.type === "content_block_stop" && blockIsText) {
           emit(filter.flush());
@@ -265,6 +280,8 @@ export async function runTurn(
         }
       }
       const final = await stream.finalMessage();
+      const latencyMs = Date.now() - started;
+      const firstTokenMs = firstTokenAt === null ? null : firstTokenAt - started;
       emit(filter.flush());
       const callUsage = {
         input: final.usage.input_tokens,
@@ -282,12 +299,14 @@ export async function runTurn(
       const callCost = costDetails(served, callUsage);
       if (callCost) cost.costUsd += callCost.total;
       else cost.costKnown = false;
+      calls.push({ kind: "reply", model: served, round: round + 1, inputTokens: callUsage.input, outputTokens: callUsage.output, cacheRead: callUsage.cacheRead, cacheWrite: callUsage.cacheWrite, latencyMs, firstTokenMs, costUsd: callCost?.total ?? null });
       gen.update({
         model: served,
         output: traceOutput(final.content),
         usageDetails: usageDetails(callUsage),
         costDetails: callCost,
-        metadata: { stop_reason: final.stop_reason, requestedModel: model, fallback: fellBack || served !== model },
+        ...(firstTokenAt !== null ? { completionStartTime: new Date(firstTokenAt) } : {}),
+        metadata: { stop_reason: final.stop_reason, requestedModel: model, fallback: fellBack || served !== model, latencyMs, firstTokenMs },
         ...(final.stop_reason === "refusal" ? { level: "WARNING" as const, statusMessage: "Claude declined (refusal)" } : {}),
       });
       gen.end();

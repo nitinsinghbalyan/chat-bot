@@ -30,6 +30,8 @@ export interface ObservationAttrs {
   modelParameters?: Record<string, string | number>;
   usageDetails?: Record<string, number>;
   costDetails?: Record<string, number>;
+  /** Generations: when the first output token arrived (Langfuse's time to first token). */
+  completionStartTime?: Date;
 }
 
 export interface Observation {
@@ -168,6 +170,9 @@ const PRICES: Record<string, Price> = {
   "claude-opus-4-8": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   "claude-fable-5-1": { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
   "claude-haiku-5-5": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+  // Jev (TypeSafe AI): input tokens only; output is free.
+  "jev-1.14.0": { input: 0.042, output: 0, cacheRead: 0, cacheWrite: 0 },
+  "jev-1.13.0": { input: 0.042, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
 
 /** Models billed at a second rate card when the prompt (input + cache read + cache write) is over 100K tokens. */

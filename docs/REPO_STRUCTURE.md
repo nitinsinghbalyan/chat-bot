@@ -61,6 +61,7 @@ chat-bot/
 │   ├── config.ts         ~95  Reads environment variables (DATA_DIR, ADMIN_PASSWORD, model, LANGFUSE_*, TRUST_PROXY, …); buildCommit()
 │   ├── app.ts           ~660  Express app: chat turn (shared), widget API (SSE), bot API (/api/v1: bot details, conversations, chat), feedback, sites, /health
 │   ├── jev.ts           ~350  Jev (TypeSafe AI) product pick: HTTP client, the Choice + companion Nouls, JevService (off / shadow / on, stats)
+│   ├── productPick.ts   ~140  Test chats only: Claude asked Jev's product question for comparison; per-call records (debug block)
 │   ├── botKeys.ts        ~20  Bot API keys: generate, hash, shape check
 │   ├── claude.ts        ~370  The chat turn loop: builds per-turn blocks, streams Claude, runs tools, ends on show_options
 │   ├── tools.ts         ~370  Tool definitions and handlers: save_lead (with the completion guard `notComplete`), show_options, share_media; lead status text; summary card
