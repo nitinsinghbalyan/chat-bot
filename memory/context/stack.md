@@ -29,7 +29,8 @@
 | `npm test` | All unit and HTTP tests (fixture sellers `alpha-presses`, `beta-pumps`; fixture KB `tests/fixtures/kb/alpha-kb.json`) |
 | `npm run build` / `npx tsc --noEmit -p .` | Type-check and build |
 | `npm run kb:check` | Validate repo KB folders and print each seller's Knowledge mapping (main MCAT, others, questions, flags) |
-| `npm run retrieval:eval -- "<dir>" [--out report.json] [--misses N]` | Retrieval eval: catalogue search + server product pick scored on the sellers' test cases (one folder per seller with the v5 JSON, MCAT file, `*_Bot_Test_Cases.csv`, `*_Scenarios.json`). No model calls |
+| `npm run simulate -- --config sim.config.json [--seller s] [--limit N] [--run-id id]` | Conversation simulator against a running bot (Bot API, Test keys, `ANTHROPIC_API_KEY` for the Haiku buyer); then `npm run sim:report -- runs/<id>`. docs/SIMULATE.md. Checked locally with fakes: `scratchpad/sim-e2e/` (server.mts = local bot with fake Claude + fake comparison pick on :3488, fake-buyer.mjs = fake Anthropic API on :3499 via `ANTHROPIC_BASE_URL`, plus `jev-eval/fake-jev.mjs` on :3497) |
+| `npm run retrieval:eval -- "<dir>" [--out report.json] [--misses N] [--jev] [--haiku]` | Retrieval eval: catalogue search + server product pick scored on the sellers' test cases (one folder per seller with the v5 JSON, MCAT file, `*_Bot_Test_Cases.csv`, `*_Scenarios.json`). No model calls |
 | `npm run crawl -- <slug> [--runtime]` | Crawl a seller |
 | `npm run eval` | Live-model scenarios (needs an API key; costs money) |
 | `npm run dev` | Local server, port 3000 |

@@ -13,7 +13,9 @@
     "crawl": "tsx scripts/crawl.ts",
     "eval": "tsx scripts/eval.ts",
     "kb:check": "tsx scripts/kb-check.ts",
-    "retrieval:eval": "tsx scripts/retrieval-eval.ts"
+    "retrieval:eval": "tsx scripts/retrieval-eval.ts",
+    "simulate": "tsx scripts/simulate.ts",
+    "sim:report": "tsx scripts/sim-report.ts"
   },
   "engines": {
     "node": "22.x"

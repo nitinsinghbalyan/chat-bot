@@ -19,6 +19,9 @@
  *                               ~$0.04 per million input tokens. JEV_MODEL / JEV_BASE_URL as on the server.
  *   --jev-min-confidence 0.5    the confidence Jev's choice needs to be used (the JEV_MIN_CONFIDENCE default)
  *   --jev-cache <file>          where Jev's answers are kept, so reruns are free (default <dir>/.jev-cache.json)
+ *   --haiku                     also ask Claude (PICK_COMPARE_MODEL, default claude-haiku-5-5) the same question with
+ *                               the same options in the same order, and score it the same way. Needs ANTHROPIC_API_KEY;
+ *                               about $0.0002 per case. Answers are kept in <dir>/.haiku-pick-cache.json (--haiku-cache).
  */
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -31,13 +34,65 @@ import { CardIndex, planFor } from "../src/cardQuestions.js";
 import { mapCard } from "../src/mapping.js";
 import { KbView, validateSellerKb } from "../src/sellerKb.js";
 import type { LeadState } from "../src/session.js";
-import { JevClient, pickProduct, productCandidates, type JevPick, type SystemOneCaller, type SystemOneRequest, type SystemOneResult } from "../src/jev.js";
+import { alternatives, keyWords, namesFocus, stem, words } from "./lib/productMatch.js";
+import Anthropic from "@anthropic-ai/sdk";
+import { JevClient, pickProduct, productCandidates, type PickInput, type SystemOneCaller, type SystemOneRequest, type SystemOneResult } from "../src/jev.js";
+import { ClaudeProductPicker, type ModelPick } from "../src/productPick.js";
+import { costDetails } from "../src/tracing.js";
 
-/** Jev for the eval: the caller (cached) and the confidence its choice needs. */
-interface JevRun {
-  caller: SystemOneCaller;
-  minConfidence: number;
-  picks: JevPick[];
+/** One product pick in the eval, whoever made it. */
+interface PickRecord {
+  decision: Place | "keep" | null;
+  reason: string;
+  error?: string;
+  ms: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
+/** A product picker for the eval (Jev, or Claude asked the same question), with its answers so far. */
+interface PickerRun {
+  label: string;
+  model: string;
+  ask(input: PickInput, seedText: string): Promise<PickRecord>;
+  picks: PickRecord[];
+}
+
+function jevRun(caller: SystemOneCaller, minConfidence: number): PickerRun {
+  return {
+    label: `Jev at confidence ≥ ${minConfidence}`,
+    model: caller.model,
+    picks: [],
+    async ask(input, seedText) {
+      const p = await pickProduct(caller, input, { minConfidence, rng: seeded(seedText) });
+      const u = { input: p.inputTokens ?? 0, output: p.outputTokens ?? 0, cacheRead: 0, cacheWrite: 0 };
+      return { decision: p.decision, reason: p.reason, error: p.error, ms: p.ms, inputTokens: u.input, outputTokens: u.output, costUsd: costDetails(caller.model, u)?.total ?? 0 };
+    },
+  };
+}
+
+/** Claude asked Jev's question; answers kept on disk by question, so reruns cost nothing. */
+function claudeRun(picker: ClaudeProductPicker, file: string): PickerRun {
+  const cache: Record<string, ModelPick> = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+  return {
+    label: `${picker.model} asked the same question`,
+    model: picker.model,
+    picks: [],
+    async ask(input, seedText) {
+      const key = crypto
+        .createHash("sha256")
+        .update(JSON.stringify({ model: picker.model, seedText, text: input.buyerText, current: input.current?.label ?? null, options: input.candidates.map((c) => c.key) }))
+        .digest("hex");
+      let p = cache[key];
+      if (!p || p.error) {
+        p = await picker.pick(input, seeded(seedText));
+        if (!p.error) (cache[key] = p), fs.writeFileSync(file, JSON.stringify(cache));
+      }
+      const u = p.usage ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+      return { decision: p.decision, reason: p.reason, error: p.error, ms: p.ms, inputTokens: u.input + u.cacheRead + u.cacheWrite, outputTokens: u.output, costUsd: costDetails(p.model, u)?.total ?? 0 };
+    },
+  };
 }
 
 /** Keeps Jev's answers on disk by request, so a rerun (or a threshold sweep) costs nothing. */
@@ -114,15 +169,6 @@ interface Tally {
 
 const emptyTally = (): Tally => ({ cases: 0, withHits: 0, topCorrect: 0, anyCorrect: 0, pickedCorrect: 0, card: 0, pickedWrong: 0, notPicked: 0 });
 
-/** Words that don't tell products apart in a focus name ("Stainless Steel Mugs" → "mugs"). */
-const GENERIC = new Set("machine machines service services stainless steel ss metal industrial heavy duty manual automatic semi electric hand new premium".split(" "));
-const stem = (w: string) => w.replace(/(ses|xes|ches|shes)$/, "s").replace(/ies$/, "y").replace(/s$/, "").slice(0, 5);
-const words = (t: string) => (t.toLowerCase().match(/[a-z]{3,}/g) ?? []).map(stem);
-/** Distinctive words of a focus name, as stems; "bar" (3 letters) counts only beside a longer word. */
-const keyWords = (t: string) => [...new Set((t.toLowerCase().match(/[a-z]{3,}/g) ?? []).filter((w) => !GENERIC.has(w)))];
-const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-/** "Cutlery (Spoons & Forks)" names three things; any one of them is the product. */
-const alternatives = (focus: string) => focus.split(/\s*(?:&|\/|,|\(|\))\s*/).map((s) => s.trim()).filter(Boolean);
 /** A scripted multi-turn case ("Turn 1: … -> Turn 2: …") is played as its first message, as a new chat sees it. */
 const firstTurn = (t: string) => t.split(/\s*->\s*/)[0].replace(/^Turn\s*1\s*(?:\([^)]*\))?\s*:\s*/i, "").trim() || t.trim();
 /** Suites whose cases name a product the seller may sell, so a pick there is often right, not a false pick. */
@@ -180,7 +226,7 @@ function loadCases(dir: string): Case[] | null {
     });
 }
 
-async function evaluateSeller(dir: string, maxMisses: number, jev?: JevRun): Promise<SellerReport | string> {
+async function evaluateSeller(dir: string, maxMisses: number, picker?: PickerRun): Promise<SellerReport | string> {
   const seller = path.basename(dir);
   const kbFile = find(dir, /_v5\.json$/i)[0] ?? find(dir, /botpress.*\.json$/i)[0];
   if (!kbFile) return `${seller}: no export JSON`;
@@ -243,28 +289,18 @@ async function evaluateSeller(dir: string, maxMisses: number, jev?: JevRun): Pro
   // The top hit is the focus product when its MCAT has that name, or when at least half of one
   // alternative's distinctive words (one of them 4+ letters) appear in its title, category or MCAT name.
   const correct = (focus: string, h: CatalogueEntry): boolean => namesFocus(focus, `${h.title} ${h.category}`, describe(h).mcat);
-  /** The focus product is named by this text (a hit's title and category, or a picked category) or its MCAT. */
-  function namesFocus(focus: string, text: string, mcat: string | null): boolean {
-    if (mcat && norm(mcat) === norm(focus)) return true;
-    const have = new Set(words(`${text} ${mcat ?? ""}`));
-    return alternatives(focus).some((alt) => {
-      const want = keyWords(alt);
-      const shared = want.filter((w) => have.has(stem(w)));
-      return want.length > 0 && shared.length >= Math.ceil(want.length / 2) && shared.some((w) => w.length >= 4);
-    });
-  }
 
   const report: SellerReport = { seller, cases: cases.length, product: emptyTally(), byLanguage: {}, bySuite: {}, other: { cases: 0, falsePicks: 0, boundaryPicks: 0, withHits: 0 }, misses: [], falsePicks: [], boundaryPicks: [] };
   for (const c of cases) {
     const hits = catalogue.search(c.input);
     const lead: LeadState = { stage: "captured", otpAttempts: 0, otpSends: 1 };
     let decided: Place | "keep" | undefined;
-    if (jev) {
-      // As runTurn does on a chat's first product message: the same candidates, Jev's decision when it is sure.
+    if (picker) {
+      // As runTurn does on a chat's first product message: the same candidates, the picker's decision when it is sure.
       const candidates = productCandidates(hits, src, c.input);
       if (candidates.length) {
-        const pick = await pickProduct(jev.caller, { buyerText: c.input, candidates }, { minConfidence: jev.minConfidence, rng: seeded(`${seller}:${c.id}:${c.input}`) });
-        jev.picks.push(pick);
+        const pick = await picker.ask({ buyerText: c.input, candidates }, `${seller}:${c.id}:${c.input}`);
+        picker.picks.push(pick);
         decided = pick.decision ?? undefined;
       }
     }
@@ -373,13 +409,14 @@ async function main() {
   const out = valueOf("--out") ?? null;
   const maxMisses = Number(valueOf("--misses") ?? 12);
   const withJev = args.includes("--jev");
-  const valued = new Set(["--out", "--misses", "--jev-min-confidence", "--jev-cache"]);
+  const withHaiku = args.includes("--haiku");
+  const valued = new Set(["--out", "--misses", "--jev-min-confidence", "--jev-cache", "--haiku-cache"]);
   const dir = args.find((a, i) => !a.startsWith("--") && !valued.has(args[i - 1] ?? ""));
   if (!dir || !fs.existsSync(dir)) {
-    console.error('Usage: npm run retrieval:eval -- "<dir with one folder per seller>" [--out report.json] [--misses N] [--jev [--jev-min-confidence 0.5] [--jev-cache file]]');
+    console.error('Usage: npm run retrieval:eval -- "<dir with one folder per seller>" [--out report.json] [--misses N] [--jev [--jev-min-confidence 0.5] [--jev-cache file]] [--haiku [--haiku-cache file]]');
     process.exit(1);
   }
-  let jev: JevRun | undefined;
+  const pickers: PickerRun[] = [];
   if (withJev) {
     const apiKey = (process.env.JEV_API_KEY ?? process.env.TYPESAFE_API_KEY ?? "").trim();
     if (!apiKey) {
@@ -387,7 +424,15 @@ async function main() {
       process.exit(1);
     }
     const client = new JevClient({ apiKey, model: process.env.JEV_MODEL || "jev-1.14.0", baseUrl: process.env.JEV_BASE_URL || "https://api.typesafe.ai", timeoutMs: 10_000 });
-    jev = { caller: new CachedCaller(client, valueOf("--jev-cache") ?? path.join(dir, ".jev-cache.json")), minConfidence: Number(valueOf("--jev-min-confidence") ?? 0.5), picks: [] };
+    pickers.push(jevRun(new CachedCaller(client, valueOf("--jev-cache") ?? path.join(dir, ".jev-cache.json")), Number(valueOf("--jev-min-confidence") ?? 0.5)));
+  }
+  if (withHaiku) {
+    if (!(process.env.ANTHROPIC_API_KEY ?? "").trim()) {
+      console.error("--haiku needs an Anthropic API key in ANTHROPIC_API_KEY.");
+      process.exit(1);
+    }
+    const picker = new ClaudeProductPicker(new Anthropic(), process.env.PICK_COMPARE_MODEL || "claude-haiku-5-5", 30_000);
+    pickers.push(claudeRun(picker, valueOf("--haiku-cache") ?? path.join(dir, ".haiku-pick-cache.json")));
   }
   const sellerDirs = fs
     .readdirSync(dir)
@@ -395,33 +440,36 @@ async function main() {
     .filter((p) => fs.statSync(p).isDirectory())
     .sort();
   const base = emptyTotals();
-  const jevTotals = emptyTotals();
+  const pickerTotals = pickers.map(() => emptyTotals());
   for (const sd of sellerDirs) {
     const r = await evaluateSeller(sd, maxMisses);
     if (typeof r === "string") {
       console.log(`\n${r}`);
       continue;
     }
-    printSeller(r, jev ? " (word matching)" : "");
+    printSeller(r, pickers.length ? " (word matching)" : "");
     addTo(base, r);
-    if (jev) {
-      const rj = await evaluateSeller(sd, maxMisses, jev);
-      if (typeof rj !== "string") printSeller(rj, ` (Jev at confidence ≥ ${jev.minConfidence})`), addTo(jevTotals, rj);
+    for (const [i, p] of pickers.entries()) {
+      const rp = await evaluateSeller(sd, maxMisses, p);
+      if (typeof rp !== "string") printSeller(rp, ` (${p.label})`), addTo(pickerTotals[i]!, rp);
     }
   }
-  if (base.reports.length > 1 || jev) printTotals(base, jev ? " (word matching)" : "");
-  if (jev) {
-    printTotals(jevTotals, ` (Jev at confidence ≥ ${jev.minConfidence})`);
-    const ok = jev.picks.filter((p) => !p.error);
-    const ms = ok.map((p) => p.ms).sort((a, b) => a - b);
-    const tokens = ok.reduce((n, p) => n + (p.inputTokens ?? 0), 0);
-    const by = (reason: string) => jev!.picks.filter((p) => p.reason === reason).length;
-    console.log(`\nJev (${jev.caller.model}): ${jev.picks.length} calls, ${jev.picks.length - ok.length} errors; decided a product ${by("pick")}, no product ${by("not about a product")}, unsure ${by("unsure")}`);
-    if (ms.length) console.log(`  latency mean ${Math.round(ms.reduce((a, b) => a + b, 0) / ms.length)} ms, p95 ${ms[Math.floor(ms.length * 0.95)] ?? ms.at(-1)} ms (cached answers count as their first call)`);
-    console.log(`  ${tokens.toLocaleString("en-IN")} input tokens ≈ $${((tokens / 1e6) * 0.042).toFixed(4)}`);
+  if (base.reports.length > 1 || pickers.length) printTotals(base, pickers.length ? " (word matching)" : "");
+  for (const [i, p] of pickers.entries()) {
+    printTotals(pickerTotals[i]!, ` (${p.label})`);
+    const ok = p.picks.filter((x) => !x.error);
+    const ms = ok.map((x) => x.ms).sort((a, b) => a - b);
+    const sum = (f: (x: PickRecord) => number) => ok.reduce((n, x) => n + f(x), 0);
+    const by = (reason: string) => p.picks.filter((x) => x.reason === reason).length;
+    console.log(`\n${p.model}: ${p.picks.length} calls, ${p.picks.length - ok.length} errors; decided a product ${by("pick")}, no product ${by("not about a product")}, unsure ${by("unsure")}`);
+    if (ms.length) console.log(`  latency mean ${Math.round(sum((x) => x.ms) / ms.length)} ms, p50 ${ms[Math.floor(ms.length * 0.5)]} ms, p95 ${ms[Math.floor(ms.length * 0.95)] ?? ms.at(-1)} ms (cached answers count as their first call)`);
+    if (ok.length)
+      console.log(
+        `  input tokens ${sum((x) => x.inputTokens).toLocaleString("en-IN")} (mean ${Math.round(sum((x) => x.inputTokens) / ok.length)} per call), output ${sum((x) => x.outputTokens).toLocaleString("en-IN")}; cost $${sum((x) => x.costUsd).toFixed(4)} ($${(sum((x) => x.costUsd) / ok.length).toFixed(6)} per call)`,
+      );
   }
   if (out) {
-    fs.writeFileSync(out, JSON.stringify({ generatedAt: new Date().toISOString(), sellers: base.reports, ...(jev ? { jev: { minConfidence: jev.minConfidence, sellers: jevTotals.reports } } : {}) }, null, 2));
+    fs.writeFileSync(out, JSON.stringify({ generatedAt: new Date().toISOString(), sellers: base.reports, pickers: pickers.map((p, i) => ({ label: p.label, model: p.model, sellers: pickerTotals[i]!.reports })) }, null, 2));
     console.log(`\nReport written to ${out}`);
   }
 }
