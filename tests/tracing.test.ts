@@ -46,11 +46,20 @@ describe("cost", () => {
     const c = costDetails("claude-sonnet-5-5", u)!;
     expect(c.input).toBeCloseTo(2);
     expect(c.output).toBeCloseTo(1);
-    expect(c.cache_read_input_tokens).toBeCloseTo(0.4);
+    expect(c.cache_read_input_tokens).toBeCloseTo(0.2);
     expect(c.cache_creation_input_tokens).toBeCloseTo(0.1);
-    expect(c.total).toBeCloseTo(3.5);
+    expect(c.total).toBeCloseTo(3.3);
     expect(usageDetails(u).total).toBe(3_140_000);
     expect(costDetails("some-unknown-model", u)).toBeUndefined();
+  });
+
+  it("prices Haiku 5.5 on its short- and long-prompt rate cards", () => {
+    const short = costDetails("claude-haiku-5-5", { input: 2_000, output: 1_000_000, cacheRead: 40_000, cacheWrite: 0 })!;
+    expect(short.output).toBeCloseTo(0.5);
+    expect(short.cache_read_input_tokens).toBeCloseTo(0.0004);
+    const long = costDetails("claude-haiku-5-5", { input: 2_000, output: 1_000_000, cacheRead: 120_000, cacheWrite: 0 })!;
+    expect(long.output).toBeCloseTo(2.5);
+    expect(long.cache_read_input_tokens).toBeCloseTo(0.006);
   });
 });
 

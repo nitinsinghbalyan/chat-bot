@@ -15,7 +15,7 @@ const bool = z
 const optional = <T extends z.ZodTypeAny>(t: T) => z.preprocess((v) => (v === "" ? undefined : v), t.optional());
 
 const schema = z.object({
-  BOT_MODEL: z.string().default("claude-sonnet-5-5"),
+  BOT_MODEL: z.string().default("claude-haiku-5-5"),
   BOT_EFFORT: z.enum(["low", "medium", "high"]).default("low"),
   BOT_FALLBACKS: z
     .string()

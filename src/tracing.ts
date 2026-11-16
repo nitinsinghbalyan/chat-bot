@@ -159,8 +159,9 @@ export const OTP_MASK = "•••••";
 // ---- cost ----
 
 /** USD per million tokens. Langfuse may not have prices for new models, so costs are sent with each call. */
-const PRICES: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
-  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+type Price = { input: number; output: number; cacheRead: number; cacheWrite: number };
+const PRICES: Record<string, Price> = {
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
   "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
   "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
   "claude-opus-5": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
@@ -168,6 +169,12 @@ const PRICES: Record<string, { input: number; output: number; cacheRead: number;
   "claude-fable-5-1": { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
   "claude-haiku-5-5": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
 };
+
+/** Models billed at a second rate card when the prompt (input + cache read + cache write) is over 100K tokens. */
+const LONG_PROMPT_PRICES: Record<string, Price> = {
+  "claude-haiku-5-5": { input: 0.5, output: 2.5, cacheRead: 0.05, cacheWrite: 0.625 },
+};
+const LONG_PROMPT_TOKENS = 100_000;
 
 export interface TokenUsage {
   input: number;
@@ -187,7 +194,9 @@ export const usageDetails = (u: TokenUsage) => ({
 
 /** Cost of one Claude call in USD, or undefined for a model without a known price. */
 export function costDetails(model: string, u: TokenUsage): Record<string, number> | undefined {
-  const p = PRICES[model] ?? PRICES[model.replace(/-\d{8}$/, "")];
+  const id = PRICES[model] ? model : model.replace(/-\d{8}$/, "");
+  const long = u.input + u.cacheRead + u.cacheWrite > LONG_PROMPT_TOKENS ? LONG_PROMPT_PRICES[id] : undefined;
+  const p = long ?? PRICES[id];
   if (!p) return undefined;
   const d = {
     input: (u.input * p.input) / 1e6,

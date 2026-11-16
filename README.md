@@ -330,7 +330,7 @@ Without a crawled catalogue, a seller's site shows the business card and product
 | Variable | Default | Notes |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | (none) | Required |
-| `BOT_MODEL` | `claude-sonnet-5-5` | `claude-opus-5-5` is the most capable model; `claude-haiku-5-5` is the cheapest |
+| `BOT_MODEL` | `claude-haiku-5-5` | The cheapest model; `claude-sonnet-5-5` and `claude-opus-5-5` are more capable |
 | `BOT_EFFORT` | `low` | `low` suits chat; raise it if answers miss nuance |
 | `BOT_FALLBACKS` | `true` | Server-side refusal fallback. Claude API only; set `false` on Bedrock, Vertex or Foundry |
 | `ADMIN_PASSWORD` | (none) | Turns on `/admin` |

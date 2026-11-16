@@ -6,7 +6,7 @@ Seller assistants is one Node.js service that gives every B2B seller three thing
 2. **A generated website** (`/s/<slug>/`): home, about, products, category, product, contact and search pages.
 3. **An admin** (`/admin`) for the team: sellers, knowledge bases, extra files, prompts and their versions, the common FAQ, leads and transcripts, and Langfuse status.
 
-Everything runs in a single Express process on a free Oracle Cloud server (Render before Nov 2026), with a SQLite database and seller files on its disk (`DATA_DIR`). The bot uses Claude (`claude-sonnet-5-5`, effort low) through the Anthropic SDK. Langfuse traces each buyer message when keys are set.
+Everything runs in a single Express process on a free Oracle Cloud server (Render before Nov 2026), with a SQLite database and seller files on its disk (`DATA_DIR`). The bot uses Claude (`claude-haiku-5-5`, effort low; `BOT_MODEL` switches it) through the Anthropic SDK. Langfuse traces each buyer message when keys are set.
 
 See [REPO_STRUCTURE.md](REPO_STRUCTURE.md) for the file tree.
 
@@ -22,7 +22,7 @@ flowchart LR
   Site --> App
   Team((Seller team)) -->|Basic auth| Admin["/admin<br/>src/admin.ts"]
   Admin --> App
-  App --> Claude[(Anthropic API<br/>Claude Sonnet 5.5)]
+  App --> Claude[(Anthropic API<br/>Claude Haiku 5.5)]
   App --> DB[(SQLite<br/>DATA_DIR/chatbot.db)]
   App --> Disk[(DATA_DIR/sellers/&lt;slug&gt;/<br/>KB JSON, extra files, crawls)]
   App -->|OTLP + scores| LF[(Langfuse<br/>self-hosted)]

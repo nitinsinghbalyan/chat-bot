@@ -24,7 +24,7 @@ services:
       - key: DATA_DIR
         value: /var/data
       - key: BOT_MODEL
-        value: claude-sonnet-5-5
+        value: claude-haiku-5-5
       - key: BOT_EFFORT
         value: low
       # Each seller's own website is allowed via "allowedOrigins" in kb/sellers/<slug>/seller.json.

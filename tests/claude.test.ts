@@ -312,9 +312,18 @@ describe("chat cost and enquiry summary", () => {
     const session = new SessionStore().get("jayshree-machinetools", "s-cost-00001");
     const { d } = deps([{ content: [{ type: "tool_use", id: "o1", name: "show_options", input: { options: ["MS", "SS"] } }], stop_reason: "tool_use" }, text("Which material?")]);
     const r = await runTurn(session, "press brake", d);
-    // Each fake call: 100 input, 20 output, 80 cache-read tokens at $2 / $10 / $0.20 per million.
+    // Each fake call: 100 input, 20 output, 80 cache-read tokens at $2 / $10 / $0.10 per million.
     expect(r.costKnown).toBe(true);
-    expect(r.costUsd).toBeCloseTo(2 * 0.000416, 12);
+    expect(r.costUsd).toBeCloseTo(2 * 0.000408, 12);
+  });
+
+  it("sends no server-side fallback for a Haiku model", async () => {
+    const session = new SessionStore().get("jayshree-machinetools", "s-haiku-0001");
+    const { d, requests } = deps([text("Hello.")]);
+    await runTurn(session, "hi", { ...d, model: "claude-haiku-5-5" });
+    expect(requests[0].model).toBe("claude-haiku-5-5");
+    expect(requests[0].fallbacks).toBeUndefined();
+    expect(requests[0].betas).toBeUndefined();
   });
 
   it("flags a turn whose model has no known price", async () => {
