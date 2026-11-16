@@ -17,7 +17,7 @@
  *   --jev                       also run each case with Jev deciding the product (src/jev.ts, mode "on"),
  *                               and print both results. Needs JEV_API_KEY (or TYPESAFE_API_KEY); costs
  *                               ~$0.04 per million input tokens. JEV_MODEL / JEV_BASE_URL as on the server.
- *   --jev-min-confidence 0.7    the confidence Jev's choice needs to be used
+ *   --jev-min-confidence 0.5    the confidence Jev's choice needs to be used (the JEV_MIN_CONFIDENCE default)
  *   --jev-cache <file>          where Jev's answers are kept, so reruns are free (default <dir>/.jev-cache.json)
  */
 import crypto from "node:crypto";
@@ -376,7 +376,7 @@ async function main() {
   const valued = new Set(["--out", "--misses", "--jev-min-confidence", "--jev-cache"]);
   const dir = args.find((a, i) => !a.startsWith("--") && !valued.has(args[i - 1] ?? ""));
   if (!dir || !fs.existsSync(dir)) {
-    console.error('Usage: npm run retrieval:eval -- "<dir with one folder per seller>" [--out report.json] [--misses N] [--jev [--jev-min-confidence 0.7] [--jev-cache file]]');
+    console.error('Usage: npm run retrieval:eval -- "<dir with one folder per seller>" [--out report.json] [--misses N] [--jev [--jev-min-confidence 0.5] [--jev-cache file]]');
     process.exit(1);
   }
   let jev: JevRun | undefined;
@@ -387,7 +387,7 @@ async function main() {
       process.exit(1);
     }
     const client = new JevClient({ apiKey, model: process.env.JEV_MODEL || "jev-1.14.0", baseUrl: process.env.JEV_BASE_URL || "https://api.typesafe.ai", timeoutMs: 10_000 });
-    jev = { caller: new CachedCaller(client, valueOf("--jev-cache") ?? path.join(dir, ".jev-cache.json")), minConfidence: Number(valueOf("--jev-min-confidence") ?? 0.7), picks: [] };
+    jev = { caller: new CachedCaller(client, valueOf("--jev-cache") ?? path.join(dir, ".jev-cache.json")), minConfidence: Number(valueOf("--jev-min-confidence") ?? 0.5), picks: [] };
   }
   const sellerDirs = fs
     .readdirSync(dir)
