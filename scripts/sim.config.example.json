@@ -1,0 +1,10 @@
+{
+  "baseUrl": "https://your-bot-host.example",
+  "sellers": [
+    { "slug": "jayshree-machinetools", "keyEnv": "KEY_JAYSHREE", "scenarios": "../seller-files/Jayshree/JSM_Scenarios.json" },
+    { "slug": "exotica-steel", "keyEnv": "KEY_EXOTICA", "scenarios": "../seller-files/Exotica/ESI_Scenarios.json" },
+    { "slug": "national-industries", "keyEnv": "KEY_NI", "scenarios": "../seller-files/NationalIndustries/NI_Scenarios.json" },
+    { "slug": "sewa-enterprises", "keyEnv": "KEY_SEWA", "scenarios": "../seller-files/Sewa/SE_Scenarios.json" },
+    { "slug": "unicorn-equipment", "keyEnv": "KEY_UNICORN", "scenarios": "../seller-files/Unicorn/UE_Scenarios.json" }
+  ]
+}

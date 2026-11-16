@@ -53,7 +53,11 @@ chat-bot/
 │   ├── crawl.ts               CLI: crawl sellers' sitemaps into their catalogues
 │   ├── kb-check.ts            CLI (`npm run kb:check`): validate every kb/sellers folder without starting the server
 │   ├── eval.ts          ~240  Live-model scenario checks per guardrail and journey step (needs ANTHROPIC_API_KEY)
-│   └── retrieval-eval.ts ~280 CLI (`npm run retrieval:eval -- <dir>`): catalogue search + product pick scored on the sellers' test cases (no model calls)
+│   ├── retrieval-eval.ts ~330 CLI (`npm run retrieval:eval -- <dir> [--jev] [--haiku]`): catalogue search + product pick scored on the sellers' test cases
+│   ├── simulate.ts      ~120  CLI (`npm run simulate`): one Bot API conversation per test scenario, Haiku playing the buyer (docs/SIMULATE.md)
+│   ├── sim-report.ts     ~30  CLI (`npm run sim:report -- runs/<id>`): per-call tokens/latency/cost + Jev vs Haiku vs word rules accuracy
+│   ├── sim.config.example.json  The simulator's config shape (copy to sim.config.json, git-ignored)
+│   └── lib/             productMatch.ts (focus-product matching), sim.ts (conversation loop, Bot API client, buyer), simReport.ts (report maths)
 │
 ├── src/
 │   ├── server.ts         ~85  Entry point: applies a staged restore, then config, DB, registry, tracing, crawl schedule, graceful shutdown (flushes traces)

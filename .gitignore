@@ -4,3 +4,7 @@ data/
 .env
 *.log
 .build-commit
+
+# Simulation runs and the local simulator config (Test keys come from env vars; paths point at seller files)
+runs/
+sim.config.json
