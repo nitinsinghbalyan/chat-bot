@@ -53,7 +53,9 @@ Results so far (481 cases): word rules → Jev at 0.5:
 - Hinglish 65% → 73%;
 - off-topic picks 35 → 12.
 
-Jev takes 241 ms on average and costs about $0.0001 per call. Details: `memory/projects/seller-assistants.md`.
+Jev takes 241 ms on average and costs about $0.0001 per call.
+
+Full simulated conversations (Nov 16, all five sellers, 481 chats, bot in Shadow), first product of the chat right / wrong: word rules 69/21%, Jev 76/16%, Haiku asked the same question 77/13%. Jev takes 243 ms and $0.00011 per call; Haiku takes 2.1 s and $0.00048. Details: `memory/projects/seller-assistants.md`.
 
 ## Known weak spots (TypeSafe's list) and how the bot handles them
 
